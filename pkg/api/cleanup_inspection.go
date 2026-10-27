@@ -4,48 +4,194 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"sort"
+	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/oslab/sysbox/pkg/runtime"
 )
 
-// This endpoint exposes only resource identities, never state attributes/private
-// provider data. A missing workspace is not a missing observation endpoint.
+// GET inspection reports durable evidence only. Lists from the operation store
+// and lifecycle snapshot are not one distributed transaction; neither this
+// response nor an empty list authorizes metadata deletion or proves absence.
 func (s *Server) handleCleanupInspection(w http.ResponseWriter, r *http.Request) {
 	topology := r.PathValue("topology")
 	if err := validatePathSegment(topology, "topology"); err != nil {
 		writeError(w, 400, err)
 		return
 	}
-	unlock := s.jobs.lockTopology(topology)
-	defer unlock()
-	mgr, err := s.stateManager(topology)
+	unavailable := func() { writeError(w, http.StatusServiceUnavailable, errors.New("cleanup evidence unavailable")) }
+	repo, err := s.actionRepository(topology)
 	if err != nil {
-		writeError(w, 503, errors.New("state backend unavailable"))
+		unavailable()
 		return
 	}
-	st, err := mgr.LoadWithContext(r.Context())
+	snapshot, err := repo.InspectLifecycle(r.Context(), topology)
 	if err != nil {
-		writeError(w, 503, errors.New("state inspection unavailable"))
+		unavailable()
 		return
 	}
 	runs, err := s.apiStore.LoadRuns(r.Context())
 	if err != nil {
-		writeError(w, 503, errors.New("operation store unavailable"))
+		unavailable()
+		return
+	}
+	nodes, err := s.apiStore.ListNodeOperations(r.Context(), "")
+	if err != nil {
+		unavailable()
+		return
+	}
+	guestActivity, err := s.apiStore.ListGuestActivity(r.Context(), topology)
+	if err != nil {
+		unavailable()
+		return
+	}
+	consoles, err := s.apiStore.ListConsoleSessions(r.Context(), "")
+	if err != nil {
+		unavailable()
+		return
+	}
+	commands, err := s.apiStore.ListAgentCommands(r.Context(), "")
+	if err != nil {
+		unavailable()
+		return
+	}
+	grants, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).ListActiveGrants(r.Context())
+	if err != nil {
+		unavailable()
+		return
+	}
+	placement, err := s.workspaceService().loadPlacement(topology)
+	if err != nil {
+		unavailable()
 		return
 	}
 	_, err = os.Stat(s.workspaceService().HCLFile(topology))
-	exists := err == nil
+	metadataExists := err == nil
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		writeError(w, 503, errors.New("metadata inspection unavailable"))
+		unavailable()
 		return
 	}
-	resources := make([]map[string]any, 0, len(st.Resources))
-	for _, resource := range st.Resources {
-		resources = append(resources, map[string]any{"resource": resource.Address.String(), "name": resource.Address.Name, "type": resource.ResourceType, "provider": resource.Driver, "external_id": resource.ExternalID, "status": resource.Status})
+	resources := make([]map[string]any, 0, len(snapshot.State.Resources))
+	for _, res := range snapshot.State.Resources {
+		resources = append(resources, map[string]any{"resource": res.Address.String(), "name": res.Address.Name, "type": res.ResourceType, "provider": res.Driver, "external_id": res.ExternalID, "status": res.Status, "owner_uid": res.OwnerUID, "resource_uid": res.ResourceUID, "generation": res.Generation, "recorded_at": res.UpdatedAt})
+	}
+	sort.Slice(resources, func(i, j int) bool { return resources[i]["resource"].(string) < resources[j]["resource"].(string) })
+	actions := []map[string]any{}
+	for _, a := range snapshot.Actions {
+		if runtime.ActionSettled(a) {
+			continue
+		}
+		actions = append(actions, map[string]any{"id": a.ID, "run_id": a.RunID, "resource": a.Resource.String(), "action": a.Action, "status": a.Status, "owner_uid": a.OwnerUID, "resource_uid": a.ResourceUID, "generation": a.Generation, "revision": a.Revision})
 	}
 	active := []map[string]any{}
-	for _, run := range latestRunsByID(runs) {
-		if run.Topology == topology && run.Status.IsActive() {
-			active = append(active, map[string]any{"id": run.ID, "op": run.Op, "operation_key": run.OperationKey, "status": run.Status})
+	agents := map[string]bool{}
+	awaitingStop := false
+	unresolvedConsole, pendingCommand := false, false
+	for _, sess := range consoles {
+		if sess.Topology != topology || !persistence.ConsoleSessionUnresolved(sess) {
+			continue
+		}
+		unresolvedConsole = true
+		if sess.AgentID != "" {
+			agents[sess.AgentID] = true
+		}
+		active = append(active, map[string]any{"kind": "console_session", "id": sess.ID, "status": sess.Status, "agent_id": sess.AgentID})
+	}
+	for _, command := range commands {
+		if !commandBlocksTopology(command, topology, snapshot.State.TopologyUID) {
+			continue
+		}
+		pendingCommand = true
+		if command.AgentID != "" {
+			agents[command.AgentID] = true
+		}
+		active = append(active, map[string]any{"kind": "agent_command", "id": command.ID, "status": command.Status, "agent_id": command.AgentID, "resource_uid": command.ResourceUID, "generation": command.Generation})
+	}
+	for _, grant := range grants {
+		if grant.Scope.TopologyUID != snapshot.State.TopologyUID {
+			continue
+		}
+		awaitingStop = true
+		agents[grant.AgentID] = true
+		active = append(active, map[string]any{"kind": "execution_grant", "id": grant.ActionID, "status": grant.State, "agent_id": grant.AgentID, "resource_uid": grant.Scope.ResourceUID, "generation": grant.Scope.Generation, "epoch": grant.Epoch})
+	}
+	for _, activity := range guestActivity {
+		if activity.AgentID != "" {
+			agents[activity.AgentID] = true
+		}
+		if activity.Unresolved() {
+			active = append(active, map[string]any{"id": activity.ID, "kind": activity.Kind, "status": activity.Status, "agent_id": activity.AgentID})
 		}
 	}
-	writeJSON(w, 200, map[string]any{"resources": resources, "active_operations": active, "state_exists": st.Meta.Exists, "metadata_exists": exists})
+	if placement != nil {
+		agents[placement.AgentID] = true
+	}
+	for _, run := range latestRunsByID(runs) {
+		if run.Topology != topology {
+			continue
+		}
+		if run.AgentID != "" {
+			agents[run.AgentID] = true
+		}
+		if run.Status.IsActive() {
+			active = append(active, map[string]any{"kind": "run", "id": run.ID, "op": run.Op, "status": run.Status, "agent_id": run.AgentID, "queued_at": run.QueuedAt, "revision": run.Revision})
+		}
+	}
+	for _, op := range nodes {
+		if op.Topology != topology {
+			continue
+		}
+		if op.AgentID != "" {
+			agents[op.AgentID] = true
+		}
+		if op.Status == controlplane.NodeOperationStatusDone || op.Status == controlplane.NodeOperationStatusFailed {
+			continue
+		}
+		active = append(active, map[string]any{"kind": "node_operation", "id": op.ID, "op": op.Operation, "status": op.Status, "agent_id": op.AgentID, "resource_uid": op.ResourceUID, "generation": op.Generation})
+	}
+	sort.Slice(active, func(i, j int) bool {
+		return active[i]["kind"].(string)+active[i]["id"].(string) < active[j]["kind"].(string)+active[j]["id"].(string)
+	})
+	scope := "local_repository"
+	agentIDs := []string{}
+	for id := range agents {
+		agentIDs = append(agentIDs, id)
+	}
+	sort.Strings(agentIDs)
+	if len(agentIDs) > 0 {
+		scope = "owning_agent_not_observed"
+	}
+	result := map[string]any{"resources": resources, "active_operations": active, "unfinished_actions": actions, "state_exists": snapshot.StateExists, "metadata_exists": metadataExists, "source": "lifecycle_repository", "scope": scope, "agent_ids": agentIDs, "external_presence": "unknown", "inspected_at": time.Now().UTC(), "recorded_at": snapshot.State.Meta.UpdatedAt, "state_serial": snapshot.State.Meta.Serial, "topology_uid": snapshot.State.TopologyUID, "consistency": "atomic_lifecycle_separate_operation_snapshots"}
+	if placement != nil {
+		result["agent_id"] = placement.AgentID
+	}
+	result["active_operation_kinds"] = []string{"run", "node_operation", "guest_execution", "guest_file", "execution_grant", "console_session", "agent_command"}
+	receipt, reason := currentCleanupReceipt(topology, placement, runs, nodes)
+	if receipt != nil && guestActivityBeforeReceipt(guestActivity, receipt) != nil {
+		receipt = nil
+		reason = "guest_operation_invalidates_receipt"
+	}
+	result["cleanup_receipt_status"] = reason
+	if receipt != nil {
+		result["cleanup_receipt"] = receipt
+		result["cleanup_receipt_source"] = "owning_agent_durable_destroy_completion"
+		if len(actions) > 0 {
+			result["cleanup_receipt_status"] = "blocked_by_local_journal"
+		}
+		if len(resources) > 0 {
+			result["cleanup_receipt_status"] = "blocked_by_local_resources"
+		}
+		if awaitingStop {
+			result["cleanup_receipt_status"] = "blocked_by_execution_authority"
+		}
+		if unresolvedConsole {
+			result["cleanup_receipt_status"] = "blocked_by_console_activity"
+		}
+		if pendingCommand {
+			result["cleanup_receipt_status"] = "blocked_by_agent_command"
+		}
+	}
+	writeJSON(w, http.StatusOK, result)
 }

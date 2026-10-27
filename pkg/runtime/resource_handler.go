@@ -28,6 +28,13 @@ type ResourceHandler interface {
 	ExternalID(current state.Resource) string
 }
 
+// StateAwareResourceReader is used when observation needs the canonical node
+// identity and provider connection. Plain Read remains for resources whose
+// persisted state is sufficient.
+type StateAwareResourceReader interface {
+	ReadWithState(context.Context, state.Resource, *state.State) (ResourceReadResult, error)
+}
+
 type ResourceGraphDecoder interface {
 	DecodeResource(r config.ResourceBlock, name string, ctx *hcl.EvalContext) (data any, deps []address.Address, err error)
 }
@@ -39,10 +46,6 @@ type CapabilityRequirement struct {
 type CapabilityDeclarer interface {
 	RequiredCapabilities(*graph.Node) ([]CapabilityRequirement, error)
 }
-type ResourceImporter interface {
-	Import(context.Context, address.Address, string, string) (state.Resource, error)
-}
-
 type DataGraphDecoder interface {
 	DecodeData(d config.DataBlock, ctx *hcl.EvalContext) (data any, deps []address.Address, err error)
 }

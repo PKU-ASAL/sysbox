@@ -145,14 +145,14 @@ func TestManagerVersionedBackendUsesCAS(t *testing.T) {
 	require.Equal(t, int64(7), backend.lastSave.ExpectedSerial)
 }
 
-func TestManagerOptionalBackendOperationsAreNoopsWhenUnsupported(t *testing.T) {
+func TestManagerOptionalBackendOperationsRejectWhenUnsupported(t *testing.T) {
 	mgr := NewManagerWithBackend(noopOptionalBackend{})
 
-	require.NoError(t, mgr.Delete(context.Background()))
-	require.NoError(t, mgr.ForceUnlock(context.Background()))
+	require.ErrorIs(t, mgr.Delete(context.Background()), ErrUnsupported)
+	require.ErrorIs(t, mgr.ForceUnlock(context.Background()), ErrUnsupported)
 
 	info, err := mgr.LockInfo(context.Background())
-	require.NoError(t, err)
+	require.ErrorIs(t, err, ErrUnsupported)
 	require.False(t, info.Locked)
 }
 

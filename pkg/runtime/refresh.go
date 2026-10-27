@@ -8,6 +8,7 @@ import (
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/secret"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/oslab/sysbox/pkg/util"
@@ -20,7 +21,7 @@ import (
 // Refresh is a best-effort pass: a probe error (e.g. transient timeout)
 // is treated as "unknown" and the resource stays Unchanged.
 func (e *Executor) Refresh(ctx context.Context, plan *Plan) (*Plan, error) {
-	refreshed := &Plan{Actions: append([]controlplane.PlannedChange(nil), plan.Actions...)}
+	refreshed := plan.clone()
 	for i := range refreshed.Actions {
 		change := &refreshed.Actions[i]
 		if change.Action == controlplane.PlanActionReplace {
@@ -71,13 +72,14 @@ func (e *Executor) RefreshAndPersist(ctx context.Context, plan *Plan, manager *s
 
 // probeResource checks whether a resource is still up.
 func (e *Executor) observeResource(ctx context.Context, id address.Address) (ResourceReadResult, error) {
+	ctx = secret.WithResolver(ctx, e.resolver())
 	r := e.state.FindResource(id)
 	if r == nil {
 		return ResourceReadResult{Status: state.ResourceAbsent, Reason: "resource absent from state"}, nil
 	}
 
 	if provider, ok := GetResourceHandler(id.Type); ok {
-		result, err := provider.Read(ctx, *r)
+		result, err := readResourceWithAttachments(ctx, provider, *r, e.state)
 		if err != nil {
 			result.Status = state.ResourceUnknown
 			if result.Reason == "" {
@@ -103,7 +105,7 @@ func readNodeLikeResource(ctx context.Context, current state.Resource) (Resource
 		result.Status = state.ResourceUnknown
 		return result, err
 	}
-	cid := current.Str("container_id")
+	cid := current.ContainerID()
 	if cid == "" {
 		result.Decision = controlplane.RecoveryDecisionMarkDrift
 		result.Reason = "node has no persisted external id"
@@ -128,6 +130,11 @@ func readNodeLikeResource(ctx context.Context, current state.Resource) (Resource
 		return result, err
 	}
 	result.Observation = &obs
+	if obs.Status == substrate.NodeStatusMissing {
+		result.Status = state.ResourceAbsent
+		result.Reason = obs.Reason
+		return result, nil
+	}
 	recovery := DecideNodeRecovery(RecoveryInput{
 		Context:      RecoveryContextRefresh,
 		ResourceType: current.Address.Type,
@@ -147,19 +154,17 @@ func readNodeLikeResource(ctx context.Context, current state.Resource) (Resource
 		return result, nil
 	}
 	checks := map[string]controlplane.ResourceCheckHealth{}
-	if status, reason, err := observeAttachments(ctx, handle, &current); status != state.ResourcePresent {
-		checks["network_attachments"] = controlplane.ResourceCheckHealth{OK: false, Reason: reason}
-		result.Checks = checks
-		result.Decision = controlplane.RecoveryDecisionMarkDrift
-		result.Reason = reason
-		result.Status = status
-		if err != nil {
-			return result, err
-		}
-		return result, nil
-	}
 	result.Resource = current
-	if !nodeRoutesHealthy(ctx, nodeDriver, stateDriver, &current) {
+	routesHealthy, routeErr := nodeRoutesHealthy(ctx, nodeDriver, stateDriver, &current)
+	if routeErr != nil {
+		checks["routes"] = controlplane.ResourceCheckHealth{OK: false, Reason: "route observation unavailable"}
+		result.Checks = checks
+		result.Decision = controlplane.RecoveryDecisionUnknown
+		result.Reason = "route observation unavailable"
+		result.Status = state.ResourceUnknown
+		return result, fmt.Errorf("observe routes: %w", routeErr)
+	}
+	if !routesHealthy {
 		checks["routes"] = controlplane.ResourceCheckHealth{OK: false, Reason: "route missing"}
 		result.Checks = checks
 		result.Decision = controlplane.RecoveryDecisionMarkDrift
@@ -173,7 +178,59 @@ func readNodeLikeResource(ctx context.Context, current state.Resource) (Resource
 	return result, nil
 }
 
-func observeAttachments(ctx context.Context, handle substrate.NodeHandle, r *state.Resource) (state.ResourceStatus, string, error) {
+// readResourceWithAttachments combines resource-local observation with checks
+// that require the canonical topology's network identity and provider state.
+func readResourceWithAttachments(ctx context.Context, handler ResourceHandler, current state.Resource, st *state.State) (ResourceReadResult, error) {
+	if current.OwnerUID != "" {
+		id := substrate.OperationIdentity{ActionID: "observe", TopologyUID: current.OwnerUID, OwnerUID: current.OwnerUID, ResourceUID: current.ResourceUID, Generation: current.Generation}
+		if existing, ok := substrate.OperationIdentityFromContext(ctx); ok {
+			id.ActionID = existing.ActionID
+		}
+		ctx = substrate.WithOperationIdentity(ctx, id)
+	}
+	var result ResourceReadResult
+	var err error
+	if reader, ok := handler.(StateAwareResourceReader); ok {
+		result, err = reader.ReadWithState(ctx, cloneResetStateResource(current), st)
+	} else {
+		result, err = handler.Read(ctx, cloneResetStateResource(current))
+	}
+	// Drift permits replacement, so attachment uncertainty must still be
+	// checked before reporting it as a safe reconciliation decision.
+	if err != nil || (result.Status != state.ResourcePresent && result.Status != state.ResourceDrifted) || len(current.Attachments) == 0 {
+		return result, err
+	}
+	observed := cloneResetStateResource(current)
+	if !result.Resource.Address.IsZero() {
+		observed = cloneResetStateResource(result.Resource)
+	}
+	stateDriver, err := driver.DefaultRegistry.RequireNodeState(current.Driver)
+	var handle substrate.NodeHandle
+	if err == nil {
+		handle, err = observed.ReconstructHandle(stateDriver)
+	}
+	status, reason := state.ResourceUnknown, ""
+	if err == nil {
+		status, reason, err = observeAttachments(ctx, handle, &observed, st)
+	} else {
+		reason = err.Error()
+	}
+	result.Resource = observed
+	if status != state.ResourcePresent {
+		if result.Checks == nil {
+			result.Checks = map[string]controlplane.ResourceCheckHealth{}
+		}
+		result.Checks["network_attachments"] = controlplane.ResourceCheckHealth{OK: false, Reason: reason}
+		result.Status, result.Reason = status, reason
+		result.Decision = controlplane.RecoveryDecisionMarkDrift
+		if status == state.ResourceUnknown {
+			result.Decision = controlplane.RecoveryDecisionUnknown
+		}
+	}
+	return result, err
+}
+
+func observeAttachments(ctx context.Context, handle substrate.NodeHandle, r *state.Resource, st *state.State) (state.ResourceStatus, string, error) {
 	if len(r.Attachments) == 0 {
 		return state.ResourcePresent, "", nil
 	}
@@ -183,7 +240,10 @@ func observeAttachments(ctx context.Context, handle substrate.NodeHandle, r *sta
 	}
 	for i := range r.Attachments {
 		a := &r.Attachments[i]
-		request := driver.AttachmentRequest{Name: a.Name, Network: a.Network, MAC: a.MAC, IPPrefixes: append([]string(nil), a.IPPrefixes...), Gateway: a.Gateway, Aliases: append([]string(nil), a.Aliases...)}
+		request, err := attachmentRequestFromState(st, *a)
+		if err != nil {
+			return state.ResourceUnknown, err.Error(), err
+		}
 		observed, err := nic.Observe(ctx, handle, request, a.DriverState)
 		if err != nil {
 			if driver.IsCategory(err, driver.ErrorNotFound) {
@@ -199,18 +259,18 @@ func observeAttachments(ctx context.Context, handle substrate.NodeHandle, r *sta
 	return state.ResourcePresent, "", nil
 }
 
-func nodeRoutesHealthy(ctx context.Context, nodeDriver driver.Node, stateDriver driver.NodeState, r *state.Resource) bool {
+func nodeRoutesHealthy(ctx context.Context, nodeDriver driver.Node, stateDriver driver.NodeState, r *state.Resource) (bool, error) {
 	items, ok := r.AttributeMap()["routes"].([]any)
 	if !ok || len(items) == 0 {
-		return true
+		return true, nil
 	}
 	handle, err := r.ReconstructHandle(stateDriver)
 	if err != nil {
-		return false
+		return false, err
 	}
 	guestNetwork, err := driver.DefaultRegistry.RequireGuestNetwork(r.Driver)
 	if err != nil {
-		return false
+		return false, err
 	}
 	for _, item := range items {
 		route, _ := item.(map[string]any)
@@ -220,11 +280,14 @@ func nodeRoutesHealthy(ctx context.Context, nodeDriver driver.Node, stateDriver 
 			continue
 		}
 		ok, err := guestNetwork.HasRoute(ctx, handle, dst, via)
-		if err != nil || !ok {
-			return false
+		if err != nil {
+			return false, err
+		}
+		if !ok {
+			return false, nil
 		}
 	}
-	return true
+	return true, nil
 }
 
 // planActionForObservedStatus maps an observed resource status to the plan

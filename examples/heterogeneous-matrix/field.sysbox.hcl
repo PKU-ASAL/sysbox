@@ -48,6 +48,14 @@ resource "sysbox_node" "docker" {
   substrate = substrate.docker.local
   image     = sysbox_image.docker.id
 
+  # The matrix validates substrate/network lifecycle. Disable image CMD
+  # startup here; service startup is a signed guest task and requires the
+  # host supervisor path used by remote execution tests.
+  provider "docker" {
+    entrypoint = []
+    command    = []
+  }
+
   link "matrix" {
     network = sysbox_network.matrix.id
     ip      = "10.44.0.10/24"

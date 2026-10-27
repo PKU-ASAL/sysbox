@@ -1,11 +1,13 @@
 package driver
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/oslab/sysbox/pkg/substrate"
 	"net"
 	"regexp"
 	"sort"
@@ -76,8 +78,33 @@ type RulesetSpec struct {
 }
 
 type PolicyTarget struct {
-	Resource string
-	State    json.RawMessage
+	Policy   substrate.OperationIdentity `json:"policy"`
+	Resource string                      `json:"resource"`
+	Identity substrate.OperationIdentity `json:"identity"`
+	State    json.RawMessage             `json:"state"`
+}
+
+func (t PolicyTarget) Validate() error {
+	state := bytes.TrimSpace(t.State)
+	if t.Resource == "" || t.Identity.Validate() != nil || t.Policy.Validate() != nil || t.Policy.OwnerUID != t.Identity.OwnerUID || t.Policy.TopologyUID != t.Identity.TopologyUID || len(state) == 0 || !json.Valid(state) || state[0] != '{' {
+		return Wrap(ErrorInvalidState, "policy", "complete target resource, identity and provider state required", nil)
+	}
+	return nil
+}
+
+func EncodePolicyTarget(target PolicyTarget) (json.RawMessage, error) {
+	if err := target.Validate(); err != nil {
+		return nil, err
+	}
+	return json.Marshal(target)
+}
+
+func DecodePolicyTarget(raw json.RawMessage) (PolicyTarget, error) {
+	var target PolicyTarget
+	if err := json.Unmarshal(raw, &target); err != nil {
+		return target, Wrap(ErrorInvalidState, "policy", "invalid target record", err)
+	}
+	return target, target.Validate()
 }
 
 type RulesetObservation struct {
@@ -92,6 +119,13 @@ type Policy interface {
 	// killable and cannot hang the caller.
 	ObserveRuleset(context.Context, PolicyTarget, string) (RulesetObservation, error)
 	DeleteRuleset(context.Context, PolicyTarget, string) error
+}
+
+// PolicyDiscovery observes the exact policy generation and verifies its digest
+// against the requested spec after resolving provider-owned device bindings.
+// It must never apply rules or adopt a different generation.
+type PolicyDiscovery interface {
+	DiscoverRuleset(context.Context, PolicyTarget, RulesetSpec) (RulesetObservation, error)
 }
 
 func NormalizeRuleset(spec RulesetSpec) (RulesetSpec, error) {

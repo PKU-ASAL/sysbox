@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/docker/docker/client"
@@ -40,9 +41,13 @@ func TestDockerObservedAliasesMustContainDesiredSet(t *testing.T) {
 func TestDockerObserveReportsMissingAliasAsDrift(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, http.MethodGet, r.Method)
+		if strings.Contains(r.URL.Path, "/networks/") {
+			_ = json.NewEncoder(w).Encode(map[string]any{"Id": "net-1", "Labels": operationLabels(testOperation())})
+			return
+		}
 		require.Contains(t, r.URL.Path, "/containers/node/json")
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"NetworkSettings":{"Networks":{"app":{"NetworkID":"net-1","Aliases":["mongo"]}}}}`))
+		_ = json.NewEncoder(w).Encode(map[string]any{"Id": "node", "Config": map[string]any{"Labels": operationLabels(testOperation())}, "NetworkSettings": map[string]any{"Networks": map[string]any{"app": map[string]any{"NetworkID": "net-1", "Aliases": []string{"mongo"}}}}})
 	}))
 	t.Cleanup(server.Close)
 	cli, err := client.NewClientWithOpts(client.WithHost(server.URL), client.WithHTTPClient(server.Client()), client.WithVersion("1.43"))
@@ -50,7 +55,8 @@ func TestDockerObserveReportsMissingAliasAsDrift(t *testing.T) {
 	sub := &Substrate{cli: cli}
 	raw := json.RawMessage(`{"kind":"docker-nat","network_id":"net-1"}`)
 
-	_, err = sub.Observe(context.Background(), substrate.NodeHandle{ID: "node"}, driver.AttachmentRequest{
+	_, err = sub.Observe(context.Background(), substrate.NodeHandle{ID: "node", Generation: 3}, driver.AttachmentRequest{
+		NetworkIdentity: testOperation(), NetworkState: json.RawMessage(`{"nat":true,"docker_network_id":"net-1"}`),
 		Name: "app", Aliases: []string{"mongo", "database"},
 	}, raw)
 

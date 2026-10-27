@@ -7,30 +7,44 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/state"
 )
 
 type WorkspaceService struct {
-	runsDir        string
-	workspacesDir  string
-	stateBackend   string
-	stateManager   func(topology string) (*state.Manager, error)
-	health         healthStore
-	placementStore durablePlacementStore
+	gcSourceID          string
+	gcRepository        func(string) (*persistence.Repository, error)
+	runsDir             string
+	workspacesDir       string
+	stateBackend        string
+	stateManager        func(topology string) (*state.Manager, error)
+	health              healthStore
+	placementStore      durablePlacementStore
+	loadRuns            func(context.Context) ([]controlplane.Run, error)
+	loadNodeOperations  func(context.Context, string) ([]controlplane.NodeOperation, error)
+	loadGuestActivity   func(context.Context, string) ([]persistence.GuestActivity, error)
+	loadConsoleSessions func(context.Context, string) ([]controlplane.ConsoleSession, error)
+	loadAgentCommands   func(context.Context) ([]controlplane.AgentCommand, error)
+	lockAdmission       func(string) func()
+	deleteState         func(context.Context, string, int64, string) error
 }
 
 type WorkspaceInfo struct {
-	ArtifactID    string                       `json:"artifact_id"`
-	TopologyID    string                       `json:"topology_id,omitempty"`
-	Name          string                       `json:"name"`
-	HasHCL        bool                         `json:"has_hcl"`
-	HasState      bool                         `json:"has_state"`
-	ResourceCount int                          `json:"resource_count,omitempty"`
-	Serial        int64                        `json:"serial,omitempty"`
-	Backend       string                       `json:"backend,omitempty"`
-	Status        *controlplane.TopologyStatus `json:"status,omitempty"`
+	ArtifactID       string                       `json:"artifact_id"`
+	TopologyID       string                       `json:"topology_id,omitempty"`
+	Name             string                       `json:"name"`
+	HasHCL           bool                         `json:"has_hcl"`
+	HasState         bool                         `json:"has_state"`
+	ResourceCount    int                          `json:"resource_count,omitempty"`
+	Serial           int64                        `json:"serial,omitempty"`
+	Backend          string                       `json:"backend,omitempty"`
+	Status           *controlplane.TopologyStatus `json:"status,omitempty"`
+	ActiveRunID      string                       `json:"active_run_id,omitempty"`
+	ActiveRevision   string                       `json:"active_revision,omitempty"`
+	PlacementAgentID string                       `json:"placement_agent_id,omitempty"`
 }
 
 func newWorkspaceService(runsDir, workspacesDir, stateBackend string, stateManager func(string) (*state.Manager, error), health healthStore) *WorkspaceService {
@@ -44,49 +58,85 @@ func newWorkspaceService(runsDir, workspacesDir, stateBackend string, stateManag
 }
 
 func (s *WorkspaceService) HCLFile(topology string) string {
-	return filepath.Join(s.workspacesDir, topology, "field.sysbox.hcl")
+	base := filepath.Join(s.workspacesDir, topology)
+	current := filepath.Join(base, ".current")
+	if _, err := os.Lstat(current); os.IsNotExist(err) {
+		// Manually supplied workspaces retain their existing layout. Published
+		// workspaces always resolve the pointer once, before reading any files.
+		return filepath.Join(base, "field.sysbox.hcl")
+	}
+	pinned, err := filepath.EvalSymlinks(current)
+	if err != nil {
+		// Preserve the failing pointer path so the caller's file read fails.
+		// Never fall back to stale files after a publication pointer exists.
+		return filepath.Join(current, "field.sysbox.hcl")
+	}
+	return filepath.Join(pinned, "field.sysbox.hcl")
 }
 
 func (s *WorkspaceService) StateFile(topology string) string {
 	return filepath.Join(s.runsDir, topology, "state.json")
 }
 
-// UpsertProject materializes a project directory tree into the workspace,
-// creating the directory and each file. Idempotent: repeated calls overwrite.
-// Every path is re-validated here (defense in depth), so a malformed or
-// malicious path can never escape workspacesDir/<topology>/.
-//
-// The workspace dir holds only the materialized HCL tree (state lives under
-// runsDir), so it is removed and rewritten wholesale: this guarantees the
-// on-disk tree is exactly the requested revision, never a union with a prior
-// one (a stale module/file present in revision A but absent in B must not
-// survive).
+// UpsertProject publishes a complete immutable tree, then atomically switches
+// the workspace pointer. Existing readers retain their pinned revision. Old
+// revisions are retained for runs and recovery; publishing does not perform GC.
 func (s *WorkspaceService) UpsertProject(ctx context.Context, topology string, files map[string][]byte) error {
+	finish, err := s.beginGCProductionWrite(ctx, topology, "workspace")
+	if err != nil {
+		return err
+	}
+	if err = s.upsertProject(ctx, topology, files); err != nil {
+		return err
+	}
+	return finish(map[string][]string{"revision": {controlplane.ComputeRevisionDigest(files)}})
+}
+
+func (s *WorkspaceService) upsertProject(ctx context.Context, topology string, files map[string][]byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := validatePathSegment(topology, "topology"); err != nil {
 		return err
 	}
-	// Validate every path before touching disk so a bad path cannot leave the
-	// workspace half-reconciled.
-	for p := range files {
-		if err := validateRelPath(p); err != nil {
-			return err
-		}
+	unlock, err := s.lockPublication(ctx, topology)
+	if err != nil {
+		return err
 	}
-
+	defer unlock()
+	if intent, intentErr := s.readDeletionIntent(topology); intentErr != nil {
+		return intentErr
+	} else if intent != nil {
+		return fmt.Errorf("%w: topology deletion is already in progress; retry after cleanup", persistence.ErrConflict)
+	}
+	hcl, err := s.materializeRevision(ctx, topology, controlplane.ComputeRevisionDigest(files), files)
+	if err != nil {
+		return err
+	}
 	base := filepath.Join(s.workspacesDir, topology)
-	if err := os.RemoveAll(base); err != nil {
-		return fmt.Errorf("remove workspace: %w", err)
+	if err := mkdirWorkspaceDirectories(base); err != nil {
+		return fmt.Errorf("create workspace: %w", err)
 	}
-	for p, content := range files {
-		target := filepath.Join(base, filepath.FromSlash(p))
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-			return fmt.Errorf("create directory: %w", err)
-		}
-		if err := os.WriteFile(target, content, 0o644); err != nil {
-			return fmt.Errorf("write file: %w", err)
-		}
+	stage, err := os.MkdirTemp(base, ".publish-")
+	if err != nil {
+		return err
 	}
-	return nil
+	defer os.RemoveAll(stage)
+	target, err := filepath.Abs(filepath.Dir(hcl))
+	if err != nil {
+		return err
+	}
+	link := filepath.Join(stage, "current")
+	if err := os.Symlink(target, link); err != nil {
+		return fmt.Errorf("stage workspace pointer: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := os.Rename(link, filepath.Join(base, ".current")); err != nil {
+		return fmt.Errorf("publish workspace pointer: %w", err)
+	}
+	return syncWorkspaceParents(base)
 }
 
 func (s *WorkspaceService) HCL(topology string) ([]byte, error) {
@@ -105,27 +155,110 @@ func (s *WorkspaceService) Get(ctx context.Context, topology string) (WorkspaceI
 		return WorkspaceInfo{}, err
 	}
 	out := WorkspaceInfo{ArtifactID: artifactID(topology), TopologyID: topologyID(topology), Name: topology}
+	placement, err := s.loadPlacement(topology)
+	if err != nil {
+		return WorkspaceInfo{}, err
+	}
+	if placement != nil {
+		out.PlacementAgentID = placement.AgentID
+	}
 	if _, err := os.Stat(s.HCLFile(topology)); err == nil {
 		out.HasHCL = true
 	}
-	if st, err := s.LoadState(topology); err == nil {
-		out.HasState = true
-		out.ResourceCount = len(st.Resources)
+	// Successful loading can initialize an empty aggregate. Catalog membership
+	// distinguishes durable state/journal evidence from that empty anchor.
+	mgr, err := s.stateManager(topology)
+	if err != nil {
+		return WorkspaceInfo{}, err
+	}
+	listed, err := mgr.ListTopologies(ctx)
+	if err != nil {
+		return WorkspaceInfo{}, err
+	}
+	for _, metadata := range listed {
+		if metadata.Name == topology {
+			out.HasState = metadata.HasState
+			out.ResourceCount = metadata.ResourceCount
+			out.Serial = metadata.Serial
+			out.Backend = metadata.Backend
+			break
+		}
+	}
+	if s.loadRuns != nil {
+		runs, err := s.loadRuns(ctx)
+		if err != nil {
+			return WorkspaceInfo{}, err
+		}
+		for _, run := range latestRunsByID(runs) {
+			if run.Topology == topology && run.Status.IsActive() {
+				out.ActiveRunID, out.ActiveRevision = run.ID, run.Revision
+			}
+		}
 	}
 	return out, nil
 }
 
 func (s *WorkspaceService) List(ctx context.Context) ([]WorkspaceInfo, error) {
 	items := map[string]*WorkspaceInfo{}
-	hclEntries, err := filepath.Glob(filepath.Join(s.workspacesDir, "*", "field.sysbox.hcl"))
+	hclEntries, err := os.ReadDir(s.workspacesDir)
+	if os.IsNotExist(err) {
+		err = nil
+	}
 	if err != nil {
 		return nil, err
 	}
 	for _, e := range hclEntries {
-		name := filepath.Base(filepath.Dir(e))
+		name := e.Name()
+		if !e.IsDir() || validatePathSegment(name, "topology") != nil {
+			continue
+		}
+		if _, err := os.Stat(s.HCLFile(name)); os.IsNotExist(err) {
+			continue
+		} else if err != nil {
+			return nil, fmt.Errorf("read workspace %s: %w", name, err)
+		}
 		items[name] = &WorkspaceInfo{ArtifactID: artifactID(name), TopologyID: topologyID(name), Name: name, HasHCL: true}
 	}
 	if s.stateBackend == "" {
+		// Lifecycle aggregates are authoritative; standalone JSON is a retired
+		// format and must not be used to infer that a managed topology is empty.
+		aggregates, err := filepath.Glob(filepath.Join(s.runsDir, "*", "state.json.lifecycle"))
+		if err != nil {
+			return nil, err
+		}
+		for _, dir := range aggregates {
+			name := filepath.Base(filepath.Dir(dir))
+			if validatePathSegment(name, "topology") != nil {
+				continue
+			}
+			mgr, err := s.stateManager(name)
+			if err != nil {
+				return nil, err
+			}
+			listed, err := mgr.ListTopologies(ctx)
+			if err != nil {
+				return nil, err
+			}
+			var current *state.TopologyMetadata
+			for i := range listed {
+				if listed[i].Name == name {
+					current = &listed[i]
+					break
+				}
+			}
+			if current == nil {
+				continue
+			}
+			info := items[name]
+			if info == nil {
+				info = &WorkspaceInfo{ArtifactID: artifactID(name), TopologyID: topologyID(name), Name: name}
+				items[name] = info
+			}
+			info.HasState = current.HasState
+			info.Serial = current.Serial
+			info.ResourceCount = current.ResourceCount
+			info.Backend = current.Backend
+		}
 		stateEntries, err := filepath.Glob(filepath.Join(s.runsDir, "*", "state.json"))
 		if err != nil {
 			return nil, err
@@ -141,11 +274,12 @@ func (s *WorkspaceService) List(ctx context.Context) ([]WorkspaceInfo, error) {
 			info.Backend = "local"
 		}
 	} else {
-		mgr, err := s.stateManager("__list__")
+		repo, err := persistence.OpenCatalog(ctx, s.stateBackend)
 		if err != nil {
 			return nil, err
 		}
-		topologies, err := mgr.ListTopologies(ctx)
+		defer repo.Close()
+		topologies, err := repo.ListTopologies(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -164,6 +298,42 @@ func (s *WorkspaceService) List(ctx context.Context) ([]WorkspaceInfo, error) {
 			info.Backend = item.Backend
 		}
 	}
+	if s.loadRuns != nil {
+		runs, err := s.loadRuns(ctx)
+		if err != nil {
+			return nil, err
+		}
+		placements := map[string]*topologyPlacement{}
+		for _, run := range latestRunsByID(runs) {
+			if validatePathSegment(run.Topology, "topology") != nil {
+				continue
+			}
+			placement, loaded := placements[run.Topology]
+			if !loaded {
+				var err error
+				placement, err = s.loadPlacement(run.Topology)
+				if err != nil {
+					return nil, err
+				}
+				placements[run.Topology] = placement
+			}
+			placed := placement != nil && placement.AgentID == run.AgentID
+			if !run.Status.IsActive() && !placed {
+				continue
+			}
+			info := items[run.Topology]
+			if info == nil {
+				info = &WorkspaceInfo{ArtifactID: artifactID(run.Topology), TopologyID: topologyID(run.Topology), Name: run.Topology}
+				items[run.Topology] = info
+			}
+			if placed {
+				info.PlacementAgentID = placement.AgentID
+			}
+			if run.Status.IsActive() {
+				info.ActiveRunID, info.ActiveRevision = run.ID, run.Revision
+			}
+		}
+	}
 	out := make([]WorkspaceInfo, 0, len(items))
 	for _, info := range items {
 		out = append(out, *info)
@@ -175,6 +345,79 @@ func (s *WorkspaceService) List(ctx context.Context) ([]WorkspaceInfo, error) {
 func (s *WorkspaceService) Delete(ctx context.Context, topology string, force bool) error {
 	if err := validatePathSegment(topology, "topology"); err != nil {
 		return err
+	}
+	if s.lockAdmission != nil {
+		unlock := s.lockAdmission(topology)
+		defer unlock()
+	}
+	var runs []controlplane.Run
+	var nodeOperations []controlplane.NodeOperation
+	if s.loadRuns != nil {
+		var err error
+		runs, err = s.loadRuns(ctx)
+		if err != nil {
+			return fmt.Errorf("read active operations: %w", err)
+		}
+		for _, run := range latestRunsByID(runs) {
+			if run.Topology == topology && run.Status.IsActive() {
+				return fmt.Errorf("%w: topology has an active run; metadata cannot be deleted", persistence.ErrConflict)
+			}
+		}
+	}
+	if s.loadNodeOperations != nil {
+		var err error
+		nodeOperations, err = s.loadNodeOperations(ctx, "")
+		if err != nil {
+			return fmt.Errorf("read active node operations: %w", err)
+		}
+		for _, op := range nodeOperations {
+			if op.Topology == topology && op.Status != controlplane.NodeOperationStatusDone && op.Status != controlplane.NodeOperationStatusFailed {
+				return fmt.Errorf("%w: topology has an active node operation; metadata cannot be deleted", persistence.ErrConflict)
+			}
+		}
+	}
+	var guestActivity []persistence.GuestActivity
+	if s.loadGuestActivity != nil {
+		var err error
+		guestActivity, err = s.loadGuestActivity(ctx, topology)
+		if err != nil {
+			return err
+		}
+		for _, activity := range guestActivity {
+			if activity.Unresolved() {
+				return fmt.Errorf("%w: active guest operation blocks metadata deletion", persistence.ErrConflict)
+			}
+		}
+	}
+	if err := s.checkConsoleActivity(ctx, topology); err != nil {
+		return err
+	}
+	if err := s.checkCommandActivity(ctx, topology); err != nil {
+		return err
+	}
+	placement, err := s.loadPlacement(topology)
+	if err != nil {
+		return err
+	}
+	if placement != nil && !force {
+		if s.loadRuns == nil || s.loadNodeOperations == nil {
+			return fmt.Errorf("%w: cleanup evidence store unavailable", persistence.ErrConflict)
+		}
+		if receipt, reason := currentCleanupReceipt(topology, placement, runs, nodeOperations); receipt == nil {
+			return fmt.Errorf("%w: owning-agent cleanup is not verified (%s); complete resource teardown on agent %q or use force=true only to explicitly discard metadata (remote resources are not removed)", persistence.ErrConflict, reason, placement.AgentID)
+		} else if err := guestActivityBeforeReceipt(guestActivity, receipt); err != nil {
+			return err
+		}
+	}
+	unlock, err := s.lockPublication(ctx, topology)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if intent, intentErr := s.readDeletionIntent(topology); intentErr != nil {
+		return intentErr
+	} else if intent != nil {
+		return s.finishDeletionIntent(ctx, *intent)
 	}
 	mgr, err := s.stateManager(topology)
 	if err != nil {
@@ -190,23 +433,67 @@ func (s *WorkspaceService) Delete(ctx context.Context, topology string, force bo
 		}
 		slog.Warn("force-deleting topology metadata with live resources", "topology", topology, "resources", len(st.Resources))
 	}
-	if s.stateBackend == "" {
-		if err := os.RemoveAll(filepath.Dir(s.StateFile(topology))); err != nil {
-			return fmt.Errorf("remove state: %w", err)
-		}
-	} else if err := mgr.Delete(ctx); err != nil {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if s.deleteState == nil {
+		return fmt.Errorf("%w: authority-aware state deletion unavailable", persistence.ErrConflict)
+	}
+	if err := s.writeDeletionIntent(deletionIntent{Topology: topology, UID: st.TopologyUID, Serial: st.Meta.Serial, Created: time.Now().UTC()}); err != nil {
+		return fmt.Errorf("persist deletion intent: %w", err)
+	}
+	if err := s.deleteState(ctx, topology, st.Meta.Serial, st.TopologyUID); err != nil {
 		return fmt.Errorf("remove state: %w", err)
 	}
-	if err := os.RemoveAll(filepath.Dir(s.HCLFile(topology))); err != nil {
+	if s.stateBackend == "" {
+		if err := s.removeWorkspaceMetadata(topology); err != nil {
+			return fmt.Errorf("remove state: %w", err)
+		}
+	}
+	if err := os.RemoveAll(filepath.Join(s.workspacesDir, topology)); err != nil {
 		return fmt.Errorf("remove workspace: %w", err)
 	}
-	if err := s.deletePlacement(ctx, topology); err != nil {
+	if _, err := os.Stat(s.workspacesDir); err == nil {
+		if err := syncWorkspaceParents(s.workspacesDir); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if err := s.deletePlacementUnpublished(ctx, topology); err != nil {
 		return fmt.Errorf("remove topology placement: %w", err)
 	}
 	if s.health != nil {
 		_ = s.health.DeleteHealth(ctx, topology)
 	}
+	if err := os.Remove(s.deletionIntentPath(topology)); err != nil && !os.IsNotExist(err) {
+		return err
+	}
 	return nil
+}
+
+// Metadata deletion is not immutable-tree garbage collection. A run or reader
+// may still be using a pinned revision or snapshot after the workspace unlinks.
+func (s *WorkspaceService) removeWorkspaceMetadata(topology string) error {
+	dir := filepath.Dir(s.StateFile(topology))
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		// The aggregate retains its fresh owner identity and stable flock inode.
+		// Removing it could split concurrent writers across two different locks.
+		if entry.Name() == "revisions" || entry.Name() == "snapshots" || entry.Name() == filepath.Base(s.StateFile(topology))+".lifecycle" {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(dir, entry.Name())); err != nil {
+			return err
+		}
+	}
+	return syncWorkspaceParents(dir)
 }
 
 func (s *WorkspaceService) LoadState(topology string) (*state.State, error) {
@@ -218,7 +505,16 @@ func (s *WorkspaceService) LoadState(topology string) (*state.State, error) {
 	if err != nil {
 		return nil, err
 	}
-	if s.stateBackend == "" && len(st.Resources) == 0 {
+	if s.stateBackend == "" && len(st.Resources) == 0 && st.Meta.Serial == 0 {
+		listed, err := mgr.ListTopologies(context.Background())
+		if err != nil {
+			return nil, err
+		}
+		for _, item := range listed {
+			if item.Name == topology && item.HasState {
+				return st, nil
+			}
+		}
 		if _, err := os.Stat(s.StateFile(topology)); err != nil {
 			return nil, fmt.Errorf("topology %q: no state file", topology)
 		}
@@ -262,11 +558,73 @@ func (s *WorkspaceService) LockInfo(ctx context.Context, topology string) (state
 }
 
 func (s *WorkspaceService) ForceUnlock(ctx context.Context, topology string) error {
+	if s.lockAdmission != nil {
+		unlock := s.lockAdmission(topology)
+		defer unlock()
+	}
+	if err := s.ensureTopologyQuiescent(ctx, topology); err != nil {
+		return err
+	}
 	mgr, err := s.stateManager(topology)
 	if err != nil {
 		return err
 	}
+	info, err := mgr.LockInfo(ctx)
+	if err != nil {
+		return err
+	}
+	if info.Locked {
+		return fmt.Errorf("%w: state lease is still live; wait for expiry before force-unlock", persistence.ErrConflict)
+	}
 	return mgr.ForceUnlock(ctx)
+}
+
+// ensureTopologyQuiescent is the shared safety gate for destructive state
+// maintenance. A backend lock is only a storage mutex; removing it while an
+// effect holder is alive would create two writers and invalidate fencing.
+func (s *WorkspaceService) ensureTopologyQuiescent(ctx context.Context, topology string) error {
+	if s.loadRuns == nil || s.loadNodeOperations == nil || s.loadGuestActivity == nil || s.loadConsoleSessions == nil || s.loadAgentCommands == nil {
+		return fmt.Errorf("%w: complete activity registry required for state maintenance", persistence.ErrConflict)
+	}
+	if s.loadRuns != nil {
+		runs, err := s.loadRuns(ctx)
+		if err != nil {
+			return err
+		}
+		for _, run := range latestRunsByID(runs) {
+			if run.Topology == topology && runActivityUnresolved(run) {
+				return fmt.Errorf("%w: active run prevents state maintenance", persistence.ErrConflict)
+			}
+		}
+	}
+	if s.loadNodeOperations != nil {
+		// This store filters by workspace, not topology. A topology can live in
+		// a differently named workspace; enumerate first and match Topology below.
+		ops, err := s.loadNodeOperations(ctx, "")
+		if err != nil {
+			return err
+		}
+		for _, op := range ops {
+			if op.Topology == topology && persistence.NodeOperationUnresolved(op) {
+				return fmt.Errorf("%w: active node operation prevents state maintenance", persistence.ErrConflict)
+			}
+		}
+	}
+	if s.loadGuestActivity != nil {
+		activities, err := s.loadGuestActivity(ctx, topology)
+		if err != nil {
+			return err
+		}
+		for _, activity := range activities {
+			if activity.Unresolved() {
+				return fmt.Errorf("%w: active guest operation prevents state maintenance", persistence.ErrConflict)
+			}
+		}
+	}
+	if err := s.checkConsoleActivity(ctx, topology); err != nil {
+		return err
+	}
+	return s.checkCommandActivity(ctx, topology)
 }
 
 func (s *WorkspaceService) StateSnapshots(ctx context.Context, topology string) ([]state.Snapshot, error) {
@@ -276,19 +634,7 @@ func (s *WorkspaceService) StateSnapshots(ctx context.Context, topology string) 
 	}
 	snapshots, ok := mgr.Backend().(state.SnapshotBackend)
 	if !ok {
-		return []state.Snapshot{}, nil
+		return nil, state.ErrUnsupported
 	}
 	return snapshots.ListSnapshots(ctx)
-}
-
-func (s *WorkspaceService) RestoreStateSnapshot(ctx context.Context, topology, snapshot string) error {
-	mgr, err := s.stateManager(topology)
-	if err != nil {
-		return err
-	}
-	snapshots, ok := mgr.Backend().(state.SnapshotBackend)
-	if !ok {
-		return fmt.Errorf("state backend does not support snapshots")
-	}
-	return snapshots.RestoreSnapshot(ctx, snapshot)
 }

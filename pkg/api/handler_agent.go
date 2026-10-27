@@ -5,37 +5,37 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
 	"io"
-	"log/slog"
 	"net/http"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/persistence"
 )
 
 func (s *Server) handleListAgents(w http.ResponseWriter, r *http.Request) {
-	agents := s.agentService().List(r.Context())
+	agents, err := s.agentService().List(r.Context())
+	if err != nil {
+		writeError(w, agentRepositoryErrorStatus(err), err)
+		return
+	}
 	scrubAgentSecretValues(agents)
 	writeJSON(w, http.StatusOK, map[string]any{"agents": agents})
 }
 
 func (s *Server) handleRegisterAgent(w http.ResponseWriter, r *http.Request) {
-	var req controlplane.Agent
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	var report controlplane.Agent
+	if err := json.NewDecoder(r.Body).Decode(&report); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("decode agent: %w", err))
 		return
 	}
-	agent, err := normalizeAgent(req)
+	agent, err := s.agentService().Register(r.Context(), report)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, agentRepositoryErrorStatus(err), err)
 		return
 	}
-	if err := s.agentService().Save(r.Context(), agent); err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	scrubAgentSecret(&agent)
+	scrubAgentSecret(agent)
 	writeJSON(w, http.StatusCreated, agent)
 }
 
@@ -49,36 +49,14 @@ func (s *Server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	agent, err := s.agentService().Get(r.Context(), id)
-	if err != nil {
-		writeError(w, http.StatusNotFound, err)
-		return
-	}
-	var req struct {
-		Disabled    *bool  `json:"disabled"`
-		Quarantined *bool  `json:"quarantined"`
-		Reason      string `json:"reason"`
-	}
+	var req persistence.AgentPolicy
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("decode agent update: %w", err))
 		return
 	}
-	if req.Disabled != nil {
-		agent.Disabled = *req.Disabled
-	}
-	if req.Quarantined != nil {
-		agent.Quarantined = *req.Quarantined
-	}
-	if req.Reason != "" {
-		agent.Reason = req.Reason
-	}
-	agent.Status = controlplane.AgentStatusForPolicy(agent.Disabled, agent.Quarantined)
-	if agent.Status == controlplane.AgentStatusOnline {
-		agent.Reason = ""
-	}
-	agent.UpdatedAt = time.Now().UTC()
-	if err := s.agentService().Save(r.Context(), *agent); err != nil {
-		writeError(w, http.StatusInternalServerError, err)
+	agent, err := s.agentService().UpdatePolicy(r.Context(), id, req)
+	if err != nil {
+		writeError(w, agentRepositoryErrorStatus(err), err)
 		return
 	}
 	scrubAgentSecret(agent)
@@ -92,7 +70,7 @@ func (s *Server) handleGetAgentByID(w http.ResponseWriter, id string) {
 	}
 	agent, err := s.agentService().Get(context.Background(), id)
 	if err != nil {
-		writeError(w, http.StatusNotFound, err)
+		writeError(w, agentRepositoryErrorStatus(err), err)
 		return
 	}
 	scrubAgentSecret(agent)
@@ -106,25 +84,22 @@ func (s *Server) handleClaimAgentRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, err)
 		return
 	}
-	var request struct {
-		ClaimID string `json:"claim_id"`
-	}
-	decoder := json.NewDecoder(r.Body)
-	if err := decoder.Decode(&request); err != nil && !errors.Is(err, io.EOF) {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("decode claim: %w", err))
+	var expected controlplane.RunClaim
+	if err := json.NewDecoder(r.Body).Decode(&expected); err != nil || expected.QueuedAt.IsZero() {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("run claim requires queued_at and revision from dispatched run"))
 		return
 	}
-	if request.ClaimID != "" {
-		parsed, err := uuid.Parse(request.ClaimID)
-		if err != nil || parsed == uuid.Nil || parsed.String() != request.ClaimID {
+	if expected.ClaimID != "" {
+		parsed, err := uuid.Parse(expected.ClaimID)
+		if err != nil || parsed == uuid.Nil || parsed.String() != expected.ClaimID {
 			writeError(w, http.StatusBadRequest, fmt.Errorf("claim_id must be a canonical nonzero UUID"))
 			return
 		}
 	}
-	s.handleClaimAgentRunByID(w, agentID, r.PathValue("id"), request.ClaimID)
+	s.handleClaimAgentRunByID(w, agentID, r.PathValue("id"), expected)
 }
 
-func (s *Server) handleClaimAgentRunByID(w http.ResponseWriter, agentID, runID string, claimID ...string) {
+func (s *Server) handleClaimAgentRunByID(w http.ResponseWriter, agentID, runID string, expected controlplane.RunClaim) {
 	if err := validatePathSegment(agentID, "agent"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -133,13 +108,13 @@ func (s *Server) handleClaimAgentRunByID(w http.ResponseWriter, agentID, runID s
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	run, err := s.jobs.claim(runID, agentID, claimID...)
+	run, err := s.jobs.claimExpected(runID, agentID, &expected)
 	if err != nil {
-		if errors.Is(err, errApplyInputsRequired) || errors.Is(err, errRunStoreUnavailable) {
-			writeError(w, http.StatusServiceUnavailable, err)
-		} else {
-			writeError(w, http.StatusConflict, err)
+		status := http.StatusServiceUnavailable
+		if errors.Is(err, persistence.ErrConflict) || errors.Is(err, persistence.ErrNotFound) {
+			status = http.StatusConflict
 		}
+		writeError(w, status, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, run)
@@ -204,9 +179,21 @@ func (s *Server) handleCompleteNodeOperation(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, fmt.Errorf("decode node operation: %w", err))
 		return
 	}
+	if op.ActionID == "" || op.ResourceUID == "" || op.Generation < 1 || op.LeaseEpoch < 1 || op.LeaseOwner == "" || op.Attempt < 1 {
+		writeError(w, http.StatusConflict, persistence.ErrConflict)
+		return
+	}
 	op, err := s.nodeOperations().CompleteFromAgent(agentID, opID, op)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		status := http.StatusInternalServerError
+		if errors.Is(err, persistence.ErrConflict) {
+			status = http.StatusConflict
+		} else if errors.Is(err, persistence.ErrNotFound) {
+			status = http.StatusNotFound
+		} else if errors.Is(err, persistence.ErrInvalidRecord) {
+			status = http.StatusBadRequest
+		}
+		writeError(w, status, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, op)
@@ -234,7 +221,15 @@ func (s *Server) handleCompleteAgentRun(w http.ResponseWriter, r *http.Request) 
 	}
 	req, err := s.agentService().CompleteRun(agentID, runID, req)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		status := http.StatusServiceUnavailable
+		if errors.Is(err, persistence.ErrConflict) {
+			status = http.StatusConflict
+		} else if errors.Is(err, persistence.ErrInvalidRecord) {
+			status = http.StatusBadRequest
+		} else if errors.Is(err, persistence.ErrNotFound) {
+			status = http.StatusNotFound
+		}
+		writeError(w, status, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, req)
@@ -244,10 +239,6 @@ func (s *Server) handleListAgentProjections(w http.ResponseWriter, r *http.Reque
 	agentID := r.PathValue("agent")
 	if err := validatePathSegment(agentID, "agent"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	if err := s.agentService().restoreCompletionProjections(r.Context()); err != nil {
-		writeError(w, http.StatusServiceUnavailable, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"projections": s.agents.ListProjections(agentID)})
@@ -363,14 +354,11 @@ func (s *Server) handlePostAgentResourceProjection(w http.ResponseWriter, r *htt
 	if len(req.Resources) == 0 {
 		req.Resources = req.Health.Resources
 	}
-	if existing, err := s.apiStore.LoadResourceProjection(r.Context(), req.Topology); err == nil && existing != nil && !req.ObservedAt.After(existing.ObservedAt) {
-		writeJSON(w, http.StatusAccepted, map[string]string{"status": "stale"})
+	if err := s.apiStore.SaveResourceProjection(r.Context(), req); err != nil {
+		writeError(w, agentRepositoryErrorStatus(err), err)
 		return
 	}
 	s.agents.SaveResourceProjection(req)
-	if err := s.apiStore.SaveResourceProjection(r.Context(), req); err != nil {
-		slog.Warn("persist resource projection failed", "topology", req.Topology, "error", err)
-	}
 	writeJSON(w, http.StatusAccepted, req)
 }
 
@@ -456,87 +444,34 @@ func (s *Server) handleAgentHeartbeatByID(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusUnauthorized, err)
 		return
 	}
-	var req controlplane.Agent
+	var report controlplane.Agent
 	if r.Body != nil {
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		if err := json.NewDecoder(r.Body).Decode(&report); err != nil && err != io.EOF {
 			writeError(w, http.StatusBadRequest, fmt.Errorf("decode agent heartbeat: %w", err))
 			return
 		}
 	}
-	req.ID = id
-	req.Status = controlplane.AgentStatusOnline
-	agent, err := normalizeAgent(req)
+	report.ID = id
+	agent, err := s.agentService().Heartbeat(r.Context(), report)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, agentRepositoryErrorStatus(err), err)
 		return
 	}
-	if existing, err := s.agentService().Get(r.Context(), id); err == nil && existing != nil {
-		if existing.Disabled || existing.Quarantined {
-			agent.Disabled = existing.Disabled
-			agent.Quarantined = existing.Quarantined
-			agent.Reason = existing.Reason
-			agent.Status = controlplane.AgentStatusForPolicy(existing.Disabled, existing.Quarantined)
-		}
-		if agent.Name == "" {
-			agent.Name = existing.Name
-		}
-		if len(agent.Capabilities) == 0 {
-			agent.Capabilities = existing.Capabilities
-		}
-		if len(agent.Labels) == 0 {
-			agent.Labels = existing.Labels
-		}
-		if agent.Version == "" {
-			agent.Version = existing.Version
-		}
-		if agent.SecretHash == "" {
-			agent.SecretHash = existing.SecretHash
-		}
-		if agent.AuthSecret == "" {
-			agent.AuthSecret = existing.AuthSecret
-		}
-		agent.CreatedAt = existing.CreatedAt
-	}
-	agent.LastHeartbeat = time.Now().UTC()
-	agent.UpdatedAt = agent.LastHeartbeat
-	if err := s.agentService().Save(r.Context(), agent); err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	scrubAgentSecret(&agent)
+	scrubAgentSecret(agent)
 	writeJSON(w, http.StatusOK, agent)
 }
 
-func normalizeAgent(in controlplane.Agent) (controlplane.Agent, error) {
-	if in.ID == "" {
-		in.ID = in.Name
+func agentRepositoryErrorStatus(err error) int {
+	switch {
+	case errors.Is(err, persistence.ErrNotFound):
+		return http.StatusNotFound
+	case errors.Is(err, persistence.ErrInvalidRecord):
+		return http.StatusBadRequest
+	case errors.Is(err, persistence.ErrConflict):
+		return http.StatusConflict
+	default:
+		return http.StatusInternalServerError
 	}
-	if err := validatePathSegment(in.ID, "agent"); err != nil {
-		return controlplane.Agent{}, err
-	}
-	now := time.Now().UTC()
-	if in.Name == "" {
-		in.Name = in.ID
-	}
-	if in.Status == "" {
-		in.Status = controlplane.AgentStatusOnline
-	}
-	if in.CreatedAt.IsZero() {
-		in.CreatedAt = now
-	}
-	if in.UpdatedAt.IsZero() {
-		in.UpdatedAt = now
-	}
-	if in.Status == controlplane.AgentStatusOnline && in.LastHeartbeat.IsZero() {
-		in.LastHeartbeat = now
-	}
-	if in.Protocol == "" {
-		in.Protocol = controlplane.AgentProtocolVersion
-	}
-	if in.Protocol != controlplane.AgentProtocolVersion {
-		return controlplane.Agent{}, fmt.Errorf("unsupported agent protocol %q", in.Protocol)
-	}
-	return in, nil
 }
 
 func scrubAgentSecret(agent *controlplane.Agent) {

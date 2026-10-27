@@ -9,7 +9,7 @@ import (
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/runtime"
-	"github.com/oslab/sysbox/pkg/state"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 func (e *Executor) ExecuteNodeOperation(ctx context.Context, op controlplane.NodeOperation) controlplane.NodeOperation {
@@ -38,18 +38,26 @@ func (e *Executor) executeNodeOperation(ctx context.Context, op *controlplane.No
 	case "pause", "resume":
 		return e.executePauseResume(ctx, op)
 	case "import":
-		return e.executeImport(ctx, op)
+		return fmt.Errorf("managed ownership adoption: %w", substrate.ErrNotSupported)
 	default:
 		return fmt.Errorf("unsupported node operation %q", op.Operation)
 	}
 }
 
 func (e *Executor) executePauseResume(ctx context.Context, op *controlplane.NodeOperation) error {
+	unlock, err := e.bridge.LockTopology(ctx, op.Topology)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	mgr, err := e.bridge.StateManager(op.Topology)
 	if err != nil {
 		return err
 	}
-	st, err := mgr.Load()
+	st, err := mgr.LoadWithContext(ctx)
 	if err != nil {
 		return err
 	}
@@ -60,6 +68,14 @@ func (e *Executor) executePauseResume(ctx context.Context, op *controlplane.Node
 	if res == nil {
 		return fmt.Errorf("node %q not found", op.Node)
 	}
+	identity := substrate.OperationIdentity{ActionID: op.ActionID, OwnerUID: res.OwnerUID, TopologyUID: st.TopologyUID, ResourceUID: op.ResourceUID, Generation: op.Generation}
+	if err := identity.Validate(); err != nil {
+		return fmt.Errorf("node operation requires complete target proof: %w", err)
+	}
+	if res.OwnerUID != st.TopologyUID || res.ResourceUID != op.ResourceUID || res.Generation != op.Generation {
+		return fmt.Errorf("%w: node operation target ownership or generation changed", runtime.ErrPlanStale)
+	}
+	ctx = substrate.WithOperationIdentity(ctx, identity)
 	powerDriver, err := driver.DefaultRegistry.RequirePower(res.Driver)
 	if err != nil {
 		return err
@@ -76,42 +92,6 @@ func (e *Executor) executePauseResume(ctx context.Context, op *controlplane.Node
 		return powerDriver.Pause(ctx, handle)
 	}
 	return powerDriver.Resume(ctx, handle)
-}
-
-func (e *Executor) executeImport(ctx context.Context, op *controlplane.NodeOperation) error {
-	if op.Type != "sysbox_node" {
-		return fmt.Errorf("import only supports sysbox_node, got %q", op.Type)
-	}
-	mgr, err := e.bridge.StateManager(op.Topology)
-	if err != nil {
-		return err
-	}
-	if err := mgr.CheckMutationSafety(); err != nil {
-		return err
-	}
-	st, err := mgr.Load()
-	if err != nil {
-		return fmt.Errorf("load state: %w", err)
-	}
-	addr := address.Resource(op.Type, op.Name)
-	if r := st.FindResource(addr); r != nil {
-		return fmt.Errorf("resource %s.%s already in state", op.Type, op.Name)
-	}
-	handler, ok := runtime.GetResourceHandler(op.Type)
-	if !ok {
-		return fmt.Errorf("resource handler %q not registered", op.Type)
-	}
-	importer, ok := handler.(runtime.ResourceImporter)
-	if !ok {
-		return fmt.Errorf("resource %s does not support import", op.Type)
-	}
-	resource, err := importer.Import(ctx, addr, op.Substrate, op.ExternalID)
-	if err != nil {
-		return err
-	}
-	st.AddResource(resource)
-	owner := fmt.Sprintf("sysbox-agent:import:%s:%s.%s", op.Topology, op.Type, op.Name)
-	return mgr.SaveWithLease(ctx, st, state.LockOptions{Owner: owner})
 }
 
 func nodeOperationEvent(op controlplane.NodeOperation, action, status, message string) controlplane.Event {

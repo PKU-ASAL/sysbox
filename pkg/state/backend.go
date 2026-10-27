@@ -126,8 +126,18 @@ type SnapshotBackend interface {
 	RestoreSnapshot(ctx context.Context, id string) error
 }
 
+type SnapshotDeleter interface {
+	DeleteSnapshot(context.Context, string) error
+}
+
 type DeleteBackend interface {
 	Delete(ctx context.Context) error
+}
+
+// VersionedDeleteBackend prevents a metadata delete from erasing resources or
+// a replacement topology committed after the caller's safety checks.
+type VersionedDeleteBackend interface {
+	DeleteVersioned(ctx context.Context, expectedSerial int64, topologyUID string) error
 }
 
 type LockInfo struct {
@@ -281,6 +291,13 @@ func (b *LocalBackend) RestoreSnapshot(_ context.Context, id string) error {
 	data, err := os.ReadFile(filepath.Join(b.snapshotDir(), id+".json"))
 	if err != nil {
 		return fmt.Errorf("read snapshot: %w", err)
+	}
+	current, err := b.Load(context.Background())
+	if err != nil {
+		return err
+	}
+	if err := validateSnapshotIncarnation(current, data); err != nil {
+		return err
 	}
 	return b.Save(context.Background(), data)
 }

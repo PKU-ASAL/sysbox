@@ -47,11 +47,16 @@ func desiredPayload(n *graph.Node) (map[string]any, []string) {
 
 	switch cfg := n.Data.(type) {
 	case *config.NetworkConfig:
+		if cfg.ExposeBridge {
+			payload["expose_bridge"] = true
+		}
 		payload["cidr"] = cfg.CIDR
 		payload["network_type"] = cfg.Type
 		payload["nat"] = cfg.NAT
 		payload["root_address"] = cfg.RootAddress
-		payload["root_routes"] = cfg.RootRoutes
+		// State round trips represent an omitted list as empty. Use that same
+		// representation for desired routes so absence does not cause replacement.
+		payload["root_routes"] = append([]config.RouteConfig{}, cfg.RootRoutes...)
 		if cfg.Lifecycle != nil {
 			ignore = cfg.Lifecycle.IgnoreChanges
 		}

@@ -9,8 +9,10 @@ mkdir -p "$(dirname "${state}")" bin
 
 cleanup() {
   find /var/lib/sysbox/firecracker -name firecracker.log -type f -exec sh -c 'echo "--- $1 ---"; tail -80 "$1"' _ {} \; 2>/dev/null || true
-  if [ -f "${state}" ]; then
-    ./bin/sysbox --state "${state}" -f "${config}" destroy --auto-approve || true
+  if [ -f "${state}" ] || [ -d "${state}.lifecycle" ]; then
+    ./bin/sysbox --state "${state}" -f "${config}" destroy --auto-approve || {
+      echo "Reset matrix cleanup unresolved; retaining canonical repository at ${state}.lifecycle" >&2
+    }
   fi
 }
 trap cleanup EXIT INT TERM

@@ -2,8 +2,11 @@ package runtime
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"golang.org/x/crypto/ssh"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -14,6 +17,7 @@ import (
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 type firewallPolicyFake struct {
@@ -21,6 +25,17 @@ type firewallPolicyFake struct {
 	applyCount int
 	digest     string
 	observeErr error
+}
+
+func policyTargetFixture(t *testing.T) string {
+	t.Helper()
+	raw, err := driver.EncodePolicyTarget(driver.PolicyTarget{Resource: "sysbox_router.edge", Policy: policyOperationFixture(), Identity: substrate.OperationIdentity{ActionID: "test", OwnerUID: "owner", TopologyUID: "owner", ResourceUID: "router", Generation: 2}, State: json.RawMessage(`{"container_id":"router","bindings":{}}`)})
+	require.NoError(t, err)
+	return string(raw)
+}
+
+func policyOperationFixture() substrate.OperationIdentity {
+	return substrate.OperationIdentity{ActionID: "policy", OwnerUID: "owner", TopologyUID: "owner", ResourceUID: "firewall", Generation: 1}
 }
 
 func (f *firewallPolicyFake) ApplyRuleset(_ context.Context, _ driver.PolicyTarget, spec driver.RulesetSpec) (driver.RulesetObservation, error) {
@@ -35,25 +50,6 @@ func (f *firewallPolicyFake) ObserveRuleset(context.Context, driver.PolicyTarget
 	return driver.RulesetObservation{Table: "sysbox_owned", Digest: f.digest}, nil
 }
 
-func TestRecoverFirewallAlwaysReapplies(t *testing.T) {
-	previous := driver.DefaultRegistry
-	driver.DefaultRegistry = driver.NewRegistry()
-	t.Cleanup(func() { driver.DefaultRegistry = previous })
-	fake := &firewallPolicyFake{}
-	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "policy-test", Version: "1", Policy: fake}))
-	spec := driver.RulesetSpec{Owner: "lab/sysbox_firewall.edge", Family: driver.FamilyIPv4}
-	specRaw, err := json.Marshal(spec)
-	require.NoError(t, err)
-	rec := &StateResourceLog{Type: "sysbox_firewall", Name: "edge", Provider: "policy-test", Instance: map[string]any{
-		"owner": spec.Owner, "attach_to": "sysbox_router.edge", "policy_target_state": `{"container_id":"router","bindings":{}}`, "policy_spec": string(specRaw), "desired_digest": "verified",
-	}}
-	step := OperationStep{Resource: "sysbox_firewall.edge", StateResource: rec}
-	st := &state.State{Version: state.SchemaVersion}
-	result, err := (FirewallResourceHandler{}).RecoverCheckpointResource(context.Background(), st, step)
-	require.NoError(t, err)
-	require.Equal(t, "recovered", result.Status)
-	require.Equal(t, 1, fake.applyCount)
-}
 func (*firewallPolicyFake) DeleteRuleset(context.Context, driver.PolicyTarget, string) error {
 	return nil
 }
@@ -75,17 +71,29 @@ func TestCreateFirewallPersistsVerifiedObservation(t *testing.T) {
 	fake := &firewallPolicyFake{}
 	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "policy-test", Version: "1", Policy: fake}))
 	st := &state.State{Version: state.SchemaVersion}
-	st.AddResource(state.Resource{Address: address.Resource("sysbox_router", "edge"), Driver: "policy-test", Attributes: state.MustAttributes(map[string]any{"container_id": "router"}), Attachments: []state.Attachment{{Name: "inside", Observation: state.AttachmentObservation{GuestDevice: "eth1"}}}})
+	st.AddResource(state.Resource{Address: address.Resource("sysbox_router", "edge"), OwnerUID: "owner", ResourceUID: "router", Generation: 2, Driver: "policy-test", Attributes: state.MustAttributes(map[string]any{"container_id": "router"}), Attachments: []state.Attachment{{Name: "inside", Observation: state.AttachmentObservation{GuestDevice: "eth1"}}}})
 	exec := NewExecutor(graph.New(), st)
 	n := &graph.Node{Address: address.Resource("sysbox_firewall", "edge"), Data: &config.FirewallConfig{AttachTo: "sysbox_router.edge", Rules: []config.FirewallRule{{Name: "allow", Direction: "forward", Protocol: "all", InputAttachment: "inside", Verdict: "accept"}}}}
-	res, err := exec.createFirewallResource(context.Background(), n)
+	res, err := exec.createFirewallResource(substrate.WithOperationIdentity(context.Background(), policyOperationFixture()), n)
 	require.NoError(t, err)
 	require.Equal(t, "sysbox_owned", res.Str("table"))
 	require.Equal(t, "verified", res.Str("desired_digest"))
 	require.Equal(t, "inside", fake.applied.Rules[0].InputAttachment)
 	var target map[string]any
 	require.NoError(t, json.Unmarshal([]byte(res.Str("policy_target_state")), &target))
-	require.Equal(t, "router", target["container_id"])
+	require.Equal(t, "router", target["state"].(map[string]any)["container_id"])
+	require.NotNil(t, target["identity"], "target ownership must survive persistence")
+	identity := target["identity"].(map[string]any)
+	require.Equal(t, "owner", identity["owner_uid"])
+	require.Equal(t, "router", identity["resource_uid"])
+	require.EqualValues(t, 2, identity["generation"])
+	policyIdentity := target["policy"].(map[string]any)
+	require.Equal(t, "firewall", policyIdentity["resource_uid"])
+	require.EqualValues(t, 1, policyIdentity["generation"], "policy and node have independent generations")
+	st.FindResource(address.Resource("sysbox_router", "edge")).OwnerUID = ""
+	_, err = exec.createFirewallResource(substrate.WithOperationIdentity(context.Background(), policyOperationFixture()), n)
+	require.ErrorContains(t, err, "target lacks durable identity")
+	require.Equal(t, 1, fake.applyCount, "invalid target must not apply policy")
 }
 
 func TestCreateFirewallDelegatesMissingDeviceResolutionToPolicyDriver(t *testing.T) {
@@ -95,17 +103,19 @@ func TestCreateFirewallDelegatesMissingDeviceResolutionToPolicyDriver(t *testing
 	fake := &firewallPolicyFake{}
 	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "policy-test", Version: "1", Policy: fake}))
 	st := &state.State{Version: state.SchemaVersion}
-	st.AddResource(state.Resource{Address: address.Resource("sysbox_router", "edge"), Driver: "policy-test", Attributes: state.MustAttributes(map[string]any{"container_id": "router"}), Attachments: []state.Attachment{{Name: "uplink", IPPrefixes: []string{"172.31.42.2/24"}}}})
+	st.AddResource(state.Resource{Address: address.Resource("sysbox_router", "edge"), OwnerUID: "owner", ResourceUID: "router", Generation: 2, Driver: "policy-test", Attributes: state.MustAttributes(map[string]any{"container_id": "router"}), Attachments: []state.Attachment{{Name: "uplink", IPPrefixes: []string{"172.31.42.2/24"}}}})
 	exec := NewExecutor(graph.New(), st)
 	n := &graph.Node{Address: address.Resource("sysbox_firewall", "edge"), Data: &config.FirewallConfig{AttachTo: "sysbox_router.edge", Rules: []config.FirewallRule{{Name: "allow", Direction: "forward", Protocol: "all", OutputAttachment: "uplink", Verdict: "accept"}}}}
 
-	res, err := exec.createFirewallResource(context.Background(), n)
+	res, err := exec.createFirewallResource(substrate.WithOperationIdentity(context.Background(), policyOperationFixture()), n)
 	require.NoError(t, err)
 	var target struct {
 		Bindings      map[string]string   `json:"bindings"`
 		AttachmentIPs map[string][]string `json:"attachment_ips"`
 	}
-	require.NoError(t, json.Unmarshal([]byte(res.Str("policy_target_state")), &target))
+	persisted, err := driver.DecodePolicyTarget(json.RawMessage(res.Str("policy_target_state")))
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(persisted.State, &target))
 	require.Empty(t, target.Bindings["uplink"])
 	require.Equal(t, []string{"172.31.42.2/24"}, target.AttachmentIPs["uplink"])
 }
@@ -156,11 +166,14 @@ func TestFirewallResourceHandlerPlanDiff(t *testing.T) {
 }
 
 func TestSSHAccessResourceHandlerPlanDiff(t *testing.T) {
+	public, err := ssh.NewPublicKey(ed25519.PublicKey(make([]byte, ed25519.PublicKeySize)))
+	require.NoError(t, err)
+	key := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(public)))
 	n := &graph.Node{
 		Address: address.Resource("sysbox_ssh_access", "admin"),
 		Data: &config.SSHAccessConfig{
 			Node:           "sysbox_node.web.id",
-			AuthorizedKeys: []string{"ssh-ed25519 old"},
+			AuthorizedKeys: []string{key + " old"},
 			Port:           22,
 		},
 	}
@@ -175,7 +188,7 @@ func TestSSHAccessResourceHandlerPlanDiff(t *testing.T) {
 
 	n.Data = &config.SSHAccessConfig{
 		Node:           "sysbox_node.web.id",
-		AuthorizedKeys: []string{"ssh-ed25519 new"},
+		AuthorizedKeys: []string{key + " new"},
 		Port:           22,
 	}
 	action, err = p.PlanDiff(n, current)
@@ -186,7 +199,7 @@ func TestSSHAccessResourceHandlerPlanDiff(t *testing.T) {
 	require.True(t, change.Sensitive)
 }
 
-func TestEdgeProviderDeleteRemovesState(t *testing.T) {
+func TestUnsupportedSSHAccessDeletePreservesState(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		p    ResourceHandler
@@ -201,8 +214,8 @@ func TestEdgeProviderDeleteRemovesState(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			st := &state.State{Version: state.SchemaVersion, Resources: []state.Resource{tc.res}}
 			exec := NewExecutor(graph.New(), st)
-			require.NoError(t, tc.p.Delete(context.Background(), &ProviderContext{exec: exec}, tc.res))
-			require.Nil(t, st.FindResource(tc.res.Address))
+			require.ErrorIs(t, tc.p.Delete(context.Background(), &ProviderContext{exec: exec}, tc.res), ErrConvergenceUnsupported)
+			require.NotNil(t, st.FindResource(tc.res.Address))
 		})
 	}
 }
@@ -221,7 +234,7 @@ func TestFirewallReadDetectsDigestDrift(t *testing.T) {
 		Driver:  "policy-match",
 		Attributes: state.MustAttributes(map[string]any{
 			"owner": "lab/sysbox_firewall.edge", "attach_to": "sysbox_router.edge",
-			"policy_target_state": `{"container_id":"router","bindings":{}}`, "desired_digest": "verified",
+			"policy_target_state": policyTargetFixture(t), "desired_digest": "verified",
 		}),
 	}
 	result, err := (FirewallResourceHandler{}).Read(context.Background(), res)
@@ -234,4 +247,16 @@ func TestFirewallReadDetectsDigestDrift(t *testing.T) {
 	result, err = (FirewallResourceHandler{}).Read(context.Background(), res)
 	require.NoError(t, err)
 	require.Equal(t, state.ResourceDrifted, result.Status)
+}
+
+func TestFirewallIdentityConflictIsUnknown(t *testing.T) {
+	previous := driver.DefaultRegistry
+	driver.DefaultRegistry = driver.NewRegistry()
+	t.Cleanup(func() { driver.DefaultRegistry = previous })
+	fake := &firewallPolicyFake{observeErr: driver.Wrap(driver.ErrorInvalidState, "policy-conflict", "owner mismatch", nil)}
+	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "policy-conflict", Version: "test", Policy: fake}))
+	res := state.Resource{Address: address.Resource("sysbox_firewall", "edge"), Driver: "policy-conflict", Attributes: state.MustAttributes(map[string]any{"owner": "owner", "attach_to": "sysbox_router.edge", "policy_target_state": policyTargetFixture(t), "desired_digest": "expected"})}
+	observed, err := (FirewallResourceHandler{}).Read(context.Background(), res)
+	require.Error(t, err)
+	require.Equal(t, state.ResourceUnknown, observed.Status)
 }

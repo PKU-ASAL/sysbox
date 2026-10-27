@@ -1,0 +1,5458 @@
+# P9 real acceptance
+
+## Bounded batches, unowned libvirt and historical audit (2026-10-18)
+
+The next slice adds strict resource-host inventory planning over filesystem or
+shared SQLite/PostgreSQL catalogs. Docker/container networks, libvirt definitions
+and Firecracker manifests are enumerated; failed provider inventories reject the
+plan. Unknown owners are excluded explicitly. Selection defaults to two complete
+observations at least24 hours apart,32 candidates (maximum128), nodes before
+networks, and retained resource UID/provider-ID protection. This is scoped to the
+selected host/catalog, not a global cross-host or orphan TAP/nft inventory claim.
+
+GC batch admission atomically validates/reserves the whole normalized candidate
+list. Key, topology, Agent and entire payload are bound; raw transitions reject
+altered hashes, duplicate identities and noncanonical ordering. Only the first
+unfinished item is issuable; host completion releases it and publishes the next.
+File/SQLite/Postgres race contracts passed using a disposable test PostgreSQL16.
+`TestRemoteDockerGCBatchSequentialRecoveryE2E` passed under race with two real
+containers, reference-write exclusion, lost completion acknowledgement and API
+reconstruction; both objects were deleted once and independently confirmed absent.
+
+Unowned libvirt adoption is limited to stopped persistent definitions. Current and
+inactive XML fingerprints are compared before metadata publication. Recovery
+accepts only the original adoption identity and fingerprint; Observe performs no
+write. External-definition handles own no storage path. Exact UUID start refuses
+recreation, unsupported reset requires explicit baseline replacement, and Destroy
+preserves external disks. `TestLibvirtUnownedAdoptionColdLifecycleE2E` passed under
+race: real metadata publication, cold recovery, foreign-owner rejection, normal
+start/pause/resume/Destroy and independent absence. Fault regressions verify lost
+metadata replies, unchanged source on observation, changed inactive XML rejection
+and preservation of external disk bytes. External administrator writers must be
+excluded because libvirt metadata has no compare-and-swap primitive.
+
+Historical incident reinspection was read-only. Execution VM boot remains
+`431164b2-2191-43d1-bebf-2154f4f96c3e`; original container
+`7c7bb3e764fd3c36c88adc6554fd07b10bb61e020c8e7da261662acf574c54fc`
+is still exited/PID0. Original Run
+`op-f03427da1f549134953b257295f39c8af37305770354447e78673f7d72dba0b0`
+has host ledger outcome `30/<Run>` in `intent`, without result, admission or
+run checkpoint. Original target boot is `5ca09ca7-b83e-41c1-aedd-c1937d95d1c0`.
+The host ledger SHA256 is
+`226c4e397d52e4e9ea35a2a047c77f9711bbea1de05e09e89214d19a6e4b0c44`.
+The separate diagnostic checkpoint SHA256 is
+`4f5bcd9547ca9805828ce827344dc5f2685e621240541f7657d51e358bb1e7a6`;
+it does not replace missing authoritative admission/return evidence. Neither
+record nor container was modified.
+
+`state audit-intents` now inspects legacy aggregates and host ledgers without
+migration, outputting only source hashes and minimal identities/blockers. The
+API intent report supplies coherent action/state evidence and explicit blockers.
+Ordinary Docker/libvirt requests remain quiescence-unsupported: daemon restart,
+resource absence and expired leases do not fence surviving shims/QEMU/storage
+work. An isolated-host fencing protocol and actual historical continuation are
+still outstanding, pending the execution-host scope decision; no successful stop
+receipt is fabricated by these diagnostics.
+
+## Additional verification and adoption inspection (2026-10-18, working tree)
+
+The pre-existing `make test-p9-real` gate passed end-to-end on the working tree
+before the subsequent adoption-inspection slice: real Docker recovery/reset/SSH,
+OpenSSH deployment, Firecracker/KVM controller crash and cross-process recovery,
+and libvirt generation lifecycle. The new GC full dispatch test passed separately
+under race and is now part of that gate. The full ordinary suite exposed a test
+fixture hang: a 100ms admission lease could expire before callback start while
+`TestAsyncRunDeadlineCancelsWhileJournalMutexIsHeld` waited without a deadline.
+The short-lease fixtures now permit startup and bound waits while retaining the
+mutex/deadline assertion and explicitly waiting beyond the original expiry in the
+renewal test. The mutex/deadline focused repeated race verification passed.
+
+`TestRemoteDockerAdoptionInspectionE2E` passed under race: real Docker inspection
+through API/Agent/host signature, durable evidence, unchanged state and container
+ownership, followed by explicit confirmation dispatch. This test does not execute
+the confirmed adoption. Managed libvirt evidence now serializes as JSON identity /
+XML digest without private paths. Firecracker inspection rejects unresolved
+launch/attachment instead of mutating its manifest. Managed confirmation preserves
+existing UID/generation only for the same topology owner. Unowned libvirt adoption
+and the complete adoption-through-Destroy fault matrix remain open.
+
+## GC dispatch and recovery changes (2026-10-18, working tree)
+
+New single-candidate dispatch connects API reservation/outbox, Agent command,
+privileged host RPC and candidate-bound signed completion. The real Docker test
+`TestRemoteDockerGCDispatchAndLostReceiptE2E` passed: a concurrent state save and
+snapshot were rejected while deletion was paused, API reconstruction recovered
+the original host receipt, exactly one provider delete occurred, and an independent
+Docker inspect confirmed absence. This is one-process reconstruction with real
+Docker and HTTP/Unix RPC, not a two-host or arbitrary daemon-crash claim.
+
+File/SQLite/PostgreSQL GC and authority-unlock tests passed under race using a
+new disposable PostgreSQL16 container. Firecracker stopped-deletion receipts,
+corrupt/missing evidence, unrelated operations, recreated generation and a child
+process exiting before runtime receipt publication have regression coverage.
+The Firecracker package race suite passed. Libvirt GC now checks a bounded exact
+UUID inventory before and after undefine; failed inventory is not absence.
+
+Canonical force-unlock supports an explicit idempotency key, persistent revoke /
+wait-for-host-stops / release, and coherent execution-authority inspection. Format5
+has an explicit archive-and-compare conversion to aggregate6. These slices do not
+close unowned libvirt adoption, full P6 acceptance, automatic
+GC inventory/batches, historical unknown intents or the overall P9/upgrade matrix.
+The historical sections below describe their recorded commits, not current
+unsupported declarations. New source changes remain under review until the final
+commit and all corresponding test evidence are recorded.
+
+
+## GC execution boundary (2026-10-14)
+
+GC grant admission now accepts opaque resource UIDs and Docker provider deletion
+requires exact external identity plus an independent post-delete NotFound check.
+The CLI remains dry-run only until an owning-agent host supervisor and durable
+leased command are available. A complete inventory alone never authorizes deletion; current references, epoch,
+grant, provider effect journal and independent absence proof are all required.
+This is intentional groundwork for the next scheduler integration, not a claim
+that automatic GC is complete. `gc --dry-run` remains the only executable CLI
+mode until that owning-agent route exists.
+
+## GC identity and Docker absence checks (2026-10-14)
+
+GC grant admission no longer requires the obsolete `topologyUID/` resource UID
+prefix. Resource UIDs are opaque; current runtime-generated hashes must work.
+The authenticated API regression reproduced HTTP 400 for a valid hash UID and
+now verifies HTTP 200 plus subsequent authorization. Canonical topology owner,
+current reference digest and referenced-resource rejection remain mandatory.
+
+Docker container/network GC primitives now require inspect's full ID to equal
+the candidate external ID before mutation. After DELETE they independently
+inspect again and return success only for NotFound. A successful DELETE response
+with a still-present object, or an unavailable daemon, cannot produce a confirmed
+deletion result. Name aliases and replacement objects fail before mutation.
+
+`TestDockerRealGCExactAbsenceE2E` passed under race (0.49 seconds), using isolated
+real container/network objects. It rejected name aliases and stale generations,
+deleted exact current identities, independently verified absence, and accepted
+absent-object retry. The test is included in `make test-p9-real`. This is a
+provider/API prerequisite, **not** complete automatic GC acceptance. CLI deletion
+and the production host remain disabled pending complete inventory and execution
+fencing, reference revalidation across effects, dispatch and recovery integration.
+
+## Repeated interrupted reset continuation accepted (2026-10-13)
+
+`TestRemoteDockerRepeatedResetContinuationE2E` passed under race (17.35 seconds):
+prepared-boundary interruption, cold signed failure, public resume, a second
+interruption after destroyed, another cold signed failure and public resume.
+Preparation, deletion and replacement counters are each exactly one. The original
+reset action remains owned by the root Run; the new execution retains its actual
+ParentID chain. Final generation replacement, normal Destroy, independent absence
+and cold metadata deletion passed. The gate is in `make test-p9-real`.
+
+Cold reset recovery now uses the existing ancestry verifier on every predecessor,
+not just the root's stop receipt. Tests with a real repository reject missing
+proof at either predecessor and retain original action identity. Existing
+unknown-phase, cycle, revision and live-execution restrictions remain. Destroy
+with a ParentID is not newly authorized. Full Go tests, independent review and
+focused race/vet passed. This extends recovery at proven safe phases, not arbitrary daemon-call
+interruption or the retained historic intent-only incident.
+
+## Cold reset recovery and explicit continuation accepted (2026-10-13)
+
+`TestRemoteDockerColdResetContinuationE2E` passed under race (14.50 seconds).
+The host is interrupted after its original reset handle and prepared phase are
+durable. A reconstructed API/host generates a signed recoverable failure using
+the original admission, executor lock, canonical incarnation, safe action phases
+and child-stop inventory. The public resume endpoint then completes the reset.
+Assertions require one PrepareReset, one DestroyReset, one ApplyReset and exactly
+one original reset action; generation advances once, followed by successful
+Destroy and independent cleanup/metadata deletion. Cold Destroy recovery passed
+in the same run. Both gates are in `make test-p9-real`.
+
+Two production wiring defects were exposed and fixed: the host execution bridge
+did not bind its own public key for continuation-stop validation, and Docker
+ObserveReset treated the exact old container still occupying its name as a
+replacement generation. Bootstrap now binds the verified host identity once,
+rejecting conflicting rebinding. ObserveReset validates the old ID/labels before
+reporting Prepared and rejects old-ID reappearance after replacement publication.
+
+Unknown preparing/destroying/applying phases and interrupted continuation chains
+are not automatically adopted. The historical intent-only stopped container is
+unchanged. This gate uses service cancellation and in-process reconstruction at
+a known durable boundary; arbitrary daemon-call SIGKILL and historical fencing
+remain separate requirements.
+
+## Cold Destroy recovery after durable provider return (2026-10-13)
+
+`TestRemoteDockerColdReturnedDestroyRecoveryE2E` passed under race (12.96 seconds).
+The fixture blocks resource publication after real container deletion and its
+EffectComplete journal write, interrupts the host service, confirms that the old
+Run has no HostCompletion, then reconstructs API and host. Cold recovery verifies
+the admission, original executor lock, canonical Run incarnation, complete action
+journal and stopped task inventory before publishing signed recoverable failed.
+
+Public owning-agent recovery then observes resource absence and commits the
+original deletion outcome. Provider deletion count stays exactly one. A normal
+subsequent Destroy produces cleanup evidence and allows cold metadata deletion.
+The new gate is included in `make test-p9-real`.
+
+Rejections cover active executor locks, changed result identity, non-Destroy
+operations, unknown deletion progress, missing/corrupt task inventory, running
+children and unacknowledged stop receipts. Existing API child-grant inventory
+checks remain mandatory before parent release. No cleanup success is inferred
+from action evidence alone. Independent review found no important blocker.
+Full Go tests, complete hostsupervisor/agentexec/effectgate race suites and
+affected-package vet passed.
+
+Boundary: the real test reconstructs services in-process after cancellation at
+the durable return boundary. It does not establish SIGKILL recovery during an
+arbitrary daemon request, or recover old records with no admission seed. The
+retained historical stopped container remains untouched; its explicit fencing
+and cleanup continuation are still outstanding.
+
+## Lost Docker delete response and cancellation evidence (2026-10-13)
+
+`TestDockerRealLostDeleteResponseE2E` passed under race (0.13 seconds). Its
+transport discards the actual daemon 204 response for the exact container DELETE
+and cancels the caller. The provider uses a bounded independent read to establish
+that the original full container ID is absent, with exactly one DELETE request.
+Presence, transitional state and unavailable daemon replies never count as
+absence. This gate is included in `make test-p9-real`.
+
+Runtime now preserves a successful deletion callback's EffectComplete evidence
+under a bounded journal-only context even if caller cancellation races the
+response. It does not commit the resource deletion under the cancelled context.
+The cold-recovery test subsequently observes absence and commits state without
+another provider delete. Docker observation also rejects missing State, wrong
+ID and restarting/removing/dead states, avoiding false stable-state evidence and
+a reproduced nil-State panic.
+
+Full Go tests, complete runtime/Docker race suites, affected-package vet and
+independent review passed. The existing real Docker returned-Destroy recovery
+gate also passed (13.95 seconds).
+
+Historical inspection (read-only): old Destroy
+`op-f03427da1f549134953b257295f39c8af37305770354447e78673f7d72dba0b0`
+still has intent only, no checkpoint/admission seed, with original boot
+`5ca09ca7-b83e-41c1-aedd-c1937d95d1c0`; current execution VM boot is
+`431164b2-2191-43d1-bebf-2154f4f96c3e`. Container
+`7c7bb3e764fd3c36c88adc6554fd07b10bb61e020c8e7da261662acf574c54fc`
+still exists, exited with PID 0, retaining its original owner/resource/generation.
+No completion or cleanup was fabricated. Explicit historical fencing and
+continuation remain required; the unknown-result workstream is not yet closed.
+
+## Returned Destroy failure becomes observation-recoverable (2026-10-13)
+
+The host now signs recoverable failed for synchronously returned Destroy when
+all admitted deletion actions have durable EffectComplete and exact incarnation /
+target identity, no unrelated unresolved action exists and child stops are
+confirmed. No cleanup proof is emitted. Cold observation must independently
+prove each target absent before deleting its state record.
+
+Fault testing exposed a second blocker: authenticated terminal completion kept
+a future worker lease deadline, delaying recovery for up to 30 minutes. That
+trusted transition now closes LeaseUntil while retaining attempt, owner and the
+original signed result. Unverified worker failures and lease expiry are unchanged.
+
+`TestRemoteDockerReturnedDestroyRecoveryE2E` injects state publication failure
+after the real container removal returns. It requires signed recoverable failed,
+reconstructs API/host, recovers through the public owning-agent endpoint, and
+asserts that the provider deletion count remains exactly one. Subsequent normal
+Destroy produces its own cleanup receipt; exact owner inventory and cold metadata
+deletion are verified. The test is included in `make test-p9-real`.
+
+The final real Docker gate passed under race (14.15 seconds). Full Go tests,
+focused host/Agent/API completion and lease race regressions, affected-package
+vet and independent review passed.
+
+This does not resolve a daemon request with no return evidence or the retained
+historical stopped-but-not-removed container. Those remain unknown and are not
+rewritten by this patch. The full unknown-result workstream remains open.
+
+## Durable Run admission before callback entry (2026-10-13)
+
+Production host admission now atomically stores a versioned canonical Run/request
+seed with the intent, stripping inputs and cleanup claims. A second online
+authority check and durable Started marker precede callback registration/launch.
+Cold recovery takes the original executor lock and rereads the signed envelope;
+only an explicit seed with no Started marker/checkpoint may become signed failed.
+Entered callbacks, old records without the seed, changed identity and a live
+executor remain uncertain. No callback is replayed and no cleanup is fabricated.
+
+`TestRunAdmissionProcessCrash` exits an independent process with code 37 after
+durable admission while still holding its executor lock. A reconstructed host
+acquires the released lock and reports signed failed. Other regressions cover
+live-lock rejection, historical records, substituted Runs, pre-entry revocation,
+marker persistence before callback and exact receipt replay. Canonical API tests
+verify failed Run persistence, command retirement and old-authority rejection on
+filesystem, SQLite and isolated real PostgreSQL, all under race (0.97 seconds).
+
+Full Go tests, complete effectgate/hostsupervisor/agentexec race suites, vet and
+independent review passed. Real Docker completion-loss, SSH Run and targeted
+SSH reset regressions also passed under race (12.89, 14.13 and 16.31 seconds).
+The temporary PostgreSQL instance is disposable and separate from project data.
+
+This closes the **new-protocol admission-before-entry** crash window, not every
+intent-only incident. A callback whose Started marker exists may have issued a
+daemon request; proving its quiescence is the next implementation slice. Old
+historical unknown records were neither reinterpreted nor altered. The subprocess
+gate does not substitute for a distributed pre-entry process-fault matrix.
+
+## Returned Run failure before resource admission (2026-10-13)
+
+The trusted host now completes a synchronously returned failed execution when a
+locked full-journal read proves that the Run admitted no resource actions, no
+other unresolved action exists, and all child admission/termination is confirmed.
+The result is signed failed, never cleanup success, and does not permit reset
+continuation. This prevents known preflight failures from remaining unknown
+solely because the successful-resource checkpoint was never reached.
+
+The executor/coordinator regression uses invalid HCL and verifies signed failure
+after reacquiring topology exclusion. Own actions, unrelated unresolved actions,
+continuations and unknown child admissions are rejected. Existing interrupted
+reset phase checks remain intact. Full Go tests, focused race, affected-package
+vet and independent review passed.
+
+This is live synchronous-return evidence only. It does not recover historical
+intent-only cold records, prove an interrupted daemon request stopped, or close
+the unknown-Run workstream. No retained incident was rewritten or deleted. The
+remaining steps are recorded in
+[unknown-run-recovery.md](../design/2026-10-13-unknown-run-recovery.md).
+
+## Trusted SSH boot deployment and VM/helper restart closure (2026-10-13)
+
+The final reboot gate passed:
+`/tmp/sysbox-p9-lab-current/sshgate85dc2c905434/result.json`.
+It records 26 actual SSH login checks and different before/after kernel boot IDs
+for both control and execution VMs. The guest container/service was also
+restarted with its writable journal intact; helper RPCs and key lookup naturally
+start independent processes. Managed keys remained available, the rotated-out
+key was denied, administrator login was preserved, and revocation after VM
+reboot succeeded using fresh authority. The original container UID/generation
+was unchanged by reboot.
+
+The image now contains only a trusted administrator profile and explicit final
+Include. Its boot entrypoint starts sshd and invokes the real durable installer:
+stage/config validation, owned drop-in publication, reload and readiness. A new
+`pid_file` profile adapter verifies executable inode, exact configuration arguments
+and process start time, and reloads using pidfd. It is mutually exclusive with
+the existing systemd adapter. The entrypoint handles stale PID files and never
+signals the child after reaping it. No RPC chooses deployment paths or service
+commands; no runtime package-manager guessing or compatibility fallback exists.
+
+After restarts, the deployment was ready, its profile unchanged and the original
+administrator main-config digest unchanged. The same run then completed the
+lost-host-completion proof, runtime SSH creation, targeted reset and successful
+login on generation 2. Destroy verified both exact container IDs and empty
+owner-scoped container/network inventories before normal metadata deletion.
+The final test services stopped. Historical unknown Destroy/container evidence
+was retained. Earlier passing reboot rounds remain under
+`sshgatea456d81c0369` and `sshgatef14745ef1f36`.
+
+Validation: full `go test ./...`, SSH/helper race suites, real OpenSSH deployment
+E2Es (including PID-file substitution rejection), vet and 46 Python acceptance
+tests passed. Independent review found no important blocker. Reproduce with
+`make test-p9-ssh-reboot`; see [managed-ssh-service.md](managed-ssh-service.md).
+
+Boundary: these VM tests explicitly start the isolated services and original
+owned container after kernel reboot; they do not claim automatic recovery of
+every host workload. The supported trusted-profile SSH service/runtime slice is
+closed. Arbitrary image enrollment, other-provider matrices and remaining
+P5/P6/P8/P9 work are separate. The following older “enrollment/reboot open” notes
+describe earlier checkpoints and are superseded for this supported layout.
+
+## Two-VM runtime SSH lost-completion recovery (2026-10-13)
+
+The final gate passed with a host-only HTTP fault proxy. After the backend
+committed the runtime Apply, the proxy withheld every acknowledgment of that
+Run's completion until the Agent and host were stopped. It durably recorded the
+exact request path and SHA-256 only after backend HTTP 200. API and proxy were
+restarted, the fault released, and the reconstructed host resubmitted precisely
+the same receipt bytes. The gate required this replay, not merely a terminal Run.
+
+The complete runtime SSH resource (including operation identity, generation and
+configuration handle) remained identical across recovery. Twenty real login
+checks, subsequent targeted reset, both generation IDs' absence, owner container
+and network absence, and normal metadata deletion all passed. Final evidence:
+`/tmp/sysbox-p9-lab-current/sshgate4b45f9a926eb/result.json`.
+API, proxy, Agent and host services stopped; historical incident data was not
+rewritten. Early proxy setup failures retained their namespaces with services
+stopped. Agent WebSocket and public API traffic bypass the fault proxy.
+
+All 46 acceptance script tests passed, including actual HTTP chunked response
+forwarding, repeated withheld receipts, proxy reconstruction and rejection of
+altered completion bodies. Independent review found no important blocker.
+This closes the combined Docker SSH runtime completion-acknowledgment-loss gate;
+it does not establish VM/kernel reboot, guest-helper reboot, automatic service
+enrollment or other-provider acceptance.
+
+## Two-VM managed SSH login, reset and runtime restart recovery accepted (2026-10-13)
+
+The final `ssh_lifecycle.py` gate passed with two independent VM kernels, a
+fresh PostgreSQL database and separate API/Agent/host directories, credentials
+and systemd units. Control VM made real SSH connections over the private network
+to the managed Docker node on execution VM. The image explicitly pre-enrolls
+OpenSSH and its helper; this does not claim automatic service provisioning.
+
+Seventeen positive/negative login checks covered public API permission creation,
+key rotation, API/Agent/host process restart, revocation and administrator access
+preservation. Then runtime SSH Apply and targeted reset passed: resource UID
+remained stable, node generation advanced from 1 to 2, the rebuilt permission
+allowed login, and the revoked key remained rejected. Negative checks require
+an explicit public-key authentication rejection, not a connection failure.
+
+Destroy completed, both exact container IDs were independently absent, and
+owner-scoped container and NAT-network inventories were empty before normal
+metadata DELETE. All three test services stopped. Final evidence:
+`/tmp/sysbox-p9-lab-current/sshgate045811c8b0c8/result.json`.
+The artifact records source-script/binary/helper hashes, boot IDs, completed
+operations and individual login checks. A preceding successful lifecycle is
+retained under `sshgate5a9ef0ee0be9`.
+
+After runtime Apply completed, API, Agent and host-supervisor were restarted;
+the original Run was observed again and login remained valid before reset. This
+proves process restart recovery after a completed runtime mutation. It does not
+inject a lost HTTP completion or reboot either VM/kernel.
+
+The reusable entry point is `make test-p9-ssh-two-vm`; prerequisites and retained
+fixture policy are in [two-vm-managed-ssh.md](two-vm-managed-ssh.md). All 45 Python
+acceptance tests and the Makefile command expansion passed. Independent review
+found no remaining important issue in this gate. The production binaries were
+built from `f5eed78` with `CGO_ENABLED=0` and `-buildvcs=false`.
+
+Initial attempts exposed fixture errors: Alpine's existing `guest` account,
+missing NAT attachment for Docker host-port exposure, and lowercase Docker
+absence text. The first incomplete Apply's original intent was retained, without
+inventing completion; no container was created for that topology. Earlier
+historical unknown Destroy `p9-5213226d26bb` and its stopped container remain.
+Final deployment only reloads a new role-specific HBA rule; it neither modifies
+database listeners nor restarts the shared PostgreSQL service.
+
+Still open: automatic trusted-service/image enrollment, explicit lost-completion
+and VM/helper reboot faults in this combined SSH gate, other-provider SSH reset,
+and the broader P5–P9 operational/fault matrix.
+
+## Reset SSH dependencies repaired (2026-10-13)
+
+The combined SSH/reset/Destroy gap below is fixed for new reset admissions.
+Reset pins existing SSH dependencies and desired configuration in its durable
+intent, recreates permissions on the replacement generation and atomically
+publishes the node and SSH resource results. Mutation admission precedes the
+effect; cold recovery observes the original child ID without repeating it.
+Unknown admitted results remain uncertain. The previous incarnation validation
+is unchanged. This also fixes deletion using an older generation from history
+after an atomic reset advanced the canonical SSH resource.
+
+`TestRemoteDockerTargetedResetSSHRunE2E` passed under race (15.92 seconds), including
+independent inspection of the new guest's managed SSH state and final signed
+Destroy/empty inventory/cold metadata deletion. It is now in `make test-p9-real`.
+`TestLocalCLIManagedSSHApplyRotateDestroyE2E` now additionally runs targeted reset
+and independently reads the rotated public key from the new guest; file and
+SQLite passed using independent CLI processes (25.14 seconds total), followed
+by Destroy without HCL. The CLI build used `-buildvcs=false` because VCS stamping
+was unavailable in this worktree environment.
+
+Runtime tests cover lost replies, uncertain admissions, foreign results, changed
+configuration and denied writes. Repository tests cover immutable dependency
+snapshots, monotonic results, rejection of incomplete publication and atomic
+node/SSH publication. Cold recovery through the actual runtime/repository path
+leaves node destroy, replacement and guest mutation counters at exactly one.
+Both repository suites passed under race on filesystem, SQLite and an isolated
+real Postgres 16 instance, with no backend skipped (1.26 seconds combined).
+Full tests, focused race, affected-package vet and independent review passed.
+
+This does not repair pre-existing historical incomplete resets by rewriting
+their evidence, and does not establish Firecracker/libvirt SSH reset or two-VM
+managed-key login acceptance. Those broader provider acceptance gaps remain.
+
+## Targeted Run authority and dispatch retirement (2026-10-13)
+
+SSH and guest-task derivation now require enrolled host signatures. The guest
+renewal regression uses a targeted reset parent and verifies unsigned requests,
+payload substitutions, expired/revoked authority and retired source commands.
+Lifecycle parents own topology exclusion; their request digest still binds the
+original target UID/generation. Host callbacks resolve canonical Run candidates
+and reject children outside the selected node. Historical task-stop discovery
+and signed completion use the same separation. Resource-scoped old Run grants
+are rejected, without a compatibility path.
+
+Real testing found that targeted reset dispatch previously omitted the target
+UID/generation. Dispatch now reads these from canonical state and rejects missing
+or unsupported targets. `TestRemoteDockerTargetedResetRunE2E` passed under race
+(13.87 seconds): cold recovery, targeted node replacement with an increased
+generation, signed Destroy, empty owner inventory and cold metadata deletion.
+The gate is included in `make test-p9-real`.
+
+Final `go test ./...`, focused API/Agent/host race regressions and affected-package
+vet passed. Independent review found no important blocker in this authority slice.
+
+Host completion also retires its delivery command after committing evidence and
+releasing authority, preserving the immutable Run seed. This fixes intermittent
+metadata deletion conflicts while waiting for the final Agent event.
+`TestRemoteDockerCompletionLossRecoveryE2E` and
+`TestRemoteDockerSSHAccessRunE2E` passed under race (12.82 and 13.76 seconds).
+
+**Newly reproduced gap:** combining targeted reset with an existing managed SSH
+resource replaces the node but leaves the SSH resource's old incarnation handle.
+The following Destroy correctly refuses it with `SSH node incarnation or account
+changed`. The targeted reset gate above deliberately covers nodes without SSH
+dependents; it does not close this combined workflow. Next implement durable
+reset dependency reconciliation and crash recovery, then repeat the combined
+SSH reset/Destroy scenario. Do not weaken the incarnation check or simply discard
+the old SSH record. Automatic guest service/image enrollment and combined two-VM
+managed-key login/restart acceptance also remain open.
+
+## Local SSH authority and host-bound derivation (2026-10-12)
+
+`TestLocalCLIManagedSSHApplyRotateDestroyE2E` passed for file and SQLite
+repositories (23.98 seconds total). Independent CLI processes bootstrap a private
+authority, apply, rotate the managed key and destroy after HCL removal; guest
+readback confirms the rotated key and owner inventory is empty after deletion.
+`TestLocalSSHColdReceiptRecoveryE2E` also passed on both backends: a guest commit
+with a lost completion response is recovered by a reconstructed controller using
+the original receipt, retiring its command and authority. Full `go test ./...`,
+relevant race suites and affected-package vet passed for commit `7ee83ed`.
+
+Derived SSH requests now require the enrolled host's signature over the exact
+parent, mutation, resource generation and guest boot ID. Agent authentication
+alone is rejected; parent authority and its source lease remain independently
+checked. Focused race regressions passed, followed by
+`TestRemoteDockerSSHAccessRunE2E` under race (14.20 seconds).
+
+Remaining SSH work: resource-targeted Run child authorization, automatic guest
+service/image enrollment, and combined two-VM API/Agent key rotation, real login
+and restart acceptance. The older local-bootstrap gap below is now closed; the
+service-only two-VM evidence still does not establish managed-key login.
+
+## Runtime SSH and enrolled service deployment (2026-10-12)
+
+`TestRemoteDockerSSHAccessRunE2E` passed under race (13.92 seconds). It uses the
+production API/Agent/host workflow and canonical SQLite to create a real Docker
+node plus `sysbox_ssh_access` in one topology Run. SSH gets its own node-scoped
+grant under the Run, with signed derived completion and Run-aware host recovery.
+The test loses Run completion acknowledgement, reconstructs API/Agent/host,
+observes original identities, then destroys the resources and commits the signed
+cleanup receipt. This is a topology Run test; it does not cover local CLI signing
+or resource-targeted parent grants.
+
+Runtime SSH now uses schema 2, canonical node connection settings and the managed
+SSH SPI. Read inspects current configuration; exact CAS deletion works without
+the original HCL and refuses newer revisions. Lost create response recovery
+observes the original action without replay. Old CopyFile/rm and graph-only SSH
+connection helpers were removed. Libvirt gained the domain-fenced SSH forwarding
+methods. New SQLite files are created mode 0600 before SQLite opens them, fixing
+the host resolver rejecting databases previously created as 0644.
+
+`TestRealSSHDDeploymentReloadRecoveryE2E` passed with real OpenSSH, validating the
+complete Include structure, atomic owned drop-in publication, reload, recovery
+and administrator login preservation. Installer regressions cover conditional
+Include semantics, untracked `Include=...`, changed service profile, damaged or
+foreign files and edits during validation/reload. Helper administrative commands
+are documented in [managed-ssh-service.md](managed-ssh-service.md).
+
+The final helper build also passed the real systemd adapter on two independent
+VM kernels. Control VM authenticated to an isolated execution-VM sshd before
+installation and after install and independent-process recovery; main config
+remained unchanged, the test unit was removed, and its listener was independently
+confirmed absent. Evidence:
+`/tmp/sysbox-p9-lab-current/sysbox-p9-ssh-34971e40954f/result.json`.
+The lab disks and historical unknown records were preserved.
+
+Full `go test ./...`, relevant race suites and affected-package vet passed.
+New real tests are included in `make test-p9-real`. Remaining: local CLI authority
+and bootstrap, resource-targeted child grants, automatic service enrollment in
+managed images, and combined two-VM API/Agent key-lifecycle/login fault acceptance.
+The two-VM result above is service-only and uses a no-op managed key source to
+verify administrator preservation; it is not evidence of managed-key login.
+
+## Public SSH execution path accepted on Docker (2026-10-12)
+
+`TestPublicSSHAgentDockerE2E` now starts at the public HTTP endpoint and runs
+the actual Agent, durable command leasing, production grant issuer, host Unix
+RPC, online authorization, canonical Docker resolver, current guest helper and
+authenticated host completion. Create, rotation to a different key and CAS
+delete passed under race (1.55 seconds). Each operation is independently read
+back from the guest and compared with the canonical result. The first completion
+response is deliberately lost after API commit; the host retries its persisted
+receipt without re-executing the mutation. This test is in `make test-p9-real`,
+whose acceptance runner rejects skips and missing test matches.
+
+Host journals now use a separate `guest-ssh` directory, bounded hashed names,
+process-independent exclusion and full request/grant/result binding. Invalid
+or corrupt records cannot be overwritten as fresh work. Dispatch checks live
+authority and the canonical account, pins the immutable provider ID, and validates
+the complete returned identity. Startup recovery only observes uncertain intents,
+visits records independently and retries unchanged receipts. Focused race tests
+cover revocation, corruption/tampering, concurrent mutation/recovery, foreign or
+replaced providers, lost replies, lost acknowledgements and startup recovery.
+
+The old host SSH coordinator, mutation/observe RPCs and CopyFile/rm callbacks
+were removed. Agent dispatch consumes only SSHMutation commands and never posts
+canonical SSH completion itself. API and host share canonical account parsing.
+This also fixes native provider `SSHUser` configuration being ignored by the API.
+
+The real continuous workflow exposed one additional filesystem outbox bug:
+reading a legitimately host-completed operation used worker-write validation and
+reported corruption on the next command admission. Snapshot reads now validate
+immutable seed bindings while accepting committed host results; worker writes
+remain prohibited. The public-admission regression covers completion followed by
+command listing, so this failure is covered without Docker as well.
+
+Validation: full `go test ./...` passed; SSH/NodeOperation/GuestDispatch race
+suites passed for hostsupervisor, agentexec, api and persistence. Additional
+Agent tests reject correctly signed grants for another agent, attempt, command,
+session, scope or digest. Vet passed for the affected packages and CLI. Independent
+review found no remaining critical or important issues in this patch.
+
+Boundary: this accepts the SSH execution protocol on one Docker host. It does
+not establish automatic sshd installation/reload, runtime SSH resource migration,
+cross-host SSH lifecycle, actual host process-kill acceptance, PostgreSQL or the
+remaining P9 fault matrix. The correction below describes the earlier state;
+its listed execution-path blockers are addressed by this change.
+
+## SSH public-path acceptance correction (2026-10-12)
+
+**The public SSH workflow is not end-to-end accepted.** Earlier statements that
+the production path was connected were based on compilation and component tests
+and were too strong. The new public HTTP admission regression returned 202 but
+the resulting command failed the actual guest decoder: admission persisted both
+old SSHAccess and new SSHMutation, which the new contract explicitly forbids.
+Admission now persists only SSHMutation. The same public regression verifies
+that the accepted command can be leased, decoded and used by the issuer.
+
+Additional public tests reproduced a valid CAS deletion without keys being
+rejected, and a client `user=root` overriding canonical `ubuntu`. Both are fixed:
+mutation shape is validated by operation kind before state access, the actual
+user is always resolved from canonical state, and explicit user overrides are
+rejected before dispatch. Invalid keys and zero-revision deletes create no
+command. These regressions pass under race.
+
+Current remaining production blockers, confirmed by code inspection and an
+independent read-only review:
+
+- Agent's main operation switch routes guest SSH to power; its SSH relay still
+  consumes the old SSHAccess payload and its completion branch omits guest SSH.
+- Host SSHGuestDispatcher does not call online Authorize or serialize mutation
+  and recovery. A valid but revoked grant is insufficient protection.
+- Loading only decodes JSON and treats errors other than NotExist as new work;
+  corrupt records can be overwritten/replayed instead of preserving unknown.
+- Host Server has no SSHGuest recovery loop. Recovery uses logical NodeID where
+  provider connections require immutable provider ID, without pinning it first.
+- Hex-expanded identity filenames can exceed filesystem limits; sharing the
+  task journal directory makes the task scanner encounter SSH records.
+- Receipt-present retries do not re-report an unacknowledged receipt; recovery
+  stops at the first failure instead of visiting later records.
+
+Tests actually rerun this round: API/Agent/host/controlplane/persistence SSH and
+node-operation race suites passed; real Docker provider/helper E2E passed
+(0.88s); real two-listener sshd key rotation/revocation/endpoint E2E passed
+(5.85s); real sshd syntax/effective-config conflict tests passed (0.18s).
+The Docker test exercises host discovery but signs mutations in the fixture:
+it does not exercise public admission and production Agent modification relay.
+No two-VM SSH lifecycle or new PostgreSQL acceptance is claimed this round.
+The full repository `go test ./...` and `go vet ./pkg/api` also passed after
+the admission fixes. These results do not replace the missing public workflow
+acceptance described above.
+
+## PostgreSQL host completion/issuance lock ordering (2026-10-11)
+
+Host node-operation completion now acquires the authority row before operation
+and command rows, retaining the same authority snapshot until the result and
+stop transition commit. Previously it held the command row while waiting for
+authority, the reverse of grant issuance and renewal.
+
+The regression holds authority in an independent transaction, starts the real
+completion path, and checks `pg_blocking_pids` to prove it is waiting. The issuer
+then locks command with NOWAIT: before the fix this deterministically failed
+with SQLSTATE 55P03, after the fix it succeeds. On releasing authority, the
+deliberately invalid completion receipt is rejected and the operation remains
+unchanged. This proves the lock relationship and rollback; successful receipt
+commit is covered separately by the three-backend SSH completion regressions.
+
+The focused real PostgreSQL race regression passed, together with local,
+SQLite and real PostgreSQL guest SSH/node completion tests. Worker completion
+does not acquire authority and retains its previous path. This closes this
+specific lock inversion, not the remaining SSH admission/dispatch workflow.
+The full API race suite also passed with the isolated real PostgreSQL enabled
+(97.170 seconds), and API vet passed.
+
+## Current SSH operation revalidation during grants (2026-10-11)
+
+Issuance/authorization/renewal now read the current guest SSH NodeOperation in
+the authority adapter, rather than relying solely on a queued command snapshot.
+Missing operation, terminal status, changed mutation, incarnation, node, command
+or resource generation reject the source. A semantic rejection retains the
+durable authority clock floor and cannot extend the delivery lease.
+
+The authenticated grant regression first reproduced signing for a missing
+operation, then passed after the check was added. All guest SSH HTTP tests ran
+with race on filesystem, SQLite and an isolated real PostgreSQL 16 instance.
+Direct rule tests cover terminal, missing, replaced and prepopulated-result
+operations. This does not close the preexisting PostgreSQL completion/issuance
+lock-order inversion; concurrent completion and renewal need correction before
+production admission/dispatch is enabled.
+
+## Guest SSH command-backed grant issuance (2026-10-10)
+
+The production command execution-grant endpoint now derives guest SSH grants
+from the persisted NodeOperation.SSHMutation. The shared command decoder checks
+agent, action, command binding, topology/node, resource/generation, operation
+kind and nonterminal state. It does not accept replacement mutation data from
+the requesting worker.
+
+Authenticated HTTP tests exercised signature verification, exact CAS payload
+digest, guest boot binding, rejection of an extra mutation field, online
+rejection of a newly signed envelope for a different CAS revision, and retired
+command rejection. Local, SQLite and a dedicated real PostgreSQL 16 instance
+all executed with race, alongside the completion and injection regressions.
+Shared controlplane, Agent and host race suites and relevant vet passed.
+
+The test seeds a durable accepted command. Public admission, host mutation
+dispatch, current guest result reporting and automatic sshd deployment still
+need integration; this does not prove an end-user SSH lifecycle.
+
+## Guest SSH canonical completion across all three stores (2026-10-10)
+
+NodeOperation now persists the immutable guest SSH mutation and the committed
+SSH result. The three existing host-completion adapters share the same guest
+SSH transition: exact command/action/attempt, resource scope, canonical node,
+request digest, user and CAS revision are checked. Retired commands recover
+from the retained operation request plus immutable command tombstone identity.
+Ordinary worker completion cannot finish guest SSH; ordinary operation CAS
+cannot inject a result or change its original mutation.
+
+The existing host node-operation completion HTTP route now authenticates the
+new receipt, checks the canonical mutation, commits through that shared rule,
+then releases authority. `TestGuestSSHStopCannotBypassCanonicalCompletion` and
+the preexisting SSH host-completion regression ran with race on local, SQLite
+and a dedicated real PostgreSQL 16 instance; every backend subtest executed.
+They cover generic-stop rejection, signed wrong-node rejection, command
+retirement, result persistence and exact retry. Shared persistence/controlplane
+full race suites also passed.
+
+Review identified a creation-time injection path: queued operations could be
+seeded with SSHResult before ordinary CAS. The failure reproduced on all three
+stores. Shared encoding/decoding now rejects prepopulated queued/running results,
+raw Create and atomic dispatch reject injection, and ordinary CAS cannot advance
+guest SSH to a terminal state. Those three-store regressions passed with race.
+The API (real PostgreSQL enabled), host and Agent full race suites passed as
+well before the final codec guard; the guard was then checked with all-store
+focused API and shared persistence/controlplane regressions.
+
+This is canonical completion, not a full remote workflow: production admission,
+issuer and host mutation dispatch still need wiring. The tests seed their own
+command/operation/grant records; they do not prove production issuance.
+
+## Guest SSH completion evidence contract (2026-10-10)
+
+Added a signed SSH result to the common execution-stop receipt. Generic stop
+signing rejects guest SSH operations without their concrete result. Dedicated
+signing/verification binds request digest, user, AccessID, CAS revision,
+guest boot, resource scope/generation, epoch and apply/delete presence.
+A test additionally signs an inconsistent revision with a valid host key and
+confirms canonical request verification rejects it.
+
+The local and SQLite API regression reproduced the generic stopped endpoint
+prematurely releasing a guest SSH grant (HTTP 200). That route now rejects it
+with HTTP 409 and retains the authorization scope until dedicated canonical
+completion can commit. This is a prerequisite contract/security boundary;
+production issuance and dedicated completion are not yet wired. No new real
+PostgreSQL or distributed SSH completion pass is claimed by these tests.
+
+## Canonical repository through host RPC to real Docker discovery (2026-10-10)
+
+`TestDockerProductionSSHAccessE2E` now persists the real container's identity
+and explicit `ubuntu` connection user in a filesystem lifecycle repository,
+closes the writing repository, and uses `CanonicalResolver.Resolve` in the
+host dispatcher. Every RPC reopens the repository; no fixture resolver supplies
+the user, provider ID or connection.
+
+The real test, using a freshly built helper and race, passed in **0.92 seconds**:
+initial absence, signed configuration creation, discovery through the Unix
+host RPC with canonical node name/user, stop and recreation of the supervisor
+service instance, unchanged discovery, deletion tombstone, normal provider
+Destroy and exact container NotFound. A stale worker generation was also
+rejected through the real host socket. Production provider identity checks
+remain in the path. The two server instances run sequentially in the same test
+process: this is not an independent-process crash or two-host acceptance.
+
+Mutations still use fixture-signed guest grants via the provider SPI. The test
+does not claim API issuance, host mutation completion, runtime resource migration
+or automatic sshd config installation. Those P7 requirements remain open.
+
+## Canonical guest user after cold handle reconstruction (2026-10-10)
+
+The host resolver now recovers its guest user from the node's persisted desired
+connection/provider configuration after verifying real node identity. Explicit
+first connection.User takes priority, then provider_config.SSHUser; absence
+stays unspecified. No root fallback or worker-selected user was introduced.
+Malformed configuration and invalid usernames reject guest connection resolution
+before connecting. Provider-only NodeTarget resolution remains independent, so
+SSH configuration does not block power operations.
+
+The canonical Run-candidate repository test persists the username, reopens the
+record through the normal resolver and verifies `Target.User == ubuntu` while
+retaining wrong-node rejection. Unit tests cover precedence, absent fields,
+malformed values and not selecting a later connection implicitly. Host full
+race and focused persistence regressions passed; this is not two-host SSH
+grant issuance/completion acceptance.
+
+## Owning-host SSH discovery RPC boundary (2026-10-10)
+
+Added the read-only `ssh-discover` host RPC and client. Only canonical target
+identity plus AccessID cross from the worker; the resolver supplies the guest
+user, provider ID and connection. Missing user and scope mismatches reject
+before guest discovery. The host validates returned configuration and maps the
+provider ID back to the canonical node name; the client revalidates the result.
+Shared `SSHAccessDiscovery.Validate` is also used by guest transports.
+
+A real Unix socket regression exercised serialization, host routing and client
+validation with a trusted fixture resolver. Negative checks cover missing user,
+wrong scope, foreign response and unsafe AccessID. This is RPC boundary evidence,
+not a real canonical repository/API/Agent or two-host discovery acceptance.
+Guest grant issuance, mutations and automatic sshd deployment are still open.
+
+## Production Docker SSH capability (2026-10-10)
+
+The formal Docker provider connection now implements the complete
+`ConnectionSSHAccess` SPI by forwarding through its existing guarded
+`dockerConn.Exec` helper channel. No separate Docker client or unguarded
+command path is introduced. The daemon-based regression proves discovery,
+mutation, observation and inspection reject stale resource generations before
+any exec creation.
+
+`TestDockerProductionSSHAccessE2E` ran with the current static helper and real
+Docker under race, passing in **0.52 seconds**. It used `Substrate.Connection`,
+not the earlier test-only Docker shell adapter: signed create, discovery,
+observation through a newly obtained connection, stale ownership proof rejection,
+signed deletion and revision tombstone all passed. Normal `DestroyNode` succeeded
+and exact container inspection returned NotFound. The fixture used a cached
+Alpine image and introduced no host SSH configuration.
+
+The test is included in `make test-p9-real`; the full matrix was not rerun for
+this change. Provider race and vet are separate checks. This closes Docker's
+missing connection capability, not runtime resource handling, host/API grant
+issuance/completion, or automatic sshd config publication.
+
+## Managed SSH discovery through a real helper (2026-10-10)
+
+The disposable two-listener sshd/Docker-helper lifecycle now additionally uses
+`DiscoverSSHAccess`. The current helper reported initial absence without a
+record, returned the original handle/config after creation, rejected a foreign
+owner as unknown, and returned the committed deletion tombstone at revision 3.
+Rotation, revocation, independent access preservation and endpoint restriction
+checks continued to pass; the full test finished in **5.20 seconds**.
+
+Discovery does not write or mint grants. Unit/race coverage checks cold reads,
+corrupt records, owner/resource/generation conflicts, response query/digest/
+revision tampering, and real Engine round trips without extra mutations.
+This is configuration discovery over the Docker helper adapter, not proof of
+SSH/vsock transport E2E, live service readiness, or runtime/API integration.
+
+## Staged SSH config syntax and effective-command conflicts (2026-10-10)
+
+`ValidateSSHD` runs `sshd -t -f` followed by `sshd -T -C` for each supplied
+connection probe. It requires the generated command and command user to be
+effective, and the expected administrator key-file setting to remain unchanged.
+Missing/duplicate/oversized output and subprocess failures reject validation.
+The real test now invokes the production `NewSSHDRunner`: absolute executable,
+validation modes only, a five-second call budget, and a combined 1 MiB output
+limit. Subprocess regressions cover stdout/stderr overflow, nonzero exits and
+caller cancellation; failed calls return no partial configuration.
+
+`TestRealSSHDEffectiveConfigurationConflictE2E` passed against local OpenSSH
+8.9p1 using temporary config and host keys, without starting or changing the
+system daemon. Four address/port combinations exercised intersection, address,
+port and fallback rules. Earlier Match rules selecting a foreign command,
+different command user or `AuthorizedKeysFile none` were rejected. A global
+Port inside a conditional Match was rejected by syntax checking. The local
+version accepts Port after Match all, so no text-only assumption is used for
+that case.
+
+This proves staged-config validation for the supplied probes. Production
+enumeration of all relevant Match classes, automatic publication/reload and
+post-reload observation remain required; it is not a global config equivalence
+proof or a P7 completion claim.
+
+## Generated SSH endpoint rules: real two-listener validation (2026-10-10)
+
+`pkg/sshaccess.RenderSSHD` generates deterministic, bounded
+`Match LocalAddress/LocalPort` rules feeding fixed endpoint arguments to the
+guest helper. Intersections precede partial matches and the unrestricted
+fallback. It does not modify listeners or `AuthorizedKeysFile`.
+
+The existing disposable sshd test now uses these generated rules and two
+loopback ports. The production helper is reached through the test-only Docker
+command adapter. After the original rotation/deletion checks, a key restricted
+to `127.0.0.1` and the first port successfully authenticates there and receives
+`Permission denied` on the second port. The independent unrestricted managed
+key and administrator key still authenticate on the second port. The real test
+passed in **5.49 seconds**, using a helper built from the current source.
+
+This extends the earlier unrestricted-key test below. It verifies the generated
+configuration against a real sshd, not automatic config installation or reload,
+third-party command coexistence, runtime/API dispatch, or a two-host workflow.
+
+## Real managed SSH access rotation and revocation (2026-10-10)
+
+Built the current static `sysbox-init` helper and ran a disposable OpenSSH
+server whose `AuthorizedKeysCommand` invoked that helper inside an isolated
+Docker container. The helper reopened its durable guest store for every lookup;
+the server's administrator-owned `authorized_keys` remained separate.
+
+The test proved an administrator key could log in before, during and after the
+managed lifecycle. A managed key was added, could log in, then was rotated:
+the old key was rejected and the replacement key worked. A second independent
+managed access continued to work. Deleting the first access with its old
+revision was rejected; deleting with the current revision revoked the
+replacement key while preserving the second managed key and administrator key.
+Historical observation of the original handle remained readable and current
+inspection returned `absent` at revision 3. The corrected test passed in
+**4.09 seconds**, requiring `Permission denied` for rejected keys rather than
+accepting arbitrary connection failures.
+
+The command uses only the OpenSSH-supported `%u` token. OpenSSH supplies neither
+local address nor local port through this command's tokens. Unknown endpoints
+therefore authorize only configurations without endpoint restrictions. A new
+regression reproduced and fixed port-restricted keys incorrectly being emitted
+for port zero. The real test now explicitly uses unrestricted configurations;
+it does not prove listener-restricted login. Invalid or corrupt records fail
+closed and emit no keys.
+
+This proves the guest helper and its Docker-backed transport against an
+independent sshd. SSH/vsock adapter unit tests are separate evidence; this test
+does not exercise those transports. Host/API dispatch and multi-API completion are
+still separate P7 gates; this does not close P7 or the full P0–P9 matrix.
+
+## Real private-network partition with a running guest task (2026-10-10)
+
+On the retained two-VM deployment, `p9-0d4114398801` started a 600-second
+guest task. The injector verified its populated cgroup, process incarnation,
+resource identity and parent resource checkpoint, then brought down only the
+execution VM's `lan0`. Management SSH continued over `nat0`. TCP probes to
+control API port 19870 and PostgreSQL port 5432 were reachable before the fault,
+unreachable during it, and reachable again after restoration. PostgreSQL
+MainPID remained **9474** throughout.
+
+The original guest task was cancelled after **136.92 seconds**, with the same
+process/cgroup identity and `populated 0`. After restoration, its original host
+stop receipt was reported and the API parent Run became failed with persistent
+host completion: `run controller stopped after resource execution; child
+termination confirmed`. The acceptance verifier additionally checked unchanged
+provider ID, complete handle, Run ID, and receipt grant scope/epoch/session/
+command/task digest. Receipt signature acceptance is provided by the API;
+the Python verifier independently compares the recorded identities.
+
+- Parent: `request-423e2fc6381c429d9172d306a9ebdf5b5e8004a9683aa9b82b4e6ee9cd71a85f`.
+- Child: `run-task-37292acd8a10708be89c8ab94b4b1655d2c0b5dd186be8f1cecdaf808a150b47`.
+- Host fault evidence: `/tmp/sysbox-p9-lab-current/p9-0d4114398801-private-network-outage.json`.
+- Control original: `/var/tmp/p9-network-partition-retry-20261010.json`.
+- Control terminal proof/cleanup: `/var/tmp/p9-network-partition-retry-cleanup-20261010.json`.
+
+Normal Destroy succeeded. Exact container
+`6dd3bf2930cf827f1bb523455ebf1b06d9b65b78fcabdbac40faf960e995816c`
+and all containers under owner `86f17057-a658-4f15-b14c-16b30e41154e` were
+independently absent. Normal metadata DELETE completed without force.
+
+The first experiment, `p9-f9d367d24376`, retained its original incomplete fault
+evidence: a single immediate ping after link-up failed and prevented the final
+evidence save. Its canonical stopped result was subsequently verified, followed
+by normal Destroy, independent absence checks and metadata DELETE. No original
+evidence was overwritten. The injector now waits for connectivity, separately
+records fault/restoration/final-validation errors, and preserves intermediate
+readiness failures. The successful experiment reproduced two initial failed
+pings before connectivity returned, confirming the need for readiness polling.
+
+This closes the Docker running-child **private-network partition** scenario
+after a successful resource checkpoint. It does not prove unknown provider
+intent recovery, other providers/transports, mid-effect ENOSPC, upgrade or the
+full P0–P9 matrix. Historical statements below describe earlier checkpoints.
+
+## Real host-supervisor SIGKILL after resource checkpoint (2026-10-10)
+
+On the current two-VM deployment, started a 600-second guest task on
+`p9-4ff3d9839d6c`. Before SIGKILL, verified exactly one host Run intent with a
+version1 resource checkpoint and its children observed running. Killed only
+the execution VM's supervisor MainPID **64200**. systemd started replacement
+MainPID **91249**. After **4.65 seconds**, the original Run outcome was complete
+and reported as failed: `run controller stopped after resource execution;
+child termination confirmed`.
+
+- Parent Run: `request-5f77e96be5d9712fab69aecb43613e6878c7ae1afa54c0ca4764073a491415f6`.
+- Child: `run-task-a95c0d3bf904bd94227e526813e6f823c4eface36f2035cdabfc533285360536`.
+- Fault evidence: `/tmp/sysbox-p9-lab-current/p9-4ff3d9839d6c-supervisor-crash.json`.
+- Control original evidence: `/var/tmp/p9-supervisor-crash-20261010.json`.
+- Control cleanup/terminal proof: `/var/tmp/p9-supervisor-crash-cleanup-20261010.json`.
+
+Independent comparison confirmed full child handles, Run IDs and provider IDs
+unchanged; child termination was confirmed and its stop receipt reported.
+The API returned the same parent Run with persistent host completion evidence.
+Normal Destroy succeeded. Exact container
+`1d7b23d7eee83727f16d98d79be129d770fa55d79ed5dfe1927650ab2a7bce00`
+was independently absent, with no containers under owner
+`ac2a56f1-af3a-4bf7-85b2-3b82d72cd255`. Normal metadata DELETE completed.
+
+The fault script now checks the complete child incarnation, not just task ID,
+and rejects generation changes. Its four unit tests pass. This proves recovery
+**after a successful resource checkpoint**; cold intents interrupted inside a
+provider callback (including retained Destroy `p9-5213226d26bb`) remain a
+separate unresolved case. It also does not prove a cross-version upgrade.
+
+## Real isolated ENOSPC before resource creation (2026-10-10)
+
+On the execution VM, mounted a new **1 MiB tmpfs** at
+`/var/tmp/sysbox-enospc-20261010`; no root filesystem or database disk was filled.
+The filler received actual ENOSPC. CLI Apply failed writing the initial
+lifecycle aggregate: `.aggregate-459101826: no space left on device`.
+Only a zero-length aggregate lock file remained; Docker inventory contained
+no container for that topology. Failure preceded intent admission/provider work.
+
+After truncating only the generated filler, Apply on the same state path
+succeeded. Container
+`1fcd618eff8707976b65de7102c1aa9e5025d5e5566854abde16cd6ee7dc5618`
+had owner `df212276-89c1-4864-8ed4-a63a55d65da4`, generation 1.
+Normal Destroy succeeded; exact-ID inspection returned no such object and
+owner inventory was empty. All tmpfs files and the failure log were archived
+before unmounting the exact test mount.
+
+Execution VM archive: `/var/tmp/sysbox-enospc-20261010-evidence.tgz`, SHA256
+`865520ee9e95c6d5276eabbf7430227b5859730cf48bdab18ebdf50b652991b8`.
+Reusable fixture: `scripts/acceptance/storage_enospc.sh` and
+`storage_enospc.hcl`. The fixture establishes the initial persistence boundary;
+same-state recovery and independent cleanup checks must follow.
+This does not prove ENOSPC during running effects, host receipt publication
+or PostgreSQL WAL writes. Those remain separate required gates.
+
+## Destroy evidence preservation correction (2026-10-10)
+
+Inspection of the interrupted Destroy path found two independent correctness
+bugs: runtime substituted an ID-only handle after codec failure, and ignored
+attachment request/delete failures before removing the node and its state.
+Failing regressions reproduced corrupt-private-state, missing-network and NIC
+delete-error paths returning success. Runtime now validates the handle and all
+attachment requests/capabilities before effects; non-NotFound attachment errors
+stop node deletion and preserve state. Cancellation is checked between effects.
+The existing best-effort Stop remains separate from authoritative Destroy.
+
+Runtime, Agent, Docker/libvirt/Firecracker full race suites, vet and independent
+review passed. A partial-attachment regression verifies that a retry accepts
+the first attachment's NotFound, finishes the second and deletes the node once.
+This fixes evidence loss, not unknown-effect recovery authorization.
+
+Read-only reinspection of retained `p9-5213226d26bb` confirms its exact container
+`7c7bb3e764fd3c36c88adc6554fd07b10bb61e020c8e7da261662acf574c54fc`
+still exists, exited. The corresponding host Destroy outcome remains `intent`
+with no run checkpoint or result. No forced cleanup or journal rewrite occurred;
+explicit safe recovery of this case remains required.
+
+## Real running-child API failover with bounded health detection (2026-10-10)
+
+Added `scripts/acceptance/live_failover.py`: it verifies a unique running child
+and actual populated cgroup, immediately stops API1, requires unchanged
+task/container/Run identities and successful completion read directly from API2,
+then restores API1 in finally. Failure evidence is retained; new checks also
+require API1 still stopped at completion and record restoration errors.
+
+An automatic run on `p9-e28b2ffc3e5e` with default HAProxy health settings
+failed: the child was cancelled. Primary was restored, its canonical signed
+failure was retained, normal Destroy and exact Docker absence verification
+completed, then normal metadata DELETE succeeded. Evidence:
+`/tmp/sysbox-p9-lab-current/p9-e28b2ffc3e5e-live-failover.json` and control VM
+`/var/tmp/p9-live-failover-retry-cleanup-20261010.json`.
+
+Default multi-second health detection exceeded the host's bounded online
+authorization window. The acceptance proxy now uses `inter/fastinter/downinter
+100ms`, `fall 1`, `rise 1`, and `timeout connect 500ms`. Original configuration
+was archived before a validated HAProxy reload. Host authority deadlines and
+explicit rejection semantics were not relaxed. This is a deployment constraint,
+not a promise of seamless failover with arbitrary proxy settings.
+
+With those settings and bounded transport retry, topology `p9-5098f4f6620b`
+passed actual running-child failover:
+
+- API1 stopped at `2026-10-10T05:00:55.721911080Z`, after running-task and
+  populated-cgroup checks.
+- Run `request-f2b1073eef58bf403b8fd1c25be1b5140af474ad8273cf0ff9a9dc8b65ebbbdc`
+  completed on API2 at `05:02:19.630365233Z`, attempt 1, with API-returned
+  durable host completion proof.
+- Child `run-task-270a845ac3f550f78a39679c46d21af268565e1ed0e5a1048a0d23ce75426c10`
+  retained its exact handle and container, was never cancellation-marked,
+  exited with known code 0 and reported confirmed termination.
+- Independent systemd journal confirms API1 restarted only at `05:02:21Z`.
+- Destroy `op-fa5e4b10904a035af1190ef741e7ef25a718d3df49c81a4f0d790df2f38cd994`
+  completed. Exact container `20e5fc5f3190cc273f52ff69125278e0bc3fa35175d76426d876b8534df85cbc`
+  was independently absent; owner `c16c6556-99dd-4979-b79f-6d1cb44bdca0` had
+  no containers. Normal metadata DELETE succeeded.
+
+Evidence: host `/tmp/sysbox-p9-lab-current/p9-5098f4f6620b-live-failover.json`,
+control VM `/var/tmp/p9-live-failover-fast-20261010.json`.
+The earlier unknown Destroy on `p9-5213226d26bb` remains retained and unresolved.
+Full network partition, disk-full, upgrade and interrupted reset continuation
+still require their own acceptance.
+
+## Open: primary API switch interrupted Destroy (2026-10-10)
+
+The intended live-Apply failover probe did not meet its timing gate: Apply
+`request-b0d6521f0a2c301cd530c3bcfb5784f1f1f23285c24b4f936ba08c8d2cc492f7`
+finished at `04:45:55.817Z`, before API1 was stopped at `04:46:02Z`. It must not
+be counted as successful running-Apply failover. Destroy was already running
+when the primary stopped, exposing a real failure instead.
+
+Topology: `p9-5213226d26bb`; control evidence:
+`/var/tmp/p9-live-failover-20261010.json`. Destroy Run:
+`op-f03427da1f549134953b257295f39c8af37305770354447e78673f7d72dba0b0`.
+At `04:46:04Z` the host callback was canceled and checkpoint publication failed
+with `context canceled`. The original container
+`7c7bb3e764fd3c36c88adc6554fd07b10bb61e020c8e7da261662acf574c54fc`
+was stopped (exit137), but not removed. The canonical Destroy still reported
+running when the observing client timed out. API1 was restored; both APIs and
+HAProxy are active. No force cleanup, Run rewrite or new Destroy was submitted.
+The original state, host intent and stopped container remain available for recovery.
+
+AuthorityClient.Authorize previously canceled on the first transport EOF.
+It now retries only transport-level failures up to three attempts, spaced
+100 ms, inside the original caller context/watchdog budget. All HTTP rejection
+statuses remain final, as do exhausted attempts/deadlines. Issue, renewal and
+completion mutations are not retried by this change. The EOF regression failed
+before the change; explicit HTTP rejection and deadline tests, full host race
+suite and vet passed. Real failover revalidation and retained Destroy recovery
+are still required; bounded retry alone does not close this failure.
+
+## Real API proxy outage during a live child (2026-10-10)
+
+On the isolated two-VM deployment, started a 600-second background Apply on
+`p9-c623347655cc`. After confirming its durable child was running, stopped the
+test HAProxy service. Database and SSH connectivity remained available: this
+is an API-path outage, not a full network partition.
+
+The host confirmed child termination after **1.85 seconds**. The proxy was
+restored in finally; the **identical** signed stop receipt was then acknowledged.
+Exit code remained unknown (`ExitCodeKnown=false`), while termination was
+confirmed. The same canonical parent Run became failed with durable
+`host_completion`, message `run child execution failed after confirmed termination`.
+No Apply was resubmitted.
+
+- Parent: `request-ba95686880a149182403f705825d46be46dd63e66e70554852c3a18ee8ef4b61`.
+- Child: `run-task-00740891f91c14e0e052d98280f8d39b340431b05131ec098fbcc0691f134870`.
+- Fault evidence: `/tmp/sysbox-p9-lab-current/p9-c623347655cc-partition.json`.
+- Control VM original evidence: `/var/tmp/p9-api-outage-20261010.json`.
+- Control VM cleanup/terminal proof: `/var/tmp/p9-api-outage-cleanup-20261010.json`.
+
+Normal Destroy completed. Independent Docker inspection confirmed exact
+container `a1253fbbb0185cbc4767541103d33dbac70b623717988db0133e938ee012fc2c`
+absent and no containers under owner `7322fa7a-eafa-4142-9fb3-bdcbfa8e52e1`.
+Normal metadata DELETE succeeded without force. This closes this API-path
+interruption scenario only; full partition, controller failover, disk-full,
+upgrade and interrupted reset-continuation acceptance remain separate gates.
+
+## Real PostgreSQL outage during a live guest task (2026-10-10)
+
+The cleanup observation loop had the same fixed-ticker starvation as normal
+observation. A 100 ms slow cleanup probe reproduced a 12 ms reacquisition gap;
+it now waits a fresh 50 ms after each incomplete observation. Host full race,
+vet and independent review passed, then the fixed supervisor was deployed.
+
+Started a 600-second background Apply on `p9-235c662ef0ca`. Before stopping
+PostgreSQL, the fault script verified the exact parent checkpoint, live child,
+provider owner/UID/generation, guest process anchors, cgroup inode and
+`populated 1`. The guest stopped during the outage after **123.69 seconds**:
+same process/cgroup incarnation, `status=cancelled`, termination confirmed,
+`populated 0`. PostgreSQL was restored in finally, MainPID changed 2003→9474.
+The original child receipt was acknowledged after restart (`reported=true`).
+
+- Run: `request-b6670158d337d347f4c7d3228e65ae884179d00a374a5cd4421bab14c157aa9a`.
+- Task: `run-task-2318b3fd25b17aef995c3fcb52d1574efd386722f9bfa6c140ff5a01677ebff7`.
+- Fault evidence on host: `/tmp/sysbox-p9-lab-current/p9-235c662ef0ca-database-outage.json`.
+- Original client evidence on control VM: `/var/tmp/p9-db-outage-20261010.json`.
+- Cleanup and canonical terminal proof: `/var/tmp/p9-db-outage-cleanup-20261010.json`.
+
+The observing client exited on expected HTTP503 while the database was down;
+the Apply was not resubmitted. After restoration, the same canonical Run became
+failed with `host_completion` and message `run controller stopped after resource
+execution; child termination confirmed`. Normal Destroy then succeeded.
+Independent Docker inspection confirmed container
+`9757346d9cd9c1afe9571ea49d29720b4072620c57759710a8ffef4962df6623` absent,
+with no resources under owner `70cff66b-9e41-439c-9198-93a9ac6f3b27`.
+Normal metadata DELETE completed without force. This proves this database
+outage scenario; it does not close partition, disk-full, controller replacement,
+upgrade or interrupted reset-continuation acceptance.
+
+## Resolved: slow child observations starved recovery (2026-10-10)
+
+The fixed 100 ms ticker in `RunChildren.observe` was already readable whenever
+Docker observation exceeded that interval. The watcher immediately reacquired
+the task lock, starving the independent recovery loop. A regression with a
+150 ms observation failed before the fix: only 17 ms elapsed before the next
+locked observation. Polling now starts a fresh 100 ms timer after observation
+returns and releases its lock; cancellation and renewal remain selectable.
+Host supervisor full race tests, vet and independent review passed.
+
+A 15-second diagnostic sample excluded slow Start acknowledgement (the new
+slow-Start warning did not trigger) and reproduced task-lock recovery timeouts.
+Its evidence `/var/tmp/p9-task-start-timing-20261010.json` was cleaned normally
+after exact container absence verification.
+
+Real fix validation used supervisor binary SHA256
+`96ff95513d307f98f9585ecc45128ce04aaf8df2feabe91923810c03c1b65986`, deployed
+at `2026-10-10T04:25:32Z`. Control evidence:
+`/var/tmp/p9-reset-poll-fix-20261010.json`, topology `p9-6bf970dd1cca`.
+The complete 45-second background Apply/Reset/Destroy passed:
+
+- Apply `request-41f2bd609ab705dc38132531bdfa9cdacf223cd8319554dfb90aab743ccc5145`.
+- Reset `51842154-12fe-4bd2-9775-3f449a0b28d2`.
+- Destroy `op-f9f9e4cc186c50684ab1665795ca2815bcc41cbbe749aa0bd3810fdd8d6857bd`.
+
+The entire supervisor journal since deployment contained no recovery timeout.
+Exact containers `26daa40f9eb095a9d16e35ffb996c8ae1054510e9cc1ff605901a47015c20633`
+and `3b40dad4abd5ed6518ec361d9cfc2d8c4223d269751487ee803a83cc2eec09d3`
+were independently absent; owner `a4962fd7-cd60-40ce-b001-17de3ef2d727` had no
+containers. Normal metadata DELETE completed. This closes the demonstrated
+normal observation starvation, not all cancellation/fault-recovery behavior;
+the cleanup polling loop still needs its own contention audit.
+
+## Background recovery timeout localization (2026-10-10)
+
+Added error provenance without changing deadlines/retry behavior: supervisor
+recovery errors identify the component; task errors identify task/generation,
+and initial task-lock failures retain `acquire task lock` plus the original
+wrapped error. Host supervisor full race tests passed.
+
+Deployed that diagnostic build to the execution VM only after the prior test
+was cleaned up. A separate 45-second background Apply/Reset/Destroy sample
+completed: control evidence `/var/tmp/p9-reset-background-diagnostic-20261010.json`,
+topology `p9-821fc6e9095e`. New logs localized repeated timeouts to
+`guest-tasks recovery`, specifically acquiring task
+`run-task-25d92157839874f2260a4d3617480857f479508f54f1c76b07a31df2d6364862`
+at generation 1. This identifies contention but does not yet establish why the
+lock holder excludes recovery long enough to exhaust its budget. Docker exec
+history contains repeated helper calls; no timeout increase or error suppression
+has been applied. Root-cause analysis remains open.
+
+The sample completed Destroy; both exact container IDs
+`a312732d35ddb904db2e28cd60a7779ce5aeb8595c90c8bbfddfe3c3fb3c08f2` and
+`6055d0a06e9f602eefc9563210d3ef5a1d2c6da7059033e3d0b060082301f4c4`
+were independently absent on the execution VM, with no containers under owner
+`a4559e85-0a3b-4564-a646-2b364d9c54ac`. Normal metadata DELETE completed.
+
+## Real two-host Reset with background guest tasks (2026-10-10)
+
+On the same isolated deployment/build as the normal reset below, built
+`sysbox-p9-guest:local` (`3f781968a376`) on the execution VM using the current
+static `cmd/sysbox-init` helper and this deployment's issuer public key.
+No private signing key was copied into the guest image.
+
+Ran `cross_host_run.py --reset --background --provision-seconds 45`.
+Evidence: control VM `/var/tmp/p9-reset-background-20261010.json`;
+topology `p9-980664a6d2e7`, topology UID
+`b1ed66fb-f8fe-449b-8f7b-bf763a1f5ad3`.
+
+- Apply `request-6a8a6a76e8a7ef4fdbc0f6dac1124ebe4ea1abe8a76372c1c6c37e3c10c9a51d` completed.
+- Reset `5f3d2539-d2d3-4a17-b95d-c9fc7ac13588` completed.
+- Destroy `op-5b252cc0494eb25c01cf8885ed0aa0f114fdb813da9977197202fc5a14c6d7bc` completed.
+
+Independent host task-journal inspection confirmed both finite tasks exited
+with known exit code 0, `RemoteTermination=confirmed` and `reported=true`.
+Apply task: `run-task-a78a3f53701b72fb759b4e056313c5924bb1a6119f96765b5845c71d9a069b33`, generation 1, epoch 5.
+Reset task: `run-task-c7c8f1d80a952f1287bd4503ddab6f6a7cafe8a4eb14c9ffd3d2941032db9ccf`, generation 2, epoch 7.
+Both retained resource UID
+`f4197f2eed268b19e88cdd18f6e3b1ea155d5660ed8fd086f2655a04d97bbec1`.
+
+Execution-VM Docker independently reported `no such object` for both exact
+container IDs after Destroy:
+`520b646f8feb0121c90aaabed14d91359241b438419c9777bcfc413ad7eab490` and
+`6fbc4b3a1931528cae3ee117a3b6e6e95e2721e6ed0e2a3685ecb9e6e60abcf9`.
+Owner-UID inventory was empty. Normal metadata DELETE succeeded without force;
+evidence phase is `metadata_deleted`.
+
+An unresolved observation remains: supervisor logged repeated
+`reconciliation: context deadline exceeded` during this run. The last-minute
+supervisor/API logs were empty after cleanup, but that does not identify or fix
+the source. Diagnose before claiming healthy fault recovery. This acceptance
+proves normal remote generation-2 task routing and parent/child completion;
+it does not prove interrupted continuation, partition, failover or all P9 gates.
+
+## Real two-host Apply / Reset / Destroy (2026-10-10)
+
+The retained lab `/tmp/sysbox-p9-lab-current` now runs build `749bc88` with binary
+SHA256 `eca6dc774167c1774a8262230301d5cdb47f957036e33163854faa40662f548d`.
+Both API services and PostgreSQL run on the control VM; the Agent, host
+supervisor and Docker run on the execution VM. Deployment uses separate new
+database/role `sysboxp9_reset_20261010` and local deployment evidence directory
+`deployment-reset-20261010`. Both API services, Agent and supervisor started.
+The deployment helper now binds database name to its deployment directory and
+rejects an existing role or database before replacing binaries/configuration;
+it never rotates an old deployment's database password. Interrupted deployment
+must be inspected rather than blindly rerun. This guard was added after the
+successful fresh-database deployment below; no existing database was redeployed.
+
+Before deployment, stopped old service configuration, identities, journals and
+binary were moved/copied into `/var/lib/sysbox-p9-archive-reset-20261010` on
+their respective VMs. The old `sysboxp9` database remains unchanged. Its dump is
+in the control archive with SHA256
+`6a0fb6dae35b72d9a3caf012642fe41f7f967d73b24f10ede677d3697941f3a4`.
+The old running Run was not declared stopped or removed.
+
+Acceptance evidence: control VM `/var/tmp/p9-reset-20261010.json`.
+Topology: `p9-074c49109274`.
+
+- Apply: `request-c9dbde7ae83a515bfc992755740a3de9560af82eb084aed0d0255f0a468f78dd`, done.
+- Reset: `3069f2b3-f8f7-4964-905c-1f14bda1b793`, done.
+- Destroy: `op-47eb9fb6a2f10e02114c25a3a2970b311a1127884d21563f0a60018e7f7c3f86`, done.
+- Stable topology UID: `27fe6313-c983-4553-ade7-33cf16065240`.
+- Stable node UID: `7ba469867a19a3699c27baf22ccb0feb7c6bf4b7444b6942cc15641346303b02`.
+- Generation advanced from 1 to 2; external container identity changed from
+  `750193b5511d6be378efc14c00ad51fef6cf7b348bd2b0551dfd53ca6a0c5b32` to
+  `71dcbfc082d88d40cc6bbe8a0a57bff0f881659e138b3cf661bcf513b58a2691`.
+
+After Destroy, API resources were empty. Independent execution-VM `docker
+inspect` returned `no such object` for both exact IDs; owner-UID inventory was
+also empty. Normal metadata DELETE then succeeded without force. The evidence
+phase is `metadata_deleted`. This validates normal remote Docker reset through
+the host execution protocol, not fault continuation, background child tasks,
+Firecracker/libvirt, or the remaining P9 fault matrix. Both VMs and new services
+remain running for continued acceptance.
+
+## Retained two-VM lab restart (2026-10-10)
+
+`scripts/acceptance/two_vms.py start --root /tmp/sysbox-p9-lab-current`
+now restarts existing disks without recreating keys, overlays or cloud-init
+seeds. It checks both old PIDs/monitors before launch, rejects uncertain/live
+processes, serializes starters and retains stale process files and separate
+restart serial logs. A partial launch preserves both disks and reports failure;
+it must not be retried blindly while the first guest is running.
+
+Real restart succeeded. `check` verified independent guest filesystems,
+private-network connectivity and nested KVM. Control boot ID:
+`aaff8020-1de1-4af8-8a7c-0941b5dc0d81`; execution boot ID:
+`5ca09ca7-b83e-41c1-aedd-c1937d95d1c0`. Both run kernel `6.8.0-124-generic`.
+The restarted serial logs use prefix `restart-bbc0c56b2cc6`.
+
+Sysbox API1/API2, Agent and host supervisor remain inactive. PostgreSQL, HAProxy
+and Docker are active; Docker listed no containers. Read-only SQL inspection
+found API schema 14 and two lifecycle format4 aggregates. The original Run
+`request-791bf2ad72aa0f6fbd4c31ab2bfcc5799b4c26d3efea14a7eb22d9bfacc1eab1`
+for topology `p9-86774be76235` still reports running. No terminal result was
+invented and no record was changed. This is lab availability evidence only,
+not lifecycle/upgrade/reset acceptance. Preserve the old database and host
+journals before deploying current code into a separate acceptance scope.
+
+## Open reset recovery failure (2026-10-10)
+
+Reset now publishes a separate new-generation `replacement` before guest route
+commands, provisioners and image entry. The old candidate remains intact until
+setup finishes. Host task resolution can use the exact applying replacement;
+it still verifies the real provider identity and does not permit cold replay.
+File/SQLite/PostgreSQL identity constraints and publication-failure tests pass,
+as do related full race suites. Review found route execution initially preceded
+publication; a failing route-call regression demonstrated and fixed that order.
+Guest-task resolution now maps a canonical continuation execution to its
+original action Run only after matching revision, signed parent stop evidence
+and committed continuation receipt. Worker requests cannot supply the mapping.
+Lookup, connection and cold dispatcher cancellation share that resolver. File,
+SQLite and real PostgreSQL Run-store tests, cold cancellation, related full race
+suites and review passed. Multi-level parent traversal now verifies every
+predecessor independently before resolving the root action Run; tests reject
+cycles, changed revisions, active parents and missing intermediate return/host
+proofs. Local persisted return-chain tests passed. Full repeated-failure executor
+integration and real two-host guest-task continuation remain unverified.
+These are not real VM continuation acceptance.
+
+Returned host reset failures now have a restricted signing path: after the
+synchronous executor returns, reacquire execution exclusion, read the original
+Run's action incarnation/phases and prove all children stopped. Only known safe
+reset phases produce recoverable signed failure evidence. Unknown phases,
+missing actions, foreign incarnation and unknown child admission stay uncertain.
+The HostRunExecutor-to-RunCoordinator integration test covers a real file
+repository and confirms safe failure signing versus preparing-phase refusal;
+no VM provider is exercised. Host/Agent/API/runtime full race tests passed.
+Cold process-exit proof and the retained heterogeneous incident remain open.
+
+The API now stores `Run.host_completion` (signed receipt plus exact original
+result bytes) atomically with the terminal Run. Ordinary Save/Restart cannot
+inject or change the proof. The reset continuation verifier rechecks its host
+signature, original Run incarnation/attempt/lease/result, current topology UID
+and matching historical authority stop tombstone. Active/revoked grants are
+rejected; a successor epoch does not erase historical stop evidence. File,
+SQLite and real PostgreSQL 16 completion/verifier tests passed, including JSONB
+round trips. Related full race suites and independent review passed. This is
+not yet a real two-host reset continuation E2E, nor recovery of the old incident;
+old Runs without signed proof still cannot pass this verifier.
+
+Host execution now accepts `run_reset` through the same grant, async callback,
+effect journal, derived task and signed completion paths as apply/destroy.
+Tests verify exact signed receipt recovery without callback replay and refusal
+to replay unknown intents. Completion contract tests passed for all three
+operations on file, SQLite and real PostgreSQL 16, including active-child
+rejection, tampered evidence, expired/retired commands and successor-epoch
+protection. These protocol results alone do not authorize continuation of the
+retained incident.
+
+Runtime continuation now prepares original-incarnation intents, reuses durable
+receipts after restart and admits them before entering reset phase CAS. Real
+file/SQLite/PostgreSQL repository integration tests model two destroyed nodes
+and one missing intent, then retry from a new executor: each node is destroyed
+and recreated only once, original action identity/generation is preserved, and
+the original checkpoint bytes remain unchanged. Providers in this test are
+simulated. Runtime/repository/Agent/CLI race regressions passed. API reset
+resume now requires a validated complete parent checkpoint before creating a
+child Run. Execution additionally requires a `ResetContinuationVerifier`; the
+API bridge requires signed host-stop verification as described above. CLI
+exposes `reset --resume <run-id>` only with a durable synchronous
+return receipt matching the original checkpoint hash and action incarnation.
+It rejects `--target` overrides and confirms the complete original scope.
+Old/crashed executors without that receipt cannot resume through this path.
+Agent/API/CLI full race regressions, targeted missing-receipt/changed-checkpoint/
+target-override rejection tests, vet and independent review passed. This does
+not prove end-to-end CLI continuation of the retained incident.
+Real two-host continuation acceptance and retained-VM recovery are still open.
+
+The continuation admission primitive now records the complete original request
+and missing intents atomically in aggregate format 5. Normal repository access
+rejects format 4. The retained heterogeneous incident has not been imported or
+modified. An explicit format4 import preview, run with a read-only container,
+read-only source mount and disabled network, validated topology UID
+`597da2ee-b1f7-48b9-8d9a-afa9e351aaaf`, serial 8, 10 actions and four snapshots.
+The source SHA256 was
+`9d9b2552617772abc7d0830efad5ade52d41e3bf465f003debf315a9da6dac55`.
+The final preview returned the same digest. The explicit importer passed real
+file/SQLite/PostgreSQL 16 tests for atomic source comparison, durable original
+archives, archive failure rollback and snapshot conversion, plus CLI preview
+and apply tests on disposable fixtures. Full persistence/Agent/API/CLI race
+regressions, vet and independent review passed. Neither preview imported the
+retained incident. Its two pending reset records retain identical queued-at
+`2026-10-09T22:53:55.414519496Z` and no Run revision (local CLI provenance);
+do not invent a revision during continuation.
+The continuation execution entry point remains unfinished. See
+[reset continuation](../design/2026-10-10-reset-continuation.md).
+
+CLI and Agent lifecycle execution now acquires a repository-scoped execution
+lock before reading workspace/state, independent of aggregate transaction
+locks. File/SQLite use persistent sidecar lock files; PostgreSQL uses a dedicated
+connection and an advisory key derived from the resolved aggregate table OID
+and topology. Lock waits can be canceled. Tests cover independent processes,
+SQLite symlink aliases, PostgreSQL search-path aliases, transaction access while
+holding execution ownership, and cancellation before lifecycle workspace access.
+Full persistence, agentexec, API and CLI race suites passed with a real disposable
+PostgreSQL 16; vet and independent review passed. See
+[execution exclusion](../design/2026-10-10-execution-exclusion.md) for path and
+connection-loss limits. This is cooperating-executor exclusion, not proof of
+provider quiescence; management mutations and old binaries do not all
+participate. Explicit continuation and the retained reset matrix remain open.
+
+Runtime reset no longer implicitly takes over another Run's pending actions.
+Pending actions must belong to the current Run or an explicitly selected
+resume Run; an absent or unrelated resume ID fails before preparation,
+destruction or creation. Regression tests demonstrate the previous implicit
+takeover and verify that rejection preserves both action records and provider
+state. Explicit cold recovery tests still preserve original action identities.
+Selecting a resume ID is not authorization: the bridge must validate the
+original checkpoint, Run incarnation and exclusive execution ownership before
+granting continuation. That complete entry point remains unfinished.
+
+Reset batch retries now validate the complete admitted action ID set inside
+the aggregate transaction. Reordering is allowed; omission, replacement and
+expansion are rejected. File, SQLite and real PostgreSQL 16 race tests verify
+these boundaries. The runtime and agentexec package race suites also pass.
+This prevents ordinary retry from repairing a historical partial batch;
+explicit continuation admission and execution ownership remain required before
+the retained heterogeneous reset can be recovered safely.
+
+The heterogeneous lifecycle matrix passed, but the subsequent reset matrix
+failed with a missing Firecracker manifest and a supposedly live PID. Commit
+`b9f77bf` fixes the demonstrated zombie false-positive; Firecracker package race
+tests pass, including live-process and mismatched-start-time rejection. This is
+not yet proof that the heterogeneous reset failure is resolved.
+
+The original repository remains at
+`/tmp/sysbox-e2e/heterogeneous-matrix/state.json.lifecycle`. Read-only inspection
+found uncertain resets for both Firecracker and libvirt; original Firecracker
+PID 2050769 was absent at inspection. A real recovery attempt using the original
+privileged Docker mounts, retained SSH key and baseline image passed filesystem
+access but failed with `repository conflict: unresolved action
+a09090bbaf825174ddfac1e9b462189c`. Its snapshot is
+`bec96f3d-45c5-4395-85b6-d97e66311b24`.
+
+The original checkpoint `runs/792e8523-6e61-497e-9cb6-26948ac80822.checkpoint.json`
+contains all three node resets, state serial 8 and plan digest
+`sha256:f35e80a3d216905593a1e3b587f46fd64a8867e8113d38b75535151db5508c49`.
+Only libvirt and Firecracker have durable intents, both in phase `destroyed`;
+Docker was not started. This is a partial-intent publication window, not a
+completed Docker action being replayed.
+
+The runtime can consume pending reset actions, but a new CLI reset also tries
+to create the missing Docker action under a different Run ID. Repository
+exclusion correctly rejects this while the original Run remains unfinished.
+Recovery must validate the original complete plan and bind any not-yet-started
+action to an explicitly authorized continuation. The unused LocalBridge
+ResumeResetPlan hook alone does not explain or fix this failure. No journal was edited,
+no unknown resource was forcibly deleted, and no successful cleanup or reset
+matrix pass is claimed. This remains required work for the P0–P9 goal.
+
+The next runtime change publishes all new reset intents before calling any
+provider prepare/destroy. A failed second intent write now leaves every provider
+untouched, verified by a regression that failed with the original ordering.
+An intent starts in `accepted`; before prepare, a durable CAS advances it to
+`preparing`. Cold recovery may execute an `accepted` action using the same ID,
+but still refuses `preparing`, whose effect outcome is unknown. Runtime and
+persistence package race tests passed; PostgreSQL was not enabled in this run.
+This does not yet resolve admission of missing intents under a different Run
+in the retained old matrix, nor the overall reset recovery workflow.
+
+Independent review of `f940907` also identifies required work for current-format
+records: sequential intent publication can leave a partial accepted batch that
+cannot admit missing actions under a new Run; prepared recovery has no competing
+writer CAS before destroy; repository phase validation rejects regressions but
+does not yet enforce all legal initial/transition combinations. These are open
+correctness issues, not merely missing fault-matrix evidence.
+
+Reset resume plan validation now checks both input plans before filtering
+completed steps, rejecting duplicate addresses and non-reset actions. All three
+regressions failed before the change and runtime package race passed afterwards.
+This input validation fix does not close the three recovery issues above.
+
+Reset admission now requires `ResetIntentCommitter.CommitResetIntents`: all new
+actions for one Run share one aggregate transaction. A failed second action
+validation publishes no intents (filesystem and SQLite tested); exact batch
+replay is idempotent. A missing atomic admission capability rejects reset before
+provider work instead of reverting to sequential writes. Read-only recovery
+wrappers do not expose the capability. Runtime two-node cold recovery retains
+both original action IDs, Run IDs and generations after interruption before
+prepare; that orchestration test uses the in-memory repository.
+
+Runtime, persistence and agentexec full package race tests and vet passed, and
+independent read-only review found no new blocker. PostgreSQL batch admission
+was not exercised in this run. This addresses new-batch partial publication;
+the retained old partial batch, competing prepared destroy recovery and strict
+repository phase transition constraints remain open.
+
+The shared repository now rejects new reset intents unless they start in
+`accepted` without effect-complete evidence. Reset outcomes may remain in the
+same phase or advance exactly one phase; `verifying` requires effect-complete
+evidence, and earlier phases cannot claim it. Filesystem/SQLite tests cover all
+invalid initial phases, skipped phases, inconsistent completion flags, phase
+regression and the full legal sequence. Runtime/persistence package race and
+vet passed. This does not establish exclusive ownership of an in-flight
+destroy callback; that execution-boundary issue remains open, along with the
+retained old partial batch and the real reset matrix recovery.
+
+Reset now persists `prepared -> destroying` using the action revision CAS before
+attachment deletion or `DestroyReset`. A failed claim performs no destroy;
+filesystem/SQLite tests reject a second claimant using the same prepared
+revision. `destroying -> destroyed` records completion of the owned callback.
+Cold recovery of `destroying` remains uncertain and never repeats destruction:
+resource absence alone is not proof that the original callback has returned.
+The legal phase order and tests include this new stage. Runtime/persistence
+race and vet passed. This closes duplicate destroy dispatch from the same
+prepared revision, but durable proof of callback exit and recovery of an
+interrupted destroying stage remain required for the full goal.
+
+A subsequent `destroy_returned` checkpoint records successful callback return
+before the absence observation is committed. If the `destroyed` write fails,
+cold recovery from this checkpoint observes the original generation and does
+not repeat destruction. A regression injects that write failure and verifies
+exactly one destroy call across reconstruction. If callback-return evidence
+itself was not durably committed, `destroying` still remains unknown; this
+change does not manufacture exit evidence for a crashed controller. The phase
+contract tests include `destroy_returned`; runtime/persistence race passed.
+
+The reset admission/phase contract now also runs against real PostgreSQL 16 in
+an isolated schema per test. All filesystem, SQLite and PostgreSQL subtests
+passed under race: invalid second-item admission leaves no intents, exact batch
+retry preserves the two intents, and two concurrent transactions using the same
+prepared revision have exactly one successful destroy claim. Invalid initial
+phases, skipped phases, regressions and contradictory completion flags are
+rejected. The dedicated disposable database is separate from the VM labs.
+These are repository transaction tests, not a successful recovery of the
+retained heterogeneous provider matrix.
+
+`make test-p9-real` is the explicit real environment gate for the current
+distributed runtime slice. It runs the API/Agent completion-loss test, guest
+task supervisor recovery, Docker pause/resume fencing, signed file installation,
+Docker adoption cold lifecycle, Firecracker/KVM lifecycle and libvirt generation
+fencing.
+
+The target intentionally fails when Docker, KVM, the Firecracker artifacts or
+libvirt are unavailable. A skipped individual test is not a P9 pass. Record the
+commit, kernel/rootfs/firecracker paths, Docker image digests, libvirt URI and
+cleanup results with the release evidence.
+
+This matrix proves its listed Run, guest task, file, node power, adoption and
+provider lifecycle boundaries. It does not cover the full P0–P9 scope: full sshd
+management, automatic GC, snapshot/restore maintenance, remaining distributed
+faults and upgrade acceptance still require their own gates. The two-VM evidence
+below is separate from these same-host tests.
+
+2026-10-08 real run: signed file installation, Docker task supervisor, and
+Docker node power scenarios passed in the available Docker/KVM environment.
+At that checkpoint the matrix failed at `TestRemoteDockerCompletionLossRecoveryE2E`: the
+legacy in-process Agent fixture reaches Docker image entry without a host-issued
+guest task grant. This is a genuine P2/P9 failure, not a skipped test.
+
+2026-10-09: that obsolete fixture was migrated to host-supervisor admission and
+signed host completion; the complete `make test-p9-real` target passed. See the
+final section for the exact coverage and remaining boundaries.
+
+## Two-VM acceptance environment
+
+The approved P9 layout uses two KVM VMs with independent kernels and writable
+disks. The control VM hosts PostgreSQL and the API instances; the execution VM
+hosts the unprivileged Agent, root host supervisor and providers. The physical
+host launches the VMs and drives tests. It supplies no guest filesystem mounts.
+This tests cross-kernel/network operation, not independent physical power loss.
+
+`scripts/acceptance/two_vms.py` requires Python 3.11+, QEMU, qemu-img,
+genisoimage, OpenSSH and read/write access to `/dev/kvm`. It verifies the pinned
+Ubuntu cloud image checksum before creating any VM. Each VM uses a private
+qcow2 overlay, 16 GiB virtual capacity, a dedicated SSH key and a pinned host
+key. The control VM uses 2 vCPU/3 GiB, execution 4 vCPU/6 GiB. Allow at least
+10 GiB of free disk for initial setup; provider images require additional space.
+
+The VMs communicate over a dedicated QEMU socket Ethernet segment:
+`10.77.0.10` (control) and `10.77.0.20` (execution). A separate user-mode NAT
+interface supplies package downloads. SSH forwards bind only to host loopback;
+ports are recorded in the private manifest. No host bridge, firewall or existing
+libvirt network is changed. A bind collision fails startup rather than reusing
+an existing listener. Stop any partially started lab using its saved manifest.
+
+```sh
+python3 scripts/acceptance/two_vms.py up \
+  --root /tmp/sysbox-p9-lab \
+  --base /home/jiandong/.cache/sysbox/libvirt/ubuntu-24.04-server-cloudimg-amd64-20260615.img
+python3 scripts/acceptance/two_vms.py prepare --root /tmp/sysbox-p9-lab
+python3 scripts/acceptance/two_vms.py check --root /tmp/sysbox-p9-lab
+```
+
+`check` records distinct host/control/execution boot IDs, bidirectional guest
+network connectivity, independent writes to the same guest path, and a real
+nested KVM QEMU launch inside execution. It requires QEMU installed by `prepare`;
+a missing device or failed launch fails the gate. Evidence is `isolation.json`.
+`prepare` installs PostgreSQL16 in control and Docker/libvirt/QEMU in execution.
+It does not configure Sysbox services or claim lifecycle acceptance.
+
+```sh
+python3 scripts/acceptance/two_vms.py upload --root /tmp/sysbox-p9-lab \
+  --role control --source ./bin/sysbox --destination /home/p9/sysbox
+python3 scripts/acceptance/two_vms.py exec --root /tmp/sysbox-p9-lab \
+  --role execution --command 'sudo virsh list --all'
+python3 scripts/acceptance/two_vms.py stop --root /tmp/sysbox-p9-lab
+python3 -m unittest discover -s scripts/acceptance -p 'test_two_vms.py' -v
+```
+
+Stop verifies the QMP VM name against the lab identity, then quits only those
+VMs. It retains disks, keys and logs. Failed setup also retains its evidence;
+`up` never overwrites an existing lab. The lab directory contains private keys
+and cloud-init seed data and must remain mode0700. Do not publish that directory.
+
+### Deployment and acceptance sequence
+
+- [x] Create two independent VMs and validate nested KVM.
+- [x] Install PostgreSQL16 and execution providers; transfer current binary via
+  pinned SSH, with no shared guest directories.
+- [x] Configure two API services, stable proxy address, issuer key and host
+  public key mapping in control; expose PostgreSQL only on the dedicated LAN.
+- [x] Configure root supervisor with its own host key and canonical Postgres
+  credentials, and nonroot Agent with only the public issuer key/socket access.
+  The supervisor materializes revisions from canonical Postgres. Agent inventory
+  and recovery still need auditing before granting any database access.
+- [x] Run real remote Docker Apply/Destroy and capture terminal API/journal/provider proof.
+- [ ] Inject API/Agent/supervisor/guest crashes, partition, delayed responses,
+  database restart and test-volume exhaustion. Retain uncertain outcomes.
+- [ ] Run capability migration, rebuilding and ownership-verified cleanup gates.
+
+2026-10-08 environment evidence: lab `/tmp/sysbox-p9-two-vms-20261008` passed
+the isolation check; both guests boot Ubuntu kernel6.8.0-124 with distinct boot
+IDs. PostgreSQL16.15 is active in control, Docker/libvirt active in execution,
+and nested QEMU started successfully. This closes environment provisioning,
+not API/Agent cross-host lifecycle or full P9 acceptance.
+
+### Deploy and exercise the production service path
+
+`deploy_two_vms.py` requires the host Python `cryptography` package for raw
+Ed25519 keys. Run it only against the disposable lab created above. It installs
+two systemd API services behind HAProxy, configures the dedicated PostgreSQL
+database, registers `execution-p9`, and starts the root supervisor and nonroot
+Agent. The worker has neither Docker group membership nor the supervisor's
+database credentials or host private key. Registration and deployment reuse
+persisted keys/identity on reruns. Configs and secrets remain under the private
+lab directory; do not publish them with evidence.
+
+```sh
+CGO_ENABLED=0 GOCACHE=/tmp/sysbox-gocache go build -buildvcs=false -o /tmp/sysbox-p9-lab/sysbox ./cmd/sysbox
+python3 scripts/acceptance/deploy_two_vms.py --root /tmp/sysbox-p9-lab --binary /tmp/sysbox-p9-lab/sysbox
+python3 scripts/acceptance/two_vms.py upload --root /tmp/sysbox-p9-lab --role control \
+  --source scripts/acceptance/cross_host_run.py --destination /home/p9/cross_host_run.py
+python3 scripts/acceptance/two_vms.py exec --root /tmp/sysbox-p9-lab --role control \
+  --command 'sudo python3 /home/p9/cross_host_run.py --evidence /var/tmp/p9-lifecycle.json'
+```
+
+The lifecycle probe publishes a revision, uses an idempotency key to request
+Apply, records actual canonical resource identities, requests Destroy, and waits
+for terminal results. Image `alpine:3.22` must be available to execution Docker.
+If public registry access is unavailable, export it with `docker save`, transfer
+the archive with pinned SSH, compare archive SHA256 and RootFS layer digests,
+then import it in execution. This is explicit artifact provisioning, not a
+shared cache or proof that registry downloads survive partitions.
+
+Before finalizing, independently query execution Docker for the exact owner UID
+recorded in `state_after_apply`; successful Docker queries must show no remaining
+containers. Then run the probe with the same `--evidence` and `--finalize` to
+perform metadata DELETE without force. The helper does not claim to perform
+that independent provider check itself. Use `--stop-primary` with a fresh evidence
+path to stop the test primary API before the lifecycle round; GET and explicitly
+keyed mutations retry transient connection failures with the original body/key.
+Unkeyed mutations are never automatically replayed. Restore `sysbox-api1` after
+the failover round.
+
+2026-10-08 real two-VM results:
+
+- Main API round: `p9-6b16f8158fe0`, Apply/Destroy done, cleanup serial4 and
+  `empty=true`; execution independently confirmed no owner-matching containers;
+  metadata DELETE succeeded without force. Evidence on control:
+  `/var/tmp/p9-lifecycle-04.json`.
+- Backup API round: primary deliberately stopped, HAProxy routed to API2;
+  `p9-9090be4dc645` Apply/Destroy done, matching empty receipt and independent
+  provider absence verified, metadata DELETE succeeded. Evidence:
+  `/var/tmp/p9-lifecycle-api2-retry.json`. Primary shutdown took about16ms.
+- Earlier failed rounds remain recorded (`p9-lifecycle-01/02/03.json`): missing
+  dispatch identity, registry timeout, and host Run completion conflict. The
+  third round's resource/journal is retained for uncertain-outcome recovery;
+  these rounds are not counted as clean successful acceptance.
+
+The failures led to shared canonical dispatch binding, serial0/topology-scope
+Run support, a dedicated host boot query, preservation of the real claimed Run
+incarnation, local-only host execution outcomes until signed completion,
+cleanup receipt propagation, and context-aware API shutdown. Host bridge
+initialization errors now fail instead of silently selecting local storage.
+
+Remaining gates include active-Run API failover, retired-command receipt recovery,
+long-running Run renewal beyond the current request budget, definite pre-effect
+failure versus uncertain provider results, privileged observations through the
+supervisor, guest/File/Reset/Adoption/SSH/GC cross-VM matrix, database/disk faults
+and final rebuilding/upgrade exercises. Two successful Docker rounds do not
+close these gates or the complete P0–P9 objective.
+
+### Completed-Run receipt recovery after worker retirement
+
+Run completion now signs the exact compacted terminal Run evidence, as well as
+the original grant. Generic stop receipts cannot complete or release a Run.
+The API verifies the issued grant and reads the original command tombstone and
+canonical Run together. A newer command-delivery attempt does not invalidate
+the old host evidence, but a different actual Run attempt/owner/incarnation
+does. Completion is persisted before authority is released; identical receipt
+replay after a successor cannot revoke that successor. Old Run receipts without
+an evidence digest are rejected, not silently re-signed.
+
+Real two-VM fault round `p9-272571cff315`: HAProxy returned503 only for host
+completion callbacks. Execution completed with a durable, unreported receipt
+and evidence digest; the API Run stayed running. Both Agent and supervisor were
+stopped, the proxy restriction removed, and both services restarted. Recovery
+reported the original evidence for container
+`52b0de81b30025004e11028b6ee34ca6f857a1d17ac4f665398bafa6bb539958`;
+the external ID remained unchanged. The round then completed Destroy, independent
+owner absence verification, and non-force metadata DELETE. The control VM
+retains `/var/tmp/p9-receipt-loss-01.json`; normal proxy routing is restored.
+This injects callback rejection and process restart, not loss after API commit
+or arbitrary in-flight provider cancellation.
+
+File/SQLite/real PostgreSQL regressions additionally cover expired worker lease,
+command re-delivery followed by retirement, session replacement, evidence
+tampering, different Run incarnation, generic-stop bypass, exact replay after
+successor, and rejection after actual Run execution attempt changes.
+
+The remaining early failure records with only `intent` still cannot be converted
+to completed receipts from resource existence alone. The renewable Run gate now
+has separate durable reservation, exact signed-envelope renewal CAS, and final
+commit operations; production Run remains synchronous until the supervisor
+active registry, monotonic watchdog, Agent renewal and child-task renewal are
+integrated. The thirty-second long-operation failure is not closed by these
+foundation APIs.
+
+### Asynchronous parent Run execution
+
+The wire protocol returns `run_observation` with explicit `running`,
+`completed`, or `uncertain` status. Short Unix socket request deadlines do not
+own provider execution lifetime. The supervisor first reserves the signed Run
+in the durable gate, then launches one callback under its service context.
+Observe is historical, never a replay instruction. An intent without a live
+controller after restart remains uncertain.
+
+The Agent renews the existing API command/grant transaction and forwards the
+new signed envelope through `run-renew`. The supervisor persists exact-envelope
+CAS before extending its local monotonic deadline. Duplicate/stale renewal and
+expired/canceled execution are rejected. An independent online check detects
+revocation; losing authority cancels the execution context without claiming
+daemon/guest quiescence. `run-cancel` acknowledges cancellation intent only.
+
+New child requests obtain current parent authority from a dynamic accessor;
+already-running child tasks still require their own renewal and termination
+evidence. Parent renewal alone cannot be counted as child renewal. The old
+synchronous Run RPC path has been removed.
+
+The probe's `--provision-seconds 45` option runs a foreground `sleep` provisioner
+inside the real Docker node, making Apply exceed the prior30-second RPC limit.
+This exercises parent Run renewal; it does not prove renewal or cancellation
+of independently supervised guest tasks. All these distinctions must appear
+in the final evidence, including any intent left behind by a fault.
+
+2026-10-08 real two-VM long-Run evidence: `/var/tmp/p9-async-45s-03.json`
+on control records topology `p9-59a7850534bf`, with a45-second foreground
+provisioner. Apply ran from06:13:59.636111585Z to06:14:46.91627025Z (47.28s).
+Its original30-second command budget was renewed in the same epoch11; the
+durable signed envelope was issued at06:14:39.649680174Z and expired
+at06:17:09.643696197Z. Destroy finished, execution independently verified
+owner `e7a12f17-ecf7-476f-8925-4afde0a2df43` had no remaining containers, and
+metadata DELETE succeeded without force.
+
+The first two long-Run probe rounds omitted the required provisioner `shell`
+field and failed validation before resource execution. Their evidence and
+uncertain intents remain retained; the test now sets `shell = "none"`.
+Host callback failures are logged with Run ID to distinguish validation failure
+from watchdog revocation. No failed round is counted as a successful gate.
+
+Race regressions cover duplicate starts, request cancellation independence,
+deadline expiry, renewal across the initial budget, duplicate/old renewal,
+unresponsive online authority, noncooperative callback cancellation, and cold
+intent rejection. Per-identity admission avoids holding a global registry lock
+during network/disk I/O. Deadline cancellation uses an independent monotonic
+deadline and cannot wait for a renewal's journal mutex. Completed recovery
+requires the exact historical signed envelope; unsigned old outcomes are
+rejected rather than adopted.
+
+### Parent-bound guest authority
+
+Derived guest grants now carry immutable `parent_epoch`. Exact active derivation
+retries return the existing child without extending its deadline. Replaying a
+stopped task cannot allocate a new epoch; a distinct task may reuse the resource
+only after its predecessor's verified stop. Resource-scoped parent derivation
+currently fails closed instead of overwriting the parent's authority slot.
+
+`POST /v1/agents/{agent}/execution-grant/renew-guest` requires signed parent and
+child envelopes. It validates the original command under the authority lock and
+bounds the child by both the stored parent expiry and the expiry of the supplied
+parent envelope. Generic renewal cannot renew a derived child. Parent revocation
+or session replacement prevents subsequent child authorization/renewal, and the
+guest refuses a renewal that changes its parent epoch.
+
+Before accepting a parent Run completion, the API atomically verifies that all
+linked children have stopped and freezes the parent as revoked. It retains the
+execution exclusion while committing the canonical result; new derivations
+cannot enter that gap. Final stop acceptance then releases the parent. Failed
+canonical completion can retry; historical exact receipt replay never modifies
+a successor. Rejected derivation/signature checks preserve the observed clock
+floor to prevent wall-clock rollback reviving authority.
+
+Repository and API regressions cover retries, parent bounds, scope collisions,
+revocation/session replacement, child-before-parent stop ordering, concurrent
+derivation versus completion preparation, and clock rollback. Guest renewal
+regression covers parent changes without touching the running task record.
+These changes are not yet evidence of periodic child renewal through a live
+supervisor or cross-VM child lifecycle acceptance. The guest helper must be
+rebuilt for the new field; old overlapping parent/child authority records without
+parent binding are rejected rather than inferred or silently migrated.
+
+### Host Run child management
+
+Run task launches now enter a trusted `TaskStartHandler` before guest
+transmission. The handler obtains canonical Run/task identity, derives the
+child grant, and calls the same durable task Dispatcher used by API tasks.
+Explicit signed Dispatcher-to-guest calls do not recurse through the handler.
+The child belongs to the parent Run context, not a temporary transport request.
+
+`RunChildren` observes each admitted child and renews it using the current
+parent envelope. A finite child must have a known successful exit and a reported
+confirmed-stop receipt before the parent callback can finish. Nonzero/unknown
+exit fails the parent. On cancellation or sibling failure, starts and watchers
+are canceled and stop reconciliation gets a bounded independent context;
+unresponsive providers remain uncertain and their durable records are retained.
+Long-running services are not silently killed to manufacture a successful Run;
+they continue to hold the parent open. A separate persistent-service ownership
+model is still required where services must outlive Apply.
+
+Creating nodes are not always in final state. The privileged resolver may use
+the same Run's persisted create/reset candidate, recheck full ownership and
+generation, and verify actual provider observation before making a connection.
+Task records persist trusted Run provenance so cold Observe/Cancel/Renew can
+resolve the same candidate. Wrong Run, ambiguous identity, stale generation,
+unsigned/missing provenance and conflicting current resources fail closed.
+
+Race tests cover duplicate starts, slow admission versus sibling cancellation,
+noncooperative observation, parent cancellation, exact current-parent renewal,
+failed exits, lost-start replies, and candidate-backed cold reconciliation.
+The Docker fake transport test was fixed to consume task stdin before closing
+the upgraded connection; previously unread input intermittently reset TCP.
+This slice has not yet been validated with a real cross-VM background child.
+It does not close unknown Run-intent recovery, persistent service transfer,
+Reset child lifecycle, or the remaining P5–P9 capability/fault gates.
+
+### Real cross-VM background child acceptance
+
+Prepare `sysbox-p9-guest:local` on the execution VM using
+`scripts/acceptance/guest.Dockerfile`, the current static `cmd/sysbox-init`
+binary named `sysbox-guest-task`, and the current issuer **public** key named
+`issuer.pub`. Transfer these via pinned SSH, never share the private key. The
+probe option `--background --provision-seconds 45` uses this image with a private
+cgroup namespace and privileges needed for the disposable guest supervisor.
+The VM remains the outer isolation boundary. This is a finite task, not a
+service intended to outlive Apply.
+
+Real execution exposed and fixed two integration bugs:
+
+- Create now persists an incomplete action candidate before guest effects,
+  including ownership, generation, codec state and dependencies. It does not
+  publish the resource or claim composite completion. A failed checkpoint
+  prevents routes/provisioners/image entry from running.
+- Candidate resolution loads state and action journal in one repository
+  transaction. Separate reads could otherwise combine pre-publication state
+  with a succeeded action and spuriously cancel a valid child. Reads retain
+  the aggregate serial and return detached copies.
+
+The fourth round `p9-5ecab24983f4` passed: parent epoch19, child epoch20;
+Apply started09:36:51.323286438Z. Child renewal issued09:37:02.999993858Z with
+expiry09:39:31.069891814Z; child stopped09:37:38.704818791Z with known exit0,
+confirmed termination and acknowledged host receipt. Parent ended afterwards,
+at09:37:38.756211213Z (47.43s). Destroy, independent execution-side owner absence
+and non-force metadata DELETE passed. Control evidence:
+`/var/tmp/p9-child-45s-04.json`.
+
+The previous successful lifecycle round03 revealed an inaccurate parent end
+timestamp taken before waiting for children; `RunChildren.Finish` now timestamps
+completion only after verified child termination. Rounds01/02 remain failed
+evidence with retained resources/journals; they are not counted as recovered.
+This successful gate does not close child cancellation under partition, cold
+recovery of unknown intents, persistent services, or the full fault matrix.
+
+### Running-child API outage gate
+
+`scripts/acceptance/child_partition.py --root LAB --topology p9-IDENTITY`
+requires exactly one durably observed running child before injecting a fault.
+It stops only the control VM's test HAProxy, waits for a confirmed host child
+stop, restores HAProxy in a `finally` block, and verifies the identical stop
+receipt is acknowledged. It fails if evidence already exists, the child is not
+running, the stop is unconfirmed, or receipt identity changes. This isolates
+API unavailability; PostgreSQL and SSH stay reachable. It is not a complete
+VM network partition or an API-commit response-loss test.
+
+Real round `p9-d271491329c1`: child stopped in1.54 seconds after proxy outage;
+the exact persisted receipt was acknowledged after reconnect. Independent
+execution-VM inspection found no `sleep 120` process and both task cgroup event
+files reported `populated 0`. Exit status stayed unknown with termination
+confirmed, rather than inventing exit0. Proxy service was restored and active.
+Host evidence is `/tmp/sysbox-p9-two-vms-20261008/p9-d271491329c1-partition.json`.
+
+The lifecycle probe correctly did **not** pass: the parent stayed running at
+its bounded observation timeout, with the host Run intent still uncertain.
+Its container and canonical records remain retained for evidence-driven
+recovery; no successful Destroy/metadata-delete is claimed for this round.
+This closes only the running child's API-outage stop/reconnect proof. Parent
+unknown-intent recovery and complete fault cleanup remain required.
+
+### Confirmed failure convergence and normal cleanup
+
+The trusted Run callback now has a narrow failure outcome: resource execution
+must already have returned success, child admission must be closed with no
+in-flight or handleless start, and every admitted child must have a validated,
+acknowledged stop receipt bound to its original Run/grant identity. Only then
+may failed child execution produce a failed terminal Run. Unknown exit codes
+remain failure, never success. Arbitrary provider errors cannot construct this
+internal outcome.
+
+After that callback returns, the coordinator stores the failed result against
+the exact historical signed intent, even if authority expired. This transaction
+authorizes no new effect. It retries transient persistence failure while the
+supervisor service remains alive, and logs failed attempts. A crash before the
+proof is persisted still leaves an uncertain intent; old callback exit cannot
+be invented after restart. Existing signed-result reporting and API parent-stop
+preparation enforce authoritative child inventory before releasing exclusion.
+
+Real two-VM round `p9-c466f4bc8320` passed this fault/cleanup chain: test API
+proxy outage, child stop confirmed in1.73s, identical receipt acknowledged after
+reconnect, parent failed with `run child execution failed after confirmed
+termination`, ordinary Destroy done, independent Docker owner absence, then
+metadata DELETE without force. Owner was
+`8bd178f3-1768-49db-9cd0-467344b09a74`. Control evidence:
+`/var/tmp/p9-child-partition-recovery-01.json` and
+`/var/tmp/p9-failed-cleanup-01.json`. Proxy routing was restored.
+
+`recover_failed_cleanup.py` requests normal Destroy only for this explicitly
+confirmed failure, retaining a separate result file. After independently
+checking provider absence, `--finalize` performs non-force metadata deletion.
+It cannot recover a running/unknown intent. The earlier `p9-d271491329c1`
+record and other historical uncertain runs remain retained: their old binaries
+did not persist sufficient callback-exit evidence. This is not a claim that all
+legacy unknown outcomes or daemon crash windows have been solved.
+
+### Quiescent result persistence retry
+
+`CommitQuiescentRun` now accepts an exact historical replay of an already
+completed result. This covers a lost commit acknowledgement, including a
+successful file rename followed by a directory-sync error: replay retries the
+directory durability barrier without rewriting the journal. It requires the
+exact signed envelope and the same result under the journal's JSON encoding;
+changed evidence or another renewal envelope remains fenced. A stopped epoch
+or a newer admitted epoch does not prevent this read-only confirmation.
+
+Regression tests cover reopening the gate, sealed and acknowledged receipts,
+successor admission, unchanged journal bytes, rejected result/envelope changes,
+and JSON whitespace/HTML escaping. Effectgate and hostsupervisor race tests
+passed, with local socket permission required for the supervisor tests; vet
+passed for both packages. These are local protocol regressions, not a new
+two-VM fault acceptance result or recovery of intent-only outcomes.
+
+### Resource checkpoint recovery after supervisor SIGKILL
+
+The trusted Run callback now seals child admission and records a resource-done
+checkpoint in the existing effect ledger before waiting for finite children.
+The checkpoint includes immutable Run request identity and every admitted child
+handle/grant, without transient Inputs or a reusable cleanup receipt. An OS
+execution lock spans Run admission through callback exit and result persistence.
+Recovery must acquire that same lock, validate the historical checkpoint and
+each child's current journal identity, and obtain acknowledged signed stop
+evidence before committing a failed Run. It never repeats provider effects or
+claims success from unknown child exit status. Children have independent recovery
+budgets; a slow or unavailable receipt cannot prevent cancellation of siblings.
+
+2026-10-09 two-VM round `p9-d092f4373057` passed: a120-second background task
+was observed running after its parent resource checkpoint; the test sent SIGKILL
+to the execution VM's dedicated supervisor. The service restarted from PID85364
+to PID88601. In4.95seconds the new process reported the original Run as failed
+with `run controller stopped after resource execution; child termination confirmed`,
+with every checkpoint child stopped and acknowledged. Ordinary Destroy then
+completed, an independent Docker query found no container for owner
+`3e586051-b489-4ab8-a52e-8955a10fbf0d`, and non-force metadata DELETE succeeded.
+Agent and supervisor services remained active. Earlier unknown test resources
+were not deleted or reclassified.
+
+Evidence: host
+`/tmp/sysbox-p9-two-vms-20261008/p9-d092f4373057-supervisor-crash.json`;
+control VM `/var/tmp/p9-checkpoint-crash-01.json` and
+`/var/tmp/p9-checkpoint-cleanup-01.json`. Execution binary SHA256:
+`a73d3121ac96acc85c41c17d5ef09516accf446b03f7877f9969ecf3e73eb321`
+(built from this checkpoint implementation with `-buildvcs=false`).
+
+Reproduce after starting a new120-second background probe with `cross_host_run.py`:
+
+```sh
+python3 scripts/acceptance/run_checkpoint_crash.py \
+  --root /tmp/sysbox-p9-two-vms-20261008 --topology <new-p9-topology>
+```
+
+The injector refuses absent checkpoints, non-running children and overwritten
+evidence. Use `recover_failed_cleanup.py` for normal Destroy, independently
+verify provider absence, then use its `--finalize` for metadata deletion.
+The general lifecycle probe intentionally exits with an error upon the injected
+failed Apply; the fault injector and cleanup evidence are the acceptance gates.
+
+Full Go regression, effectgate/hostsupervisor race, local subprocess SIGKILL,
+commands regression, vet and independent review passed. This closes the
+resource-complete/child-wait crash window. A daemon call interrupted before the
+resource checkpoint, legacy intent-only records, persistent-service transfer,
+P5–P8 capability gaps and the remaining P9 faults are still open.
+
+### PostgreSQL outage during a running child
+
+`scripts/acceptance/database_outage.py --root LAB --topology p9-IDENTITY`
+requires a running child, matching resource checkpoint, provider ownership,
+and a populated guest cgroup before stopping only the control VM's
+`postgresql@16-main`. It rejects pre-existing cancellation. During the outage
+it independently reads the guest journal and the original cgroup inode, pins
+task/supervisor PID and start ticks, and requires cancelled status, confirmed
+termination and `populated 0`. A natural successful exit cannot pass this gate.
+PostgreSQL is restarted and checked with `pg_isready` in `finally`, including
+when observation fails. The original child must then report its stop receipt.
+
+Use a600-second background fixture, longer than the protocol's five-minute
+maximum signed authorization lifetime. The stop observation budget is315seconds
+(five minutes plus15seconds of observation slack). With the database unavailable,
+the host cannot necessarily resolve canonical resources to request cancellation;
+the guest's independent lease guard remains the stop boundary. This gate proves
+cancellation during the outage, not which of the guest/host mechanisms caused it.
+It does not promise a seconds-level stop bound during database failure.
+
+2026-10-09 round `p9-886e91a3eee3` passed using the execution binary from the
+checkpoint recovery round (`f60f261` implementation). PostgreSQL PID changed
+from68995 to73273. With PostgreSQL still stopped, the guest reached cancelled
+and its original cgroup showed `populated 0` after138.85seconds. Exit status
+remained unknown; no success code was inferred. Child epoch34's stop was then
+acknowledged after database restart. The original parent Run converged to failed
+with `run controller stopped after resource execution; child termination confirmed`.
+Normal Destroy completed, independent Docker inspection found no container for
+owner `9f6c7f46-eb95-4d68-b159-1efa37c1d5f4`, and non-force metadata DELETE passed.
+Both APIs, PostgreSQL, HAProxy, Agent and supervisor remained active afterward.
+
+Evidence: host
+`/tmp/sysbox-p9-two-vms-20261008/p9-886e91a3eee3-database-outage.json`;
+control `/var/tmp/p9-database-outage-02.json` and
+`/var/tmp/p9-database-cleanup-02.json`. The lifecycle polling probe itself exits
+on the injected HTTP503; its original Run is subsequently checked by the cleanup
+probe. No replacement Apply is submitted. The fault and cleanup evidence, taken
+together, are the acceptance result.
+
+The initial round `p9-44d7974cbe21` did not pass the outage stop gate: its
+arbitrary45-second observation deadline was shorter than the valid signed grant.
+PostgreSQL was restored; the parent then failed and ordinary Destroy, independent
+absence and non-force metadata cleanup succeeded. Its failure evidence remains
+at `p9-44d7974cbe21-database-outage.json` and the control round01 files. It is not
+counted as a stop-during-outage pass. Harness regression tests now also reject
+natural completion, pre-existing cancellation and replacement cgroup identity.
+
+This closes one checkpointed Docker Run's database-outage/restart/cleanup gate.
+It does not cover database failure during a provider daemon effect, restore/GC
+transactions, a full network partition, disk-full or the remaining provider matrix.
+
+### Real provider target after host Run fixture migration
+
+The shared `agentexec.HostRunExecutor` now contains the trusted callback used by
+both the production `host-supervisor` command and the Docker completion-loss
+fixture. Canonical claim/serial/resource checks, immutable revision materialization,
+child grant derivation and renewal, resource checkpoint and final child evidence
+remain in the same order. The command only wires dependencies; the fixture does
+not implement a second execution policy.
+
+The old test was reproduced failing because its direct Agent execution tried
+to start an image entry without a signed guest grant. It now requires the host
+supervisor socket, shares canonical SQLite, uses separate API/host revision
+directories, and explicitly launches the container's `sleep infinity` entrypoint.
+Apply and Destroy completion responses are withheld after the API commits the
+host-signed result. Rebuilding the API/Agent/supervisor verifies replay of the
+exact original receipt and evidence; repeated admission retains one container
+with the same external ID. Stale claims, changed result evidence, resource
+UID/generation observation, Destroy and non-force metadata deletion are checked.
+The fixture's Agent retains canonical database access for its read-only remote
+inventory check; this does not establish least-privilege observation routing.
+
+2026-10-09 `make test-p9-real` passed every named gate without skips:
+
+- API package with race:10MiB file installation, running/unhealthy node power,
+  durable guest task stop/successor, and host Run completion-loss recovery.
+- Docker adoption of an initially unlabelled container, including cold provider
+  reconstruction, pause/resume, stale proof refusal and destruction.
+- Firecracker controller SIGKILL recovery7.85s, generation lifecycle8.08s,
+  reset/cold adoption25.65s (all old-generation effects rejected), and independent
+  process recovery11.27s.
+- Libvirt real generation effects4.10s, including stale context/handle rejection.
+
+The final phase-bound fault injector also passed its focused real Docker race
+run in14.06s. The in-process components are reconstructed, not separate OS
+processes; use the earlier two-VM results for process/network claims. An async
+Run dispatch unit test now waits for its callback owner before TempDir removal;
+the cleanup race regression passed50 repetitions under race detection.
+
+Artifacts were rebuilt from current source for both helper architectures:
+amd64 SHA256 `ced431e5d3432322c3ab14dfa762dd945a719100374d5261bb178a37b90f1da9`;
+arm64 SHA256 `f213a0746de7e5140145b17db69198e5546b95ec3504a67309ada55492294b81`.
+Firecracker inputs were `/home/jiandong/.cache/sysbox/tools/firecracker`,
+`/home/jiandong/.cache/sysbox/artifacts/local/vmlinux-5.10.245` and
+`/home/jiandong/.cache/sysbox/rootfs/ubuntu-24.04.ext4`. Test-owned resources were
+destroyed by their identity-scoped cleanup. Passing this target does not close
+the remaining P5–P8 capabilities, pre-checkpoint daemon ambiguity, persistent
+services, full partition/disk-full or upgrade/main integration.
+
+### Remote observation no longer reads worker canonical storage
+
+Run recovery commands now relay only command ID, lease owner and attempt over
+the host socket. The host independently fetches canonical authorization and
+revision from the API, enforces the returned command lease, executes the existing
+Observe/Recover engine, and reauthorizes before returning its report. Missing
+supervisor configuration fails without using the Agent executor as a fallback.
+The worker's local revision/repository capability no longer gates advertisement
+of `run-recovery.v1`; configured host routing does.
+
+The real Docker completion-loss race test passed in13.43seconds with the Agent
+using an independent empty SQLite database while API and host share canonical
+storage. After reconstruction, its remote observation returned the exact live
+container UID/generation/external ID; normal Destroy and non-force metadata
+deletion passed. This supersedes the previous fixture's worker database access
+limitation for explicit Run observation. It does not prove all periodic inventory
+or console/provider routes have moved, nor constitute new two-VM acceptance.
+
+A host-backed recover-mode socket test also creates an incomplete journal by
+rejecting the original state patch, then commits the proven outcome using the
+API-authorized immutable revision. It verifies advanced canonical serial,
+succeeded action, one original Create and no repeated Create/Delete. Additional
+tests cover absent supervisor, post-observation authorization rejection, unsafe
+command identity, configured leases longer than30seconds, and a valid recovery
+authorization response above1MiB. The latter two exposed transport truncation
+regressions and now pass with canonical lease limits and a recovery-only16MiB
+response budget. Full Go regression and affected-package race passed.
+
+At the routing checkpoint, final reauthorization could reject a report after a
+previously authorized journal write. The following change closes that specific
+command/Agent/Run authorization race for recovery outcome commits; daemon-unknown
+recovery, P5–P8 and the remaining P9 fault matrix remain separate requirements.
+
+### Atomic authorization of recovery metadata outcomes
+
+Host recover mode now requires a command-bound recovery repository. The ordinary
+repository remains available for observation; no ordinary write fallback is used
+for recover. Each outcome commit validates the current command lease, owner,
+attempt, retirement and recover mode; the Agent's enabled state and capability;
+the original failed/recoverable Run incarnation; and absence of an active peer
+Run in the same topology. Action identity must match that Run. Recovery cannot
+create a new action intent.
+
+The file backend holds the API run-record lock through the aggregate commit and
+evaluates expiry after acquiring the aggregate lock. SQLite uses one
+`BEGIN IMMEDIATE` transaction. PostgreSQL uses the existing Run admission
+advisory lock, then locks Run, command, Agent and aggregate rows until commit.
+All paths reuse one shared action outcome/CAS transition; SQL adapters do not
+reimplement serialization, identity or state-transition policy. Recovery expects
+the host to access the same canonical authority and lifecycle storage.
+
+2026-10-09 tests ran against files, SQLite and a dedicated PostgreSQL16 instance
+on loopback port32937 with tmpfs data (not the two-VM or user database). Under
+race detection, all backends accepted the live command and rejected a retired
+command, wrong owner/attempt, blocked Agent, active successor Run, mismatched Run
+incarnation and expired lease without changing state. File and PostgreSQL tests
+also held the aggregate lock, proved the recovery process had acquired the
+authority lock, and verified concurrent command retirement could not pass it.
+A lease expiring while waiting for the aggregate lock caused commit rejection.
+PostgreSQL coverage executed without skips. Full Go regression with that database
+enabled, persistence/agentexec race, vet and independent review passed.
+
+This proves authorization serialization for one existing recovery outcome. It
+does not freeze an entire topology across all maintenance operations, transfer
+provider execution ownership, prove an interrupted daemon call stopped, or replace
+the remaining restore/adoption/GC/SSH and distributed fault acceptance gates.
+
+### Snapshot restoration preconditions
+
+State maintenance now requires all three activity loaders (Run, node operation
+and guest activity). Previously force-unlock rejected an incomplete registry,
+but restore could silently omit the missing activity class. Both now fail closed.
+The shared snapshot restore transition also rejects a changed state lineage,
+resource type or resource schema version, in addition to resource ownership,
+generation, external identity and attributes. Restoring older metadata must not
+reinterpret current provider-private data under a historical schema.
+
+Regression tests reproduced all of these missing checks before the fix. File
+and SQLite tests verify that rejected lineage/type/schema restoration changes
+neither resources nor serial; API tests cover each missing activity loader.
+These checks are preconditions, not a complete P6 freeze/revoke/restore protocol:
+concurrent admission across independent controllers and authorized reconciliation
+of a different resource inventory still require implementation and acceptance.
+
+### Maintenance authority barrier foundation (format change)
+
+Execution authority format2 adds durable maintenance request ID, topology UID,
+request digest and exclusion epoch. Beginning maintenance atomically revokes all
+active parent/child grants and prevents new grants for that topology. Ending it
+requires the exact barrier identity and confirmed stopped grants, including grants
+whose lease already expired. Released records remain as tombstones; historical
+retries cannot unfreeze a successor. Other topologies retain their authorization.
+
+Tests cover cold repository reconstruction, retry/conflict behavior, parent/child
+revocation and stop ordering, forged release fields, independent topology, and
+concurrent maintenance/grant admission through file and SQLite API storage.
+PostgreSQL is represented by the same adapter contract test but was not configured
+in this round; no new real PostgreSQL or two-VM acceptance is claimed.
+
+Format1 now fails rather than silently losing barriers on an old writer's next
+save. This change has not been deployed into the existing two-VM lab: its retained
+format1 authority and uncertain resources were not altered. Rebuild must stop old
+writers and preserve/resolve resource evidence; editing the version field is not
+a migration. Restore HTTP orchestration, metadata freeze and a full upgrade
+exercise remain required before the barrier can close the P6 user workflow.
+
+### Recovery writes respect maintenance exclusion
+
+Explicit recovery outcome commits now check the maintenance ledger under the
+same lock/transaction as the journal/state write. File storage holds the shared
+API record lock; SQLite reads authority inside its immediate transaction;
+PostgreSQL locks the authority row before source records and aggregate. PostgreSQL
+initializes a missing ledger before locking it, so a missing-row read cannot race
+the first maintenance request. Existing empty/corrupt ledgers are rejected rather
+than treated as absence.
+
+The new regression first reproduced a state write through an active maintenance
+barrier. File, SQLite and real PostgreSQL16 now reject it without modifying state.
+File/PostgreSQL lock-contention tests also prove a new freeze cannot pass an
+in-flight recovery commit. The maintenance-versus-grant admission race was rerun
+on all three backends, including PostgreSQL without skips, using a dedicated
+tmpfs database on loopback32938. Full Go regression with this database enabled,
+focused API race, persistence race and vet passed. The isolated database is
+removed after verification; the existing two-VM format1 authority is untouched.
+
+This adds explicit recovery metadata exclusion to the barrier foundation; it
+does not yet freeze every metadata writer or wire the complete HTTP restore
+admission/commit/release workflow.
+
+The first full PostgreSQL-enabled regression in this round exposed a catalog
+creation race: two API instances concurrently opening the lifecycle repository
+could collide on `pg_type_typname_nsp_index` despite `CREATE TABLE IF NOT EXISTS`.
+Lifecycle schema bootstrap now uses a schema-local PostgreSQL advisory lock and
+DDL in one transaction. The existing dual-API keyed Apply regression passed ten
+consecutive isolated-schema runs after the fix; this is an initialization fix,
+not a relaxation of idempotent admission or a retry that hides the SQL error.
+
+### Idempotent snapshot restore commit foundation
+
+The lifecycle aggregate now stores immutable restore receipts (format3).
+`PlanSnapshotRestore` binds an operation ID, topology UID, snapshot ID/digest,
+expected serial and maintenance epoch. `CommitSnapshotRestore` reuses the normal
+restore validation and commits restored metadata plus receipt atomically. A
+duplicate returns the original receipt even after later metadata updates or
+snapshot retention deletion; conflicting request identity is rejected. Snapshot
+payloads omit the receipt catalog to avoid recursive historical capture.
+
+File and SQLite cold-reopen tests verify unchanged successor lineage/serial,
+exact receipt replay after source snapshot deletion, and rejection of changed
+snapshot, digest, serial, maintenance epoch or owner. Concurrent SQLite identical
+requests produce one serial increment and one receipt; a distinct stale request
+fails CAS. These are repository contract tests, not new PostgreSQL or VM restore
+acceptance. The primitive itself does not authorize maintenance: its caller must
+retain the matching barrier through commit. HTTP restore orchestration and its
+authority transaction are still required.
+
+Format2 aggregates are explicitly rejected. No old lab aggregate was rewritten
+or version-edited; the upgrade/rebuild exercise remains open alongside format2
+authority deployment. Full restoration of a different resource inventory and
+provider snapshot semantics are not established by this metadata receipt.
+
+Restore planning now executes the same feasibility validation as commit before
+maintenance needs to revoke grants: lineage, schema, inventory and unfinished
+journal conflicts fail without changing state or serial. Epoch-zero drafts
+support this ordering; a domain-separated digest binds immutable request fields
+while excluding the subsequently allocated maintenance epoch. Zero-epoch commit
+is rejected. Historical draft retries recover the original request/epoch even
+after snapshot deletion and successor advancement. Persistence race and dependent
+API/Agent tests cover this foundation; public restore orchestration remains open.
+
+The next shared restore transition binds that draft to a persisted maintenance
+barrier: ID, topology UID, digest and allocated epoch must match. A new restore
+requires a frozen barrier and confirmed stopped grants with nonempty receipts;
+revocation or expiry alone cannot pass. Released barriers only permit reading an
+exact already-committed restore receipt. Tests cover rejection before host stop,
+successful transition after stop, request tampering, missing stop receipt and
+historical replay after release. The transition copies historical output bytes
+and reuses the same restore state/CAS logic as the repository primitive.
+
+`ApplyAuthorizedSnapshotRestore` is pure logic for a storage transaction that
+holds both authority and aggregate locks until commit. It is not an RPC or an
+authorization token. Its joint-lock adapters and public restore orchestration
+are not wired yet; these tests establish the transition contract, not a complete
+user restore workflow or a new distributed acceptance result.
+
+### Restore storage transaction adapters
+
+Restore commit now has file, SQLite and PostgreSQL adapters retaining authority
+and aggregate exclusion through commit. File storage takes the API record lock,
+the actual authority-file lock (also used by direct repository writers), and the
+aggregate lock; it leaves the authority bytes unchanged. SQLite uses one immediate
+transaction. PostgreSQL takes the Run admission advisory lock, authority row lock
+and aggregate row lock. Each adapter reuses the shared restore transition and
+returns no successful receipt on a failed commit. None releases the barrier.
+
+Real PostgreSQL testing exposed an older snapshot encoding defect: JSONB rewrites
+embedded JSON, invalidating the raw snapshot byte digest. Snapshot payloads now
+use base64-encoded bytes and lifecycle aggregate format4. Old formats are rejected
+before payload decoding. The existing two-VM data has not been upgraded or erased.
+
+File, SQLite and a dedicated tmpfs PostgreSQL16 instance (loopback32939) passed
+the restore transaction contract under race: wrong epoch refusal, state/receipt
+commit, barrier release, successor state update, source snapshot deletion, and
+exact historical receipt replay without rewinding serial/lineage. File and real
+PostgreSQL tests also blocked aggregate acquisition, proved the restore held
+authority exclusion, and confirmed concurrent barrier release had to wait.
+These tests cover actual storage transactions; public HTTP orchestration and
+complete activity freezing are still open.
+
+Final verification: PostgreSQL-enabled full Go regression passed with package
+parallelism limited to2. An earlier higher-load run had a slow-child receipt
+fixture exceed its per-child timeout; that failure was retained, and no timeout
+was enlarged in production. Focused restore race, persistence race, vet,
+documentation checks and independent adapter review also passed.
+
+### Public snapshot restore workflow
+
+The API now exposes `POST .../state/snapshots/{snapshot}/restore-plan` with an
+`Idempotency-Key`, returning an immutable request. Persist that JSON and submit
+it to `POST .../{snapshot}/restore`; empty-body direct restoration is removed.
+The workflow validates the canonical plan, starts/reuses its maintenance barrier,
+checks activity/stop evidence, commits using the joint-lock adapter, and releases
+the barrier. It returns200 with the receipt when restored, or202 with the bound
+request while waiting. Clients retry the original or returned request; there is
+no background maintenance scheduler yet.
+
+`restore-cancel` accepts the same request and releases only an uncommitted
+operation whose grants are confirmed stopped. It never starts a missing barrier,
+and it rereads the receipt after release to report a concurrently committed
+restore accurately. An already committed restore cannot be rolled back by this
+endpoint. If commit succeeds but release fails, the restore response retains the
+receipt with `committed_waiting_for_release`; a retry completes the release.
+
+Tests cover API reconstruction and identical receipt replay, revoked-but-not-
+stopped grants retaining exclusion, continuation after host stop, plan-key
+requirements, successful HTTP replay, and explicit abandonment. The shared
+activity registry continues to fail closed if any activity loader is absent.
+The previous WorkspaceService direct restore method is removed. These checks do
+not establish automatic reconciliation of changed inventory, a background
+maintenance worker, full writer isolation, or a new two-VM restore gate.
+
+### Automatic release recovery for committed restores
+
+The existing API supervisor now scans committed restore receipts before health
+and reconciliation for each topology. It inspects the existing maintenance
+record, compares the exact request digest/topology/epoch, and retries release
+with an independent five-second budget per receipt. It never starts maintenance,
+restores state, or infers completion from a barrier without a receipt. Already
+released receipts do not affect a successor barrier.
+
+Regression tests reconstruct the API after state/receipt commit but before
+release, then use the real supervisor scan to release the original barrier with
+no additional serial increment. A later uncommitted barrier remains frozen.
+Missing authority yields an error and is not recreated. Such an inconsistency
+stops that topology's health/reconciliation pass; the outer scanner logs it and
+continues other topologies, avoiding auto-repair under uncertain maintenance.
+
+This automatic step runs only when the configured API supervisor runs. Pending
+restores without committed receipts still require the original request to be
+retried or explicitly abandoned; automatic pending-operation execution and full
+maintenance scheduling remain open. No new cross-host acceptance is claimed.
+
+### Canonical local recovery maintenance preflight
+
+The API's local (no owning Agent) canonical recovery and cleanup entry now checks
+the current topology's maintenance ledger before loading the pinned revision or
+calling provider observers/deletion. A regression reproduced both paths modifying
+the journal or resource under an existing freeze; both now reject with repository
+conflict without additional provider reads/deletes or journal changes. Empty
+existing authority data is rejected as corrupt rather than treated as absence.
+
+This is an early refusal of an already-frozen topology. It does not atomically
+exclude a freeze that begins after preflight; those local paths still require
+the same effect/commit fencing as the owning-host path before full writer
+isolation can be claimed. The preflight must not be cited as that completion.
+
+The metadata-commit portion of local canonical recovery is now additionally
+bound to the same transactional repository used for owning-host recovery. An
+explicit internal local mode requires a Run with no Agent owner, exact original
+incarnation/attempt/lease owner, failed/recoverable state, matching action
+incarnation, and no active peer Run. The remote bridge cannot select this mode.
+Authority and source Run are checked under the commit transaction; file storage
+now also holds the actual authority-file lock, preventing direct authority
+repository users from bypassing the API record lock.
+
+A deterministic regression begins maintenance from inside the provider observer,
+after preflight but before commit. The recovery now returns conflict and leaves
+state/serial unchanged. Existing canonical recovery/supervisor and remote
+recovery transaction regressions pass; shared local validation rejects remote,
+changed, active or nonrecoverable Run evidence. This closes that local recovery
+metadata-write window. Local cleanup's provider Delete path still needs effect
+fencing; it remains protected only against a freeze already present at preflight.
+
+### Managed SSH target identity contract
+
+The host SSH coordinator no longer compares the topology's user-facing name to
+its immutable UID. The signed request digest binds the name/node/configuration;
+the separately signed scope binds topology UID, resource UID and generation.
+Apply/Delete require a resource-scoped grant and matching action ID/host boot.
+The Unix boundary verifies request name/node against the outer target and matches
+the full signed scope before invoking a trusted callback. Command decoding also
+rejects disagreement between the nested SSH request and NodeOperation target.
+
+Regression fixtures now deliberately use a topology UID different from its name;
+this reproduced denial of valid Apply and missing recovery evidence before the
+fix. Callback admission and original receipt recovery pass afterward. Target
+name/node/UID/resource/generation changes are rejected before any effect, and the
+real Unix socket contract passes under race detection. These are protocol tests,
+not a complete SSH key lifecycle acceptance. Shared sshd configuration, key
+rotation/removal semantics, grant-bound installation and real end-to-end managed
+SSH access remain required P7 work.
+
+Managed SSH requests now parse actual authorized-key wire data instead of merely
+checking for two whitespace-separated fields. Invalid encodings, mismatched key
+types, multiline input and authorized-key options are rejected; each key line
+is limited to16KiB. Options such as `command=` are outside this public-key-only
+contract. Host/runtime key installation uses one canonical content function with
+the same key ordering as the signed digest, so reordered requests cannot share
+authority yet write different file bytes. Tests use valid encoded public keys
+and cover malformed data/options/type mismatch and nonmutating content ordering.
+This does not implement sshd reload, key rotation or precise owned deletion.
+
+Runtime SSH deletion now derives its exact target from the canonical node user
+and current access resource name, using the same path contract as the host
+supervisor. It rejects a different user/access path or topology owner before
+opening a connection. Missing ProviderContext now returns an error instead of
+panicking. Both Create and Delete normalize `.id`-style node references before
+resolving the connection/user. Tests verify rejection without reaching provider
+access. This is target-identity validation, not content-CAS unlink: a file changed
+concurrently still needs a guest-side owned configuration primitive. Live Read,
+shared sshd lifecycle and full key rotation remain open.
+
+### Live inspection of a durable file installation
+
+`ConnectionInstalledFileInspector.InspectInstalledFile` and guest `file-inspect`
+observe a committed installation's current target using its exact persisted
+handle. SSH, vsock and Docker task transports expose the same SPI. The guest
+validates historical grant/handle identity, current boot and parent directory,
+opens without following symlinks, and checks bounded content hash, mode, size and
+stable inode/timestamps. An identical replacement inode is drift, not ownership
+continuity. Missing targets return absent; unsafe or changing observations return
+unknown/error. No current file contents are returned. Historical file-observe
+continues to report the original installation outcome.
+
+Real filesystem tests cover unchanged content, content/mode drift, replacement,
+absence and symlink rejection; transport tests reject a foreign epoch in the
+response. Unknown handles are rejected before creating journal or lock files.
+Full regression, focused race and vet passed; amd64/arm64 helpers are rebuilt
+from the new sources. This is not yet wired into SSH access state: retaining its
+installation handle, guest owned-delete transactions and shared sshd management
+remain required. No new KVM or cross-VM live-file acceptance is claimed.
+
+The owning host now exposes the same `file-inspect` operation through its Unix
+socket. It loads an existing signed, committed file record without creating new
+journal entries, checks the original reference and immutable provider identity,
+and resolves canonical identity again after the guest read. A replaced node or
+an inconsistent `present` result is rejected. Inspection does not renew grants,
+mint stop evidence or rewrite the historical installation receipt.
+
+2026-10-09 real Docker file E2E passed under race in4.02seconds with a helper
+built from current sources. After10MiB installation and API/supervisor object
+reconstruction, inspection reported present, then drifted after chmod, then
+absent after removing that test file. Historical Observe still reported committed.
+The existing completion-loss, successor-epoch and revoked-request cases also
+passed, and the isolated test container was cleaned up. Host unit regressions
+cover changed references/provider IDs, replacement during observation, and
+unchanged journal bytes. This is the file inspection path, not yet the complete
+SSH access resource/sshd lifecycle or an independent two-VM acceptance.
+
+### Stable SSH configuration identity
+
+Managed SSH requests now distinguish per-operation `id` from mandatory stable
+`access_id`. The operation ID still binds command admission, effect identity and
+receipt; the access ID selects the managed key configuration path. Apply/rotate/
+delete may therefore use distinct operation IDs without switching to unrelated
+files. Both identifiers are signed by the request digest and immutable after
+dispatch. Runtime uses the HCL resource name as its access ID; host callbacks use
+the supplied validated access ID rather than the operation ID.
+
+Contract tests verify distinct operation digests for the same configuration path,
+digest changes when access identity changes, missing-access-ID refusal, and
+rejection of dispatched-payload access-ID mutation. This enables lifecycle
+targeting but does not itself prove key rotation or shared sshd management.
+
+### SSH host completion and evidence recovery
+
+The previously adoption-only host node-operation completion route now accepts
+SSH apply/delete through a dedicated validator. SSH stop signatures bind the
+complete result digest; API validation also requires the stable access ID and
+the expected canonical key-content hash for Apply or confirmed deletion marker
+for Delete. The existing three-backend command/operation transaction records
+completion before authority release. The generic stopped route rejects SSH to
+prevent bypassing this ordering. Host recovery reloads original result bytes and
+retries the original signed receipt rather than reporting a nil result.
+
+File, SQLite and real PostgreSQL16 completion contracts passed with retired
+commands and expired worker leases, identical replay, tampered evidence rejection,
+correctly signed but inconsistent result rejection, and generic-stop refusal.
+The database was an isolated tmpfs instance on loopback32954. PostgreSQL-enabled
+full regression, focused SSH race and vet passed. Cold host recovery also verifies
+that both original receipt and original evidence are retained. The temporary
+database is removed after validation.
+
+Old pending SSH receipts without evidence digest/access identity cannot be
+automatically recovered under this contract; explicit rebuild remains required.
+This closes protocol completion, not actual grant-bound key installation, shared
+sshd configuration, safe deletion or complete SSH access E2E acceptance.
+
+SSH canonical completion is now host-only on both API paths: the shared ordinary
+worker completion transition rejects SSH apply/delete even with a valid live
+command lease, for both done and failed reports. Agent execution emits delivery
+progress but no longer posts a second worker-authored terminal NodeOperation.
+A host transport failure therefore remains unconfirmed instead of allowing a
+worker to overwrite the independently recoverable host result. Regressions
+reproduced all four worker bypass cases and verify zero HTTP completion requests
+from the Agent when the host path is unavailable. Other node-operation types
+retain their existing completion rules.
+
+Worker failure events still retire the delivery command. If SSH fails before
+any host result exists, the canonical operation stays unconfirmed/queued rather
+than receiving an invented failed result. Automated re-admission/reconciliation
+for that pre-host failure remains a liveness gap; host result recovery already
+supports retired command records.
+
+The no-grant subset of that liveness gap now has explicit reconciliation.
+After reading a durably retired failed/denied/cancelled command, the API checks
+both current grants and retained stop history in a validated authority transaction.
+Since issuance validates the same command transaction, no grant can be issued
+after its retirement. Only a command with no execution history may mark its
+matching SSH operation failed with `SSH access delivery failed before execution
+authorization`. An issued, expired, stopped or superseded grant prevents this
+inference; those operations still require host evidence.
+
+The command-event path runs this check after retirement, and the API supervisor
+repeats it from durable operation/command records after restart. Tests cover
+never-issued versus issued commands, idempotent scan, and retained stop history
+after a successor replaces the current scope. This does not automatically replay
+SSH work or resolve an operation whose host effects remain unknown.
+
+### Firecracker managed inventory and GC preview (2026-10-09)
+
+`ListManagedNodes` enumerates durable manifests under the configured runtime
+root and reuses the normal ownership, generation, canonical-path and config
+digest verifier. Corrupt records, duplicate identities, symlinks, a non-directory
+root and nonregular manifests fail the entire observation; no partial list is
+returned. Adoption lookup also reports malformed JSON instead of treating it as
+NotFound. Unknown JSON fields are not rejected; this is not strict schema decoding.
+The before/after manifest comparison detects ordinary updates, not an atomic
+tree snapshot or ABA changes. Returned handles are observations, not proof of
+liveness or permission to delete.
+
+CLI GC preview now includes Firecracker and protects IDs referenced by current
+canonical state or retained snapshots. Unknown owners are skipped. Missing
+runtime roots are reported as unavailable; malformed existing inventories fail
+the preview. A batch containing Firecracker is rejected before any delete or
+journal intent because the authorized reference-revalidation pipeline is not
+yet connected. No new raw Firecracker deletion path was added.
+
+Real KVM `TestFirecrackerRealGenerationLifecycleE2E` passed in 9.89 seconds,
+including inventory of the actual VM and the existing lifecycle cleanup. This
+is not a real orphan-GC acceptance. Command/provider regressions cover snapshot
+retention, owner filtering, corrupt-inventory propagation and whole-batch
+execution rejection. Independent review found malformed directory entries could
+be accepted as empty inventory; regression tests reproduced and fixed both cases.
+After those fixes, the full Go suite and command/Firecracker race suites passed;
+vet, documentation checks (53 canonical documents) and independent re-review
+also passed. This round did not enable a real Postgres test database.
+
+P8 remains open: full API reference inventories, TAP orphan discovery, authorized
+plan dispatch and provider GC acceptance remain unfinished. Inspection also found
+the production host GC callback enters the coordinator a second time under the
+same gate, while its inventory validator currently returns success without
+checking references. Those paths require repair before automatic GC acceptance.
+
+### GC gate and coherent lifecycle references (2026-10-09)
+
+The nested production GC coordinator call was reproduced as a timeout before
+the provider ran. `Server.GCEffect` now accepts only context and candidate; the
+RPC server owns the sole coordinator invocation. Provider clients initialize
+inside that callback, so Docker setup cannot disable libvirt/Firecracker GC or
+historical GC observation and receipt recovery. A Unix-socket regression invokes
+the real server/client with a simulated Docker endpoint, completes deletion and
+observes its recorded result. This is protocol integration, not real provider GC
+acceptance.
+
+The production no-op inventory validator has been removed. Until the complete
+reference/plan authority is connected, a new host GC delete returns a fenced
+error before authorization, journal intent or provider access. Already recorded
+outcomes and stop receipts remain recoverable. Removing the recursive lock must
+not inadvertently enable deletes based only on a worker-provided digest.
+
+`Repository.LoadGCReferences` now gathers state, successful action candidates,
+retained snapshot state and retained snapshot action candidates in one aggregate
+transaction. Each resource identity includes its source. The digest binds the
+entire aggregate, including action revisions and snapshot catalog, and is stable
+across unchanged reads. Unresolved current/retained journals, corrupt snapshots
+or storage failures return a zero snapshot, never partial references. This shared
+implementation serves file, SQLite and Postgres and replaces the CLI's three
+separate lifecycle reads and duplicated reference loops.
+
+CLI GC no longer reads standalone `state.json` records or keeps the old fallback
+collector. Their presence requires explicit rebuild. Existing lifecycle data is
+not rewritten, but prior GC inventory digests must be regenerated. The lifecycle
+snapshot still excludes API Run/command/guest-task/file/revision/placement and
+authority references. It is a planning input, not a complete deletion proof or
+a lock held through provider execution. P8 remains open for that integration,
+legacy raw CLI deletion removal and real orphan-GC acceptance.
+
+Validation: the full Go suite passed with an isolated Postgres 16 database
+enabled for persistence tests via `SYSBOX_TEST_POSTGRES_DSN`. The API integration
+tests require the separate `SYSBOX_TEST_DATABASE_URL` variable, which was not
+set in that round; its Postgres branches were skipped. Host-supervisor and
+persistence race suites passed;
+the commands race suite passed before the socket integration addition, and the
+final socket/nil-validator cases passed under race after correcting fixture
+directory permissions and target fields. Vet, docscheck (53 canonical documents)
+and independent re-review passed. No real provider resource was deleted in this
+round; the temporary database belongs only to this test run.
+
+### Metadata deletion and outstanding authority (2026-10-09)
+
+A regression reproduced metadata deletion succeeding after a Run was marked
+failed while its provider grant still lacked a host stop receipt. Ordinary and
+forced API deletion now commit through a shared quiescence/CAS transition. The
+file adapter holds API record and authority locks through lifecycle commit;
+SQLite uses `BEGIN IMMEDIATE`; PostgreSQL locks admission, materializes/locks
+the authority row and then locks the aggregate. The PostgreSQL insert is needed
+because `SELECT FOR UPDATE` alone cannot exclude first issuance into an absent
+authority row. No provider effect is performed by this metadata transition.
+
+All grants for the exact topology UID must have persisted stop evidence, and no
+unreleased maintenance barrier may exist. Revoked or expired grants still block
+deletion; `force` does not bypass them. Grants for other topology UIDs do not
+block this topology. The serial/UID comparison prevents a stale delete from
+resetting a successor. Cleanup inspection includes `execution_grant` entries
+and marks an otherwise available receipt `blocked_by_execution_authority` when
+there are unresolved effects.
+
+Reads, grant transitions, maintenance writes, restore and metadata deletion use
+the same authority decoder. Missing mandatory JSON fields, malformed scopes,
+invalid states and stopped records without receipts are rejected. Only an
+actually absent ledger initializes an empty authority; an existing `{}` record
+is corruption. Independent review caught default initialization masking missing
+fields, and explicit regression tests reproduced and fixed that behavior.
+
+File/SQLite/Postgres tests cover failed Run versus outstanding authority,
+revocation, exact host-stop acceptance, maintenance and unrelated topology
+grants. File and PostgreSQL concurrency tests block lifecycle commit and verify
+that first authority creation cannot pass the held authority boundary. SQLite
+uses its single write transaction for both records. Both
+`SYSBOX_TEST_DATABASE_URL` (API) and `SYSBOX_TEST_POSTGRES_DSN` (persistence) must
+be set when running the complete database regression.
+
+This closes deletion over already-outstanding authority, not the entire P6/P8
+protocol. All operation registry/admission checks still need a single durable
+exclusion model, and issuance based on a stale lifecycle UID after deletion must
+be fenced at its source. Workspace filesystem cleanup remains outside the
+database transaction. Automatic GC is still disabled pending complete reference
+and plan authorization.
+
+Validation completed with both PostgreSQL test variables set: full Go regression
+passed, including API and persistence Postgres cases. API race (48.90 seconds)
+and persistence race passed; vet, docscheck and independent re-review passed.
+Real Docker `TestHostSupervisorRealTaskStopAndSuccessorE2E` passed in 3.39 seconds
+and `TestRemoteDockerCompletionLossRecoveryE2E` in 12.64 seconds under race with
+a freshly built guest helper. The latter confirms that host-signed Destroy and
+cold API metadata deletion still succeed without force after verified stops.
+These tests use isolated resources; they do not replace two-host P9 acceptance.
+
+### Command grants bind the current lifecycle UID (2026-10-09)
+
+The late-issuance regression reproduced an old retained command acquiring a new
+epoch after its previous grant stopped and API metadata deletion replaced the
+topology UID. Command-backed issuance, renewal, host authorization and derived
+guest authority now revalidate the durable command's topology against the
+canonical lifecycle aggregate within the authority transaction. GC issuance
+uses the same command-backed path instead of constructing an independent grant.
+
+File storage checks the aggregate while holding the API record and authority
+locks; SQLite reads inside its write transaction; PostgreSQL locks authority,
+command and lifecycle rows through commit. The topology name comes only from
+the persisted command payload. Missing/replaced lifecycle evidence fails closed.
+Session and stop-receipt transitions remain usable without current lifecycle
+metadata so historical execution evidence can still be recovered.
+
+Tests cover ordinary late issuance and simultaneous grant/delete attempts on
+file, SQLite and real PostgreSQL: either the grant commits and deletion conflicts,
+or deletion commits and issuance conflicts. Neither can return a speculative
+grant on failure. Independent review found lifecycle rejection bypassed the
+existing durable clock-floor update; the added failing regression was fixed by
+sharing the source-error path. Rejected proofs commit only their observed clock,
+preserve the original source error and never extend command leases.
+
+This binds topology incarnation, not every resource generation or complete GC
+reference plan. API operation admission and reference enumeration still need
+their full shared protocol. Direct offline repository mutation remains outside
+the API authority transaction; automatic provider GC remains fenced.
+
+Validation: full Go regression passed with both PostgreSQL variables enabled;
+three-backend concurrent issuance/deletion tests passed under race. The final
+clock-floor fix passed the full database regression and independent re-review.
+With a freshly built helper, real Docker host task/stop/successor E2E passed in
+3.01 seconds and Run completion-loss/recovery/Destroy/cold metadata deletion E2E
+passed in 12.86 seconds under race. Vet and documentation checks passed. The
+test-only PostgreSQL container was stopped and automatically removed afterward.
+
+### GC grants validate lifecycle references (2026-10-09)
+
+Previously GC issuance accepted any nonempty inventory digest. The regression
+reproduced issuance with an invented digest. The shared command/lifecycle
+validator now derives the reference snapshot under the existing authorization
+transaction, compares its exact digest, and rejects a candidate whose resource
+UID or provider-scoped external ID is retained by state, journal or snapshots.
+Different generations of the same resource UID remain protected. The same
+validator runs for issuance, host authorization and renewal; a reference change
+after issuance rejects further authorization/renewal without extending the old
+grant. Stop receipts remain acceptable after references change.
+
+This reuses the existing reference algorithm, not a second API-specific scan.
+File/SQLite/real PostgreSQL race tests cover invented/stale digests, current and
+snapshot-only references, and new references after issuance. It does not yet
+validate the separate API activity registries, immutable GC plan ownership or
+provider inventory. It also does not hold exclusion through a provider call.
+The production host GC reference validator remains unwired, so this improvement
+does not enable automatic deletion. The legacy local CLI deletion path still
+needs removal as part of P8 completion.
+
+Validation: full Go regression passed with both PostgreSQL test variables set;
+targeted GC/authority/metadata race suites passed on all three backends. Separate
+identity tests cover UID protection across generations, external-ID protection
+under a different UID, and equal external IDs in different providers. Vet,
+docscheck and independent review passed. No real provider GC effect was run.
+
+### Retire the raw CLI GC deletion path (2026-10-09)
+
+The CLI no longer exposes `gc --execute` or carries `executeOrphans`, its private
+deletion journal/replay implementation, direct Docker remove calls, or direct
+libvirt destroy/undefine calls. Those implementations could not share exclusion
+with lifecycle writers and bypassed the API/host authority contract. Their tests
+were removed with the obsolete implementation; the canonical provider and host
+gate tests remain. `gc --dry-run` still inventories scoped candidates, and bare
+`gc` explicitly refuses execution.
+
+A regression verifies `--execute` is no longer a recognized flag. A preview
+integration test uses read-only Docker/virsh fixtures and a historical uncertain
+GC journal, verifies its bytes remain unchanged and confirms no old lock or
+replacement journal is created. No on-disk historical journal or provider
+resource was deleted during this cleanup. Removed source remains recoverable
+from Git history. The old GC design document now describes the canonical model
+and marks the complete authorized deletion workflow as unfinished. P8 remains
+open; removing the bypass does not deliver automatic garbage collection.
+
+Validation: full Go regression, commands race, vet, documentation checks and
+independent review passed. This source-removal round did not start PostgreSQL
+or run real provider GC effects. No user data was removed.
+
+### Maintenance activity scope (2026-10-09)
+
+The shared restore/force-unlock quiescence check incorrectly passed a topology
+name to the NodeOperation list's workspace filter. A running operation with
+`Topology=lab` and `Workspace=project-workspace` was therefore omitted, allowing
+the preflight to report quiescence. It now enumerates node operations and filters
+their actual topology, as metadata deletion and cleanup inspection already do.
+
+The regression reproduced the omission on file and SQLite stores. A three-store
+workflow test verifies running operations block force-unlock and retain restore
+in `waiting_for_stop`, with no receipt or lifecycle serial change. After the
+relevant operation becomes terminal, restore completes even when an unrelated
+topology in the same workspace remains queued. This fixes activity selection;
+the reads remain separate snapshots, not the completed cross-registry admission
+transaction required by P6/P8.
+
+Validation: the full API package passed under race (51.28 seconds) with the
+isolated PostgreSQL database enabled alongside file and SQLite. Vet, docscheck
+and independent review passed. The temporary PostgreSQL container was stopped
+and automatically removed; this round performed no provider effects.
+
+### Guest/file/node admission during maintenance (2026-10-09)
+
+Restore maintenance previously froze grant issuance but did not freeze new
+guest execution, guest file, or node-operation dispatch. Those writes could pass
+a quiescence read and publish after a barrier began. All three dispatch paths now
+validate the durable authority barrier while retaining the same lock/transaction
+through operation and command publication. File storage holds the record and
+authority locks; SQLite uses one immediate write transaction; PostgreSQL
+materializes and locks the authority row before both inserts. Missing topology
+UIDs fail closed.
+
+Three-backend tests verify frozen rejection leaves neither operation nor command
+for all three dispatch kinds, and release permits execution admission. Repeated
+concurrent execution admission/freeze tests include initial authority absence:
+successful dispatch is visible before maintenance returns, or maintenance wins
+and dispatch conflicts. File/node concurrency uses the same transaction helpers
+but was not separately stress-tested. Full API race passed (51.83 seconds) with
+real PostgreSQL. Real Docker task-stop/successor (3.12 seconds) and 10 MiB file
+install/recovery/presence (2.24 seconds) E2E passed. Vet and independent review
+passed. Run dispatch and other raw metadata writers remain outside this slice,
+so P6 is not complete.
+
+### Console sessions in quiescence (2026-10-09)
+
+The activity registry now includes durable ConsoleSession records. A queued or
+running console session, including one whose workspace name differs from the
+topology, blocks restore, force-unlock and other state maintenance. Follow-up
+verification found the first predicate incorrectly allowed terminal statuses
+without an end timestamp, and `lost` with a restart timestamp. Both are now
+rejected by one shared check used for maintenance and metadata deletion. The
+console registry loader is required rather than silently skipped.
+This closes a missing activity category, while cross-registry atomic admission
+and raw metadata writer fencing remain P6 work.
+
+AgentCommand activity is now included as well. A nonterminal command carrying
+the topology UID blocks state maintenance even when no guest activity record
+has been created yet; terminal/retired commands do not. This closes the gap
+between durable dispatch and guest operation publication. The targeted race
+regression passed; raw writer and cross-registry transaction work remains.
+
+The final full Go regression also passed with both PostgreSQL test variables
+enabled. The isolated test database was stopped and automatically removed after
+verification; real Docker tests cleaned their own containers and helper files.
+
+### Run dispatch during maintenance (2026-10-09)
+
+Run admission and queued-to-assigned outbox publication now validate the same
+durable maintenance barrier as guest/file/node dispatch. New requests fail before
+writing the run, idempotency mapping or command; a queued run remains queued.
+SQL transactions retain the authority lock through run and command inserts; the
+file adapter retains its records/authority lock through the atomic bundle. Exact
+committed request retries remain historical reads during a freeze and do not
+publish a successor command.
+
+Three-backend race tests cover first authority row creation, different run keys,
+queued and assigned paths, idempotency mapping rollback and exact retry. Real
+PostgreSQL and full repository regression passed. This closes Run dispatch for
+the maintenance barrier; raw run Save/Restart and other metadata writers still
+need the same admission port, so P6 remains open.
+
+Correction to the raw Run writer checkpoint: `fa89866` added sequential checks
+but did not hold the file authority lock through append, and PostgreSQL acquired
+authority after the Run row. Its test run did not enable PostgreSQL. Its `{}`
+authority exemption and invented `legacy` UID were unsafe; the earlier claim of
+complete three-backend fencing was not supported by that implementation.
+
+The corrected implementation holds file authority through lifecycle observation
+and Run append; SQLite retains its write transaction; PostgreSQL materializes
+and locks authority before Run/command rows. Active writes validate complete
+authority and lifecycle records through one shared persistence function. An
+uninitialized lifecycle is allowed only when no maintenance barrier is active;
+malformed records never become an empty authority. Existing unrelated topology
+UIDs remain independent. Terminal Run updates bypass admission freeze so work
+can finish, while restarting to queued remains blocked.
+
+Full API race also exposed per-request writes to activity loader callbacks from
+the console/command changes. Those callbacks are now initialized only with the
+service. Commands are enumerated without filtering by registered Agents, so a
+missing Agent registration cannot hide durable work. None of these changes
+establish atomicity for every registry writer or complete P6/P8.
+
+Verification of the correction: API and persistence full race suites passed
+with both PostgreSQL test variables enabled (55.54 and 3.95 seconds). The file
+lock regression blocks the first actual Run append and observes authority held
+until append resumes; 20 repeated runs passed. An earlier lifecycle-lock test
+was replaced because it no longer blocked the implementation's read path.
+Tests also cover terminal reporting while frozen, restart rejection/release,
+corrupt authority, unknown lifecycle during maintenance, and unrelated owners.
+No legacy UID or `{}` exemption remains.
+
+Final full Go regression with API and persistence PostgreSQL integration enabled,
+vet, docscheck and independent re-review passed. The test-only Postgres container
+was stopped and automatically removed. No real provider effect was exercised in
+this correction round; the database/race evidence does not replace P9 acceptance.
+
+### Lost console evidence is not completion (2026-10-09)
+
+API restart changes queued/running consoles to `lost` and records an end time
+for the broken connection. That timestamp does not prove a remote stop. A real
+store/hub regression reproduces the transition and requires restore quiescence
+and forced metadata deletion to remain blocked. Known terminal statuses require
+creation/end timestamps in order; unknown and lost statuses always remain
+unresolved. An unrelated topology in the same workspace does not block this one.
+
+This is an activity-selection correction, not a complete console recovery or
+signed-stop protocol. Raw console status writes still need formal authority
+binding, and console admission must join the shared maintenance transaction.
+P6/P8 and the complete P9 acceptance therefore remain open.
+
+Validation: full API race passed with real PostgreSQL enabled (54.26 seconds),
+alongside file/SQLite. Extended status/time tests passed under race, including
+queued/running with populated times and missing creation time. Vet, docscheck
+and independent review passed. The temporary PostgreSQL container was stopped
+and automatically removed. No provider effects were performed in this round.
+
+### Cleanup inspection includes console and command blockers (2026-10-09)
+
+The diagnostic endpoint now consumes the same unresolved-console predicate used
+by maintenance, and enumerates all commands rather than only registered Agents.
+Lost consoles and pending commands carrying the current lifecycle UID appear in
+`active_operations`; foreign topology UIDs are excluded. Agent IDs are included
+without exposing command arguments, environment values or console error/audit
+content. Failed enumeration returns a redacted 503 rather than an empty list.
+
+Existing cleanup receipts remain visible as historical evidence, but their status
+becomes `blocked_by_console_activity` or `blocked_by_agent_command` when these
+additional blockers exist. This is diagnostic coverage, not a cross-registry
+transaction or deletion authorization. It does not repair missing stop protocols
+or enable GC. P0–P9 remain unfinished.
+
+Verification: the full API race suite passed with real PostgreSQL enabled
+(57.60 seconds), including file/SQLite coverage. Vet, docscheck and independent
+review passed. The temporary test database was stopped and automatically removed;
+this round did not execute provider effects.
+
+### Command preflight shared by maintenance and metadata deletion (2026-10-09)
+
+Missing AgentCommand enumeration is now an incomplete registry error, matching
+the other required maintenance sources. The same command preflight is used for
+restore/force-unlock and before any metadata Delete mutation, including force.
+Previously a pending command could block maintenance yet be omitted by Delete.
+The regression reproduced deletion succeeding and checks that a rejected delete
+preserves the original topology UID. Registry read failures also prevent deletion.
+
+Tests cover unregistered Agents, command retirement, and foreign topology UIDs.
+The helper loads lifecycle identity once with the request context and does not
+infer quiescence from command lease expiry. This remains a preflight snapshot:
+it does not serialize every command writer with lifecycle deletion, and cannot
+substitute for host stop evidence or the pending cross-registry admission work.
+
+Validation: full API race passed with real PostgreSQL enabled (101.36 seconds).
+The publication/deletion concurrency regression exposed an unnecessary lifecycle
+read for empty command lists; the helper now resolves UID only when a pending
+command exists. Targeted race, vet, docscheck and independent review passed.
+The temporary database was stopped and automatically removed after verification.
+
+### Incomplete command identity remains a blocker (2026-10-09)
+
+Pending commands without topology UID were omitted even when their durable
+payload explicitly named the topology. Maintenance/delete preflight and cleanup
+inspection now share a predicate: explicit UIDs match only that incarnation;
+missing UID plus a matching Run, node operation, guest execution, file or console
+payload name adds a blocker. This never fills an identity field, binds an old
+command to a successor, or permits execution. Terminal commands remain excluded.
+
+Regression tests reproduced all five missing-UID cases and protect unrelated
+topology, explicit old UID and terminal behavior. This is conservative evidence
+handling; incomplete records still require explicit resolution/rebuild. It does
+not implement atomic command admission or recover unknown remote effects.
+
+Validation: full API race passed (62.65 seconds), including file/SQLite; no
+PostgreSQL instance was enabled in this round. HTTP regressions verify activity
+visibility and `blocked_by_agent_command` for missing UID records, with the
+historical receipt retained. Targeted race, vet, docscheck and independent review
+passed. No external resource or database mutation was performed for acceptance.
+
+### Console cancellation records intent rather than stop (2026-10-09)
+
+The API cancellation request previously wrote `cancelled` with an end timestamp
+before any remote confirmation. It now persists `cancelling` with no stop time,
+then updates in-memory state and signals the relay. Failed persistence returns
+an error without changing state or signalling; retries do not duplicate the
+cancellation audit. Restart leaves the outcome unresolved (`lost`). Late attach
+or started events do not overwrite cancelling with running.
+
+Websocket relay end/attach timeout now record transport loss instead of inventing
+closed/failed execution. Already reported terminal results are preserved. Update
+and Cancel persistence are serialized within the hub; snapshots are detached
+copies read under lock, and Agent attach reads identity from that snapshot.
+The delayed-write regression ensures an earlier running update cannot overwrite
+a later cancellation. This locking is process-local; multi-API CAS, durable cancel
+delivery and host-signed console completion are still outstanding. Existing
+worker completion events remain the current terminal-report path, not a claim of
+verified remote termination. P0–P9 remain open.
+
+Verification: full Go regression and full API race (63.18 seconds) passed, as
+did vet, docscheck and independent re-review. Regressions cover persistence
+failure, cancellation retries, restart, late started events, terminal reporting,
+transport-loss classification, delayed writes and detached snapshots. PostgreSQL
+and real provider acceptance were not run for this in-process state correction.
+
+### Cancellation dispatch failures stay visible (2026-10-09)
+
+ConsoleService no longer discards cancel-command publication failures. It retains
+the persisted cancelling session and returns the error; a later call for the same
+session retries dispatch without adding a second cancellation audit event. HTTP
+returns 404 only for an actually missing session, and a redacted 503 for storage
+or publication failures, advising retry of the same session. No internal dispatch
+error or connection detail is exposed.
+
+Regression tests reproduce the ignored publication error and incorrect 404
+mapping, then verify retained intent, successful retry and unchanged audit count.
+This does not provide a durable cancellation outbox, exactly-once delivery or a
+remote stop acknowledgment. Those remain part of the full console migration.
+
+Verification: full API race passed (62.68 seconds), along with targeted HTTP
+storage-failure and dispatch-failure cases, vet, docscheck and independent review.
+PostgreSQL and real provider acceptance were not run in this error-routing slice.
+
+### Console creation requires persistence (2026-10-09)
+
+The console hub previously published its in-memory session and discarded the
+storage error. Create now accepts the request context, requires configured
+persistence, and saves the session before exposing it in the hub. The service
+stops immediately on a storage failure, so it cannot publish `session_open` for
+that failed creation. HTTP returns a redacted 503 without a session ID.
+
+Tests verify failed saves create no hub entry or command, cancelled contexts and
+missing stores reject, and a successful returned identity can be read from the
+store. This does not make session creation and command outbox one transaction;
+a crash after session save can still leave queued evidence without dispatch.
+Cross-process console CAS and atomic session/outbox admission remain unfinished.
+
+Verification: full API race passed (63.96 seconds), together with targeted
+create/cancel tests, vet, docscheck and independent review. File and SQLite were
+exercised; the PostgreSQL test branch was not enabled in this round. No real
+provider effects were performed.
+
+### Console updates publish only committed state (2026-10-09)
+
+Hub Update now applies callbacks to a detached session copy and saves it before
+replacing the in-memory record. It returns missing-session/storage errors instead
+of discarding them. Audit, roles and exit-code pointer copies prevent a failed
+callback update from leaking through shared memory. The creation workflow stops
+before session-open dispatch if its policy/audit or node-rejection update fails.
+Agent command-event handling returns console update errors to its caller's
+logging path (not a durable Agent retry acknowledgment), and websocket
+attach closes on persistence failure; relay cleanup logs failed loss records.
+
+Regressions verify failed saves preserve prior in-memory/audit state, prevent
+dispatch, and do not expose uncommitted completion. Command event and console
+record writes are still separate transactions: reporting an error does not roll
+back an already persisted command event. Restart reconciliation, cross-process
+CAS and full signed console outcomes remain part of the unfinished migration.
+
+In particular, terminal command events retire the command before session update;
+current replay rejects retired commands. A failed session completion save can
+therefore leave unresolved console evidence until an atomic completion/recovery
+protocol is implemented. Browser audit now records an attachment request before
+channel admission, avoiding a false success event for rejected duplicate peers.
+
+Verification: full API race passed (63.18 seconds), plus targeted failed-save,
+no-dispatch and completion-error tests, vet and docscheck. Independent review
+identified the premature browser success audit and it was corrected to request
+evidence. PostgreSQL and real provider acceptance were not run in this slice.
+
+### Recover console completion after command retirement (2026-10-09)
+
+An accepted terminal `session_open` command is now retained as replayable
+completion evidence. Exact retries validate Agent, command type, status/error,
+lease owner, attempt and resource proof against the stored outcome, without
+unretiring or writing the command. Other command protocols retain their previous
+retirement rules. Retry timestamps/message text cannot replace the accepted
+outcome; the session uses the original command end time and error.
+
+Supervisor scanning and direct terminal-event replay share the same recovery
+path. It reads durable command records including retired outcomes, rejects
+ambiguous multiple commands for one session, and verifies Agent, topology, node
+and creation time against the session. It repairs unresolved session metadata
+without publishing or executing another command. Retirement alone without a
+terminal result remains unresolved. Successful recovery clears the prior lost
+transport diagnostic.
+
+Three-store regressions inject a session-write failure after command retirement,
+rebuild the hub, run reconciliation and verify repaired completion plus stable
+historical timestamps. Altered replay proofs are rejected; duplicate mappings
+and changed session identity are rejected through both scan and direct replay.
+This repairs the retired-command/session-write window noted above; it is not an
+atomic two-record commit or a signed host-stop protocol. Console CAS across API
+processes, reliable cancellation outbox and unknown-result recovery remain open.
+
+Verification: API/persistence full race passed with real PostgreSQL enabled
+(55.93/3.62 seconds); after review fixes, the shared-path recovery regressions
+passed under race on all three stores and full Go regression passed with both
+database test variables enabled. Vet, docscheck and independent re-review passed.
+The temporary Postgres container was stopped and automatically removed. No real
+provider or cross-host console execution was run in this recovery slice.
+
+### Console startup requires complete durable evidence (2026-10-09)
+
+Console registry initialization no longer treats a failed session listing as
+an empty registry or exposes an uncommitted lost-state update. It builds its
+in-memory map only after loading and saving startup observations successfully.
+Initialization errors are retained; hub operations reject them and API startup
+returns the failure before listening. Existing evidence is not deleted or
+automatically rebuilt. Earlier successfully written lost observations remain
+durable if a later record fails; a restart can retry initialization.
+
+Tests cover unavailable enumeration, failed startup saves and a corrupt local
+console file preventing API startup without changing its bytes. This does not
+introduce cross-process console CAS: concurrent API startup/liveness ownership
+and automatically retrying a failed registry initialization remain unresolved.
+
+Verification: full API race passed (36.89 seconds), along with startup-specific
+tests, vet, docscheck and independent review. PostgreSQL and real provider E2E
+were not enabled in this startup error-handling round.
+
+### Console cancellation uses one immutable outbox identity (2026-10-09)
+
+Console cancellation retries previously created random command IDs and duplicate
+deliveries. The command ID now hashes the session's immutable ID, Agent, topology,
+node and creation time; mutable status/audit fields are excluded. Its durable
+payload carries that same target identity. A shared repository Enqueue operation
+inserts a queued command or returns the exact matching live record without
+changing delivery state, lease owner, deadline or attempt. Changed payloads and
+retired records conflict rather than restarting delivery.
+
+The production publisher uses Enqueue for console cancellation and retains the
+existing behavior for other commands. Three-backend tests cover retries after
+lease acquisition, cold hub reconstruction and retirement. A storage commit
+failure cannot return a speculative command. Once committed, the existing outbox
+can enumerate the cancellation; this change does not atomically publish the
+session cancellation intent and command together. A crash before first enqueue,
+automatic repair of that gap, and verified remote stopping remain unfinished.
+
+Verification: API/persistence full race passed with both PostgreSQL test variables
+enabled (57.11/3.73 seconds); file/SQLite/Postgres hot/cold retries all retained
+one command and its lease. Vet and docscheck passed. The temporary PostgreSQL
+container was stopped and automatically removed; no real provider effect ran.
+
+Independent review found PostgreSQL's absent-row first-insert race could return
+a spurious conflict. Enqueue now re-enters a new transaction once on conflict and
+compares the same immutable payload; changed/retired records still reject. After
+that fix, eight-way first enqueue, hot/cold retries and repository failure cases
+passed five repeated race runs across file/SQLite/real Postgres. Re-review found
+no remaining issue in this slice. The second isolated verification database was
+also stopped and automatically removed.
+
+### Repair cancellation intent before first enqueue (2026-10-09)
+
+Restart now preserves durable `cancelling` status rather than replacing it with
+transport-loss status. Supervisor scans cancellation intents before ordinary
+outbox delivery and inserts their missing stable cancel command. Existing records
+are checked for matching Agent/type/session identity and left unchanged, including
+leased commands. Explicitly retired tombstones may have scrubbed Session payload;
+their stable ID remains reserved and is never recreated or interpreted as stop
+evidence. Per-record failures are reported while other intents continue.
+
+Cold-restart regressions exercise intent saved without command publication, then
+repeated scans producing one outbox record. They also preserve retirement,
+reject conflicting bindings without overwriting them, and confirm plain `lost`
+transport does not invent a cancellation request. This closes the missing-first-
+enqueue recovery window for persisted cancelling records. It is a recoverable
+two-step workflow, not a transaction spanning session and command; multi-API
+session CAS and verified remote stopping remain unfinished.
+
+Verification: full API race passed with real PostgreSQL enabled (57.49 seconds),
+and targeted three-store recovery tests additionally verify an existing delivery
+lease remains unchanged. Vet, docscheck and independent review passed. The
+temporary PostgreSQL container was stopped and automatically removed. Tests
+reconstruct API hubs; no cross-host console process execution was performed.
+
+### Complete SQLite console records, API schema 10 (2026-10-09)
+
+The SQLite console adapter dropped ProjectID/Workspace and did not update
+StartedAt/Audit on conflict, unlike file and PostgreSQL. A full-record regression
+reproduced the difference. SQLite now stores `id/data` JSON snapshots, decodes
+all fields together, checks the payload ID against the row key and fails on
+malformed/null records instead of ignoring roles/audit/time decoding errors.
+Listing honors Workspace, falling back to Topology only when Workspace is empty.
+
+The shared API SQL schema version is now 10. Existing SQLite/Postgres schema 9
+databases require explicit rebuild, even though PostgreSQL DDL is unchanged;
+no live business database was migrated. File console serialization is unchanged.
+Tests exercise complete updates and workspace filtering across stores,
+corrupted SQLite payloads and schema-9 rejection. This establishes consistent
+record content, not cross-process CAS or atomic console outbox admission.
+
+Verification: full API race with real PostgreSQL passed (57.43 seconds); the
+final full Go regression passed with both database test variables enabled.
+Vet, docscheck and independent review passed. Additional startup validation
+rejects a current-version SQLite schema lacking the full-record column. The
+temporary Postgres database was stopped and automatically removed; no existing
+deployment was rebuilt or upgraded as part of this test.
+
+### Console full-record CAS (2026-10-09)
+
+File, SQLite and PostgreSQL now reject blind session overwrites. Creation is
+exact-idempotent; updates compare the complete expected record and preserve
+session identity, including the serialized creation-time offset used by the
+cancellation-command digest. Missing CAS targets consistently return conflict.
+Independent hubs refresh identity-checked snapshots after conflicts without
+replaying callbacks. Startup recovery rechecks active observations with bounded
+CAS retries and adopts already-progressed lost/cancelling/terminal observations.
+
+Regressions cover one concurrent winner, immutable identity, create retries,
+stale Update and Cancel, retry without duplicate audit, and competing startup
+observations. Initial full API race with real PostgreSQL passed (58.373 seconds);
+after review fixes, Console race passed with real PostgreSQL (4.432 seconds).
+These are persistence/API tests, not cross-host console execution acceptance.
+Atomic admission and verified remote stopping remain open.
+
+The final full Go suite passed with both database test variables enabled against
+the isolated PostgreSQL instance. API/persistence vet, docscheck (53 canonical
+documents), diff checks and independent follow-up review passed. No production
+or retained two-VM data was migrated. Sustained startup contention beyond three
+CAS attempts still fails initialization explicitly and requires a retry.
+
+### Console admission under maintenance (2026-10-09)
+
+Raw session create/CAS now serialize with maintenance authority in all three
+stores. A shared ConsoleRepository owns create/idempotency/CAS and admission
+classification; adapters hold the existing file locks or SQL transaction until
+publication. New records and transitions that introduce unresolved activity
+cannot enter a frozen topology. Existing lost/cancelling observations, valid
+completion and exact retries can drain. Lifecycle identity comes from the full
+aggregate; missing lifecycle plus any live barrier conservatively rejects new
+activity. Cleanup and recovery use the same completion-evidence predicate.
+
+Console race passed with real PostgreSQL (5.740 seconds), and the full Go suite
+passed with both database test variables enabled. A subsequent deterministic
+three-store test held the first authority transaction before commit: admission
+timed out without publishing, then rejected against the committed barrier
+(race test 6.634 seconds). SQLite returned after its approximately five-second
+busy wait despite a 150ms context deadline; this test proves exclusion and no
+partial publication, not a strict SQLite response-time bound. Session/outbox
+atomic publication and cross-host console stop evidence remain open.
+
+Final full API race passed with real PostgreSQL (65.558 seconds), including
+shared ID/topology/workspace validation and the deterministic contention test.
+API/persistence vet, docscheck and independent follow-up review passed. The
+isolated database was used only for this slice; existing project and retained
+two-VM data were not rebuilt.
+
+### Atomic initial console admission (2026-10-09)
+
+Normal HTTP creation prepares policy/health checks and audit before publishing
+a session and its initial session_open command together. File storage commits
+the immutable dispatch seed within the session record; SQL inserts session and
+outbox rows in one transaction. CAS preserves the file seed, and mutable
+command records/tombstones take precedence. Notification is a postcommit wake
+hint: failure still returns 202, with durable outbox delivery available.
+Standalone AgentService publication of session_open is rejected.
+
+Tests cover complete request round-trip, command collision rollback, frozen
+admission, concurrent admissions sharing one command ID, seed preservation on
+hub reconstruction/CAS, and retirement without resurrection. The HTTP wake
+test inspects both durable records before injecting notification failure.
+A pre-existing identity spoof was reproduced (viewer plus console role in the
+body returned 202), then fixed: authorization and persisted audit/request now
+use the server request subject; the same request returns 403 with no outbox.
+
+Initial full API race with real PostgreSQL passed (67.464 seconds); after the
+identity fix and expanded coverage, Console race passed (12.668 seconds).
+These tests exercise stores and API reconstruction, not cross-host console
+execution or a killed API process. HTTP idempotency-key admission, atomic
+cancellation, host ownership and signed remote stop remain open.
+
+The final full Go suite passed with both PostgreSQL test variables enabled.
+API/persistence vet, docscheck (53 canonical documents), diff checks and
+independent follow-up review passed. No retained deployment was rebuilt or
+upgraded; the dedicated PostgreSQL container was used only for these tests.
+
+### Atomic console cancellation (2026-10-09)
+
+Shared ConsoleRepository.Cancel now commits session CAS, cancellation audit
+and the stable cancel_command in one transaction. File records preserve both
+opening and cancellation seeds; mutable command records and retirement
+tombstones retain precedence. Shared enqueue validation keeps delivery leases
+unchanged and rejects conflicting/retired records. HTTP and timeout use the
+same method; the old standalone cancellation enqueue adapter was removed.
+Repair of incomplete registry evidence also uses the atomic method.
+
+Regressions reproduced cancellation intent surviving an outbox conflict, and
+timeout/hub cancellation lacking an outbox. These now preserve neither change
+on failure and publish both on success. Further coverage verifies cold retry,
+lease retention, both seeds surviving CAS, retirement, canceled request context,
+and notification failure after commit. Review found a failed repair could still
+signal the local relay during cache refresh; the failing regression was added
+and refresh now has no cancellation side effect.
+
+Real PostgreSQL API/persistence race passed (67.397/3.676 seconds). Final Console
+race after the review fix passed (13.798 seconds). HTTP 200 confirms durable
+cancelling only: remote stopping remains unverified without completion/stop
+evidence. HTTP creation idempotency, complete deletion transactions and the
+cross-host console execution/stop protocol remain open.
+
+The final full Go regression passed with both database variables enabled.
+API/persistence vet, docscheck (53 canonical documents), diff checks and
+independent follow-up review passed. Tests used an isolated PostgreSQL database;
+no existing project, historical resource or retained VM was rebuilt.
+
+### Console access-policy enforcement (2026-10-09)
+
+Existing-session GET, cancellation and browser attachment now evaluate the
+configured Console role policy before disclosure, mutation or upgrade. Tests
+reproduced viewer access returning 200 and cancellation audit omitting the
+acting subject's role. Denied requests now return 403 without changing session,
+audit or outbox; console/admin roles pass policy. Missing authorization fails
+closed, and registry failures return redacted 503 rather than 404/internal text.
+
+Full API race passed (44.737 seconds); API vet, diff checks and independent
+review passed. This API-only slice did not rerun real PostgreSQL or cross-host
+acceptance and changes no persistence format. Trusted-header authentication
+and continuous authorization of already-open connections remain separate
+boundaries; this test does not establish them.
+
+### Run/Console checks inside metadata deletion (2026-10-09)
+
+Deletion re-reads latest Run and complete Console records while holding the
+existing authority exclusion through lifecycle commit. Regressions first passed
+preflight, then admitted a queued Run or lost Console in a different workspace:
+the old commit path incorrectly deleted metadata. The new path returns conflict
+and retains UID/serial. Known terminal latest records and unrelated topology
+activity do not block deletion. Run completion requires a known terminal status,
+nonzero queue/end times and non-reversed timestamps, shared with preflight.
+
+Review identified that the first SQLite implementation bypassed indexed-column
+validation. A corruption-after-preflight regression reproduced deletion despite
+LoadRuns rejecting the record; commit now reuses scanSQLiteRun and returns
+ErrCorruptRecord without changing lifecycle identity. Initial API race also
+exposed three fixtures containing incomplete terminal times; those fixtures now
+provide valid completion evidence without weakening the production checks.
+
+Targeted deletion race passed with real PostgreSQL (2.779 seconds). This covers
+Run/Console writers already serialized with authority; raw command, guest,
+node/adoption/GC writers and their full deletion checks remain open. It is not
+cross-host cleanup acceptance or a claim that the entire delete protocol closed.
+
+The final full Go suite passed with both PostgreSQL test variables enabled.
+API vet, docscheck (53 canonical documents), diff checks and independent
+follow-up review passed. The isolated PostgreSQL instance was used only for
+this test slice; no retained project resources or VM lab were deleted.
+
+### Commands inside metadata deletion (2026-10-09)
+
+Deletion now scans complete command records inside the transaction, preserving
+existing column/payload validation and retirement/UID matching. Late commands
+block deletion even without Agent registration; a missing UID with a matching
+payload name adds a blocker, while a different explicit UID does not rebind.
+Postgres raw command updates lock/materialize authority before command rows,
+matching grant and deletion lock order. File record locks and SQLite write
+transactions already provide the corresponding exclusion.
+
+Targeted real-PostgreSQL race passed (8.593 seconds), including an uncommitted
+first-authority transaction blocking command publication with no partial row.
+Initial full API race exposed old fixtures allowing deletion with unresolved
+leased commands. Tests now require API rejection, then explicitly simulate
+external rebuilding to retain stale-UID grant and clock-fencing coverage.
+Concurrent issuance/deletion requires both stopped effects and retired command
+delivery before successful API deletion; production checks were not weakened.
+
+Raw-command maintenance admission, guest/node/adoption/GC writers, and exclusion
+through postcommit workspace cleanup remain open. This is not final cross-host
+deletion or P9 acceptance.
+
+The final full Go suite passed with both database test variables enabled.
+API vet, docscheck (53 canonical documents), diff checks and independent
+follow-up review passed. Only the dedicated test PostgreSQL instance was used;
+no retained resources or deployment data were rebuilt.
+
+### Raw command admission under maintenance (2026-10-09)
+
+Shared maintenance validation now runs inside raw command publication on all
+three backends. New records, claims/lease extensions and first delivery cannot
+enter a frozen scope. Existing-lease acknowledgements/running reports, terminal
+evidence, retirement, cancellation, inventory and read-only recovery observation
+can drain; mutating recovery is not exempt. Missing UID resolves every named
+payload against a full lifecycle only for exclusion. Unknown ownership with any
+live barrier is rejected rather than assigned a synthetic identity.
+
+Regressions reproduced frozen admission and claim/delivery bypass. Added cases
+verify no speculative records/leases escape rejection, ack/started/complete can
+converge, and a benign first payload cannot conceal a second frozen scope.
+Targeted real-PostgreSQL race passed (1.706 seconds); combined command/recovery
+race passed (5.112 seconds). Initial API race exposed a recovery fixture that
+admitted an uninitialized scope after another scenario retained a barrier; it
+now establishes its real lifecycle first without relaxing production policy.
+Persistence race passed (3.649 seconds).
+
+This is not a substitute for execution-grant validation or cross-host stop
+evidence. Raw guest/node/adoption/GC records and exclusion across postcommit
+workspace cleanup remain open.
+
+Final full Go regression passed with both database variables enabled.
+API/persistence vet, docscheck (53 canonical documents), diff checks and
+independent follow-up review passed. This slice used only a dedicated test
+PostgreSQL instance; retained deployments and resources were not rebuilt.
+
+### NodeOperation maintenance and deletion boundary (2026-10-09)
+
+Raw node Create/CAS hold authority through publication. Active admission into a
+frozen topology is rejected while existing terminal reports may drain. File
+and Postgres lock authority before the operation; SQLite uses its write
+transaction. Compound file dispatch has an explicit under-authority entry point
+to avoid recursive locking. Deletion scans complete node records across
+workspaces and shares its completion-evidence predicate with preflight.
+
+Regressions reproduced raw admission and late-node deletion bypass. Targeted
+race with real PostgreSQL passed (7.314 seconds), including file publication
+blocked by authority alone and no partial record after timeout. Combined
+node/restore race passed (7.612 seconds). Initial API race exposed an unrelated
+topology fixture without lifecycle identity; it now creates a real distinct
+lifecycle before freezing the target, retaining all original restore assertions.
+Persistence race passed (3.652 seconds).
+
+The final full Go suite passed with both database variables enabled. Vet,
+docscheck and independent follow-up review passed. This validates NodeOperation
+aggregate storage, not full adoption/SSH migration. Raw guest execution/file
+records and postcommit cleanup exclusion/recovery remain open. No retained
+deployment or project resources were rebuilt.
+
+### Guest execution/file maintenance and deletion boundary (2026-10-09)
+
+Guest raw records now share the node authority→record guard. Frozen scopes
+reject creation and active-state advancement; terminal drain remains possible.
+File CancelRequested is exempt only for an existing record with unchanged
+status, not queued→running. Compound file dispatch uses an explicit
+under-authority method. Deletion, maintenance and inspection share complete
+guest-record decoding and completion evidence including nonzero, ordered times.
+
+Regressions reproduced frozen admission and late-record deletion bypass.
+Real-PostgreSQL targeted race passed (13.139 seconds), covering both guest kinds
+waiting on authority alone, no partial record after timeout and cancellation
+flag misuse. Guest persistence race passed (1.679 seconds); malformed-terminal
+deletion and late-completion regression race passed (1.301 seconds).
+Fixtures now include required authority tables and topology names. Corruption
+is injected below production validation, preserving codec/redaction assertions.
+
+The final full Go suite passed with both database variables enabled. Vet,
+docscheck and independent follow-up review passed. No existing deployment or
+resource was rebuilt. This does not close the existing guest execution Cancel
+handler's terminal-before-publication window, remote stop proof, or persistent
+exclusion and recovery through postcommit workspace cleanup.
+
+### Agent cancellation does not invent target completion (2026-10-09)
+
+The Agent now acknowledges only the cancel command after signalling a target
+context. It no longer emits a synthetic cancelled event for the target, which
+could retire the target delivery before its real outcome arrived. Guest
+completion reporting uses an independent RequestTimeout budget (default 30s)
+while preserving context values and command proof. Execution-owned tracking
+tokens prevent old cleanup from removing replacement command/operation aliases.
+
+Regressions reproduced premature target completion, stale tracking cleanup,
+and completion reporting with an already-cancelled context. Agentexec race
+passed (4.681 seconds), including reporting timeout. Full Go regression, vet,
+docscheck and independent review passed. This worker-only change did not rerun
+real PostgreSQL or cross-host cancellation. Tests do not establish signed stop
+proof, durable report retry, or atomic API guest cancellation; those remain open.
+
+### 2026-10-10 — recoverable execution cancellation and grant source fencing
+
+Execution cancellation persists a monotonic intent without inventing a terminal
+result. Restart reconciliation recreates a missing stable cancellation outbox;
+retries preserve delivery leases and retired reservations. Real completion may
+retain its outcome. API schema 11 and execution record format 2 explicitly reject
+the old formats; file format 2, aggregate 4 and authority 2 are unchanged.
+
+Production grant issue/authorize/renew reads the current execution under the
+authority boundary. Cancelled, terminal, missing or rebound sources are denied;
+denial observes time without extending command leases. Raw host-stop acceptance
+remains available. Real PostgreSQL API race (99.026s) and persistence race
+(3.786s) passed, along with local-file/SQLite cases. Vet and documentation checks
+passed. Full Go regression also passed; additional three-backend cancellation,
+clock, identity and commit-serialization race checks passed (9.946s). SQLite's
+busy handler can outlast the statement context; the serialization test keeps
+the lock owner alive past that timeout and verifies no partial cancellation.
+This is repository/API evidence, not a new two-host or VM acceptance run.
+
+Intent/outbox still use recoverable separate writes. Atomic cancellation,
+revocation of already-issued grants, host-signed execution completion, durable
+result reporting and the full P9 fault matrix remain open.
+
+### 2026-10-10 — host-owned guest results and durable replay
+
+Guest task receipts now require a typed, signed result with explicit exit-code
+knowledge. The host reads bounded durable output before sealing the receipt and
+preserves provider truncation flags. Only confirmed remote termination permits
+signing. Worker completion routes, DTOs and report calls were removed. Standalone
+execution results commit before authority release; Run child tasks only retire
+their child grant. Exact replay survives retirement, redaction and successor
+epochs. API schema 13, execution format 4 and host task record 2 reject old data.
+
+Full Go regression passed. Real PostgreSQL race passed for API (213.480s),
+persistence (18.753s), controlplane (1.090s) and Agent (7.760s). The concurrently
+run supervisor suite hit one deadline in its slow child-report scenario; an
+isolated full supervisor race rerun passed (21.245s), without changing the
+production timeout. Additional race tests cover both completion/release write
+failures, Run child routing and output truncation. Vet, docscheck and e2e-tagged
+compilation passed; independent review found no remaining blocker in this slice.
+
+The real Docker `TestHostSupervisorRealTaskStopAndSuccessorE2E` passed with a
+fresh helper (5.53s test / 6.554s package). It verifies API exit code 7 and output,
+lost stop acknowledgment, API/supervisor restart and replay, running task
+cancellation after Agent session replacement, and successor fencing. The test
+removed its disposable container. This is one-host execution evidence, not the
+two-VM P9 fault matrix. Never-started task resolution, deletion cleanup recovery
+and the broader P0–P9 capability/acceptance backlog remain open.
+
+### 2026-10-10 — cancelled executions that never received authority
+
+Cancellation recovery now retires the source delivery before checking the
+original admission and both current grants and stop history under authority.
+Only an intact admission with no authorization history becomes
+`cancelled / not_started`; an earlier Agent `running` report is not treated as
+remote execution evidence. Cleanup then retires the cancellation delivery.
+
+File, SQLite and real PostgreSQL tests cover source-retirement failure,
+retirement-to-terminal failure, terminal-to-cancel-cleanup failure, cold replay,
+unchanged terminal versions, successor-replaced grant history, and missing or
+mismatched admission evidence. Targeted race passed (API 9.283s, persistence
+1.247s); the frozen final snapshot passed full Go regression (API 156.790s,
+persistence 7.844s). Vet, docscheck and independent review passed. No new
+two-host or provider E2E run is claimed for this metadata-only change.
+
+This closes cancelled, never-authorized execution cleanup. Uncancelled delivery
+failures still need their own automatic outcome path. Persistent deletion and
+the complete P9 matrix remain open. The proof assumes an intact authority
+ledger; external deletion of the whole ledger is not covered by these tests.
+
+### 2026-10-10 — automatic cleanup of unissued delivery failures
+
+Supervisor now retires failed/denied/cancelled guest deliveries and applies a
+shared execution mutation. Original admission and complete grant/stop history
+are checked inside the authority transaction. No history permits
+`failed / not_started` without fabricating a cancellation request. Existing
+authority is revoked, while the operation waits for host evidence; successor
+grants and existing terminal outcomes remain unchanged. The cancellation and
+failure paths share the same three storage adapters and admission validation.
+
+Real file permission faults and SQLite/PostgreSQL write faults verify recovery
+after source retirement, including failed authority revocation. Tests also
+cover Supervisor.Scan wiring, cancellation precedence, old stop history and
+API clock skew. Full Go race passed with real PostgreSQL, run sequentially by
+package: API 188.146s, persistence 10.302s, supervisor 20.626s. Targeted fault
+race passed (2.514s); vet, docscheck, e2e-tag compilation and independent review passed. Persistence
+versions remain API13/execution4/host task2. No provider or two-VM E2E pass is
+claimed for this metadata-only step.
+
+Issued authority with no host task record still requires a host-side absence
+proof. Persistent deletion and the complete P0–P9 acceptance backlog remain
+open; delivery failure alone is never remote-stop evidence.
+
+### 2026-10-10 — guest-side cancellation of missing task records
+
+A new stop-only signature binds an issued, revoked guest-task epoch. It cannot
+authorize Start/Renew. With that proof, the guest checks boot identity and
+serializes scope/task lookup, refuses any orphan cgroup, and writes a durable
+cancellation tombstone before confirming termination. A target directory left
+without its record can recover; dangling references and missing/corrupt records
+for other tasks are not ignored. Scope publication followed by a failed record
+write is recoverable. Late Start returns the terminal tombstone; old retries do
+not regress successor scope state.
+
+Guest task record version 2 rejects version 1; RPC remains 1 and scope remains
+2. API13/execution4/host task2 are unchanged. Both embedded amd64/arm64 helpers
+were rebuilt. Full Go race passed sequentially (guesttask 4.302s, transport
+1.780s, API 78.480s), along with vet, docscheck and independent review. No new
+PostgreSQL gate was run for this guest/transport-only change.
+
+`make test-guesttask-e2e` passed in a disposable private cgroup: orphan cgroup
+rejection, late worker launch prevention, signed cancellation of a real running
+task, crash recovery, expiry and epoch fencing. The real host/API task E2E also
+passed with the fresh helper (3.52s test / 4.542s package), including API output,
+lost acknowledgment and restart replay. Both tests cleaned their containers.
+
+This is guest-side infrastructure, not a completed missing-host-record workflow.
+API discovery/signing of pending stop proofs and host-side automatic recovery
+still need integration. A mismatched current guest boot is rejected for missing
+records; separate reboot evidence remains necessary. Full two-VM P9 acceptance
+and the wider P0–P9 backlog remain open.
+
+### 2026-10-10 — API discovery and missing-host-task cancellation
+
+The owning host now discovers revoked standalone tasks from the API, including
+retired source commands. Discovery uses authenticated owner scope, immutable
+request digests, a fixed epoch ceiling and 64-entry pages. Bad source records
+do not starve later entries. A disabled Agent can drain its old effects.
+
+The host writes a stop-only task record before provider resolution, then checks
+canonical UID/generation and pins provider identity before cancelling. Lost
+reports replay the original signed receipt. Existing completed guest results
+are preserved. A verified guest reboot signs old/new boot IDs and an unknown
+result; replacement providers cannot supply that evidence for the old task.
+
+Full `go test -race ./... -count=1 -timeout=8m` passed with a fresh isolated
+PostgreSQL 16 instance enabled for API and persistence tests (API 106.499s,
+hostsupervisor 17.879s). Focused tests cover paging past a bad source, fixed
+ceilings, owner authentication, provider replacement refusal, old-format and
+tampered-proof rejection, receipt replay and HTTP reboot evidence. Vet,
+docscheck and all-package e2e-tag compilation also passed.
+
+`make test-host-supervisor-e2e` passed with a freshly built helper (5.28s test /
+6.300s package). The added real Docker round issues authority without sending
+Start, cancels through the API, recovers missing host/guest records, and rejects
+a late Start carrying the still-valid original credential. It also checks API
+terminal cancellation without fabricated output. Test containers were cleaned.
+Guest reboot evidence was validated in host and HTTP integration tests, not a
+new physical reboot E2E in this run.
+
+Host task format is now 3 and rejects older records; both embedded helpers were
+rebuilt. Guest task2/RPC1/scope2/API13/execution4 remain unchanged. Run-derived
+task discovery is still open. A terminal API result with complete loss of its
+original host receipt still cannot automatically finish authority release.
+Persistent deletion, remaining P5–P8 capabilities and full two-VM P9 fault
+acceptance remain required; this entry does not close the overall plan.
+
+### 2026-10-10 — Run-derived missing-task discovery
+
+Discovery now includes revoked Run children. The API verifies the original
+parent epoch, owner/session/command/attempt and immutable Run request digest,
+including a retired command whose delivery lease has advanced. Its stop-only
+signature binds the Run ID and topology. The host derives the node from
+canonical state or that Run's unfinished candidate, and persists/verifies Run
+provenance with its task record. Wrong-Run candidates do not reach a provider
+connection. Parent revocation now atomically marks unfinished children revoked;
+online rejection alone had left them invisible to the discovery scan.
+
+Parent checkpoint recovery and `ProveStopped` accept the revoked reconstruction
+of an originally active child, while still comparing every immutable identity
+field and requiring an acknowledged, valid host receipt. RED/GREEN regressions
+cover both comparisons; explicit epoch/parent-epoch changes remain rejected.
+Child stop still cannot create a parent Run terminal result.
+
+Real Docker host E2E passed (6.42s test / 7.445s package), including no child
+Start, API discovery from the retired parent command, signed guest tombstone,
+stopped child grant, still-revoked parent and late original Start without output
+or cgroup. An initial test fixture omitted the non-root task UID, causing a
+digest mismatch on replay; the fixture was corrected to match production UID
+65534 and the successful retry verified the intended tombstone behavior.
+
+Full `go test -race ./... -count=1 -timeout=8m` passed with a fresh isolated
+PostgreSQL 16 instance (API 105.152s, hostsupervisor 17.944s). Both embedded
+helpers were rebuilt. Vet, all-package e2e-tag compilation, docscheck and
+independent read-only review passed. Tests covered actual canonical candidate
+selection, original source after re-lease, wrong parent digest, cold recovery
+and altered provenance. No new two-VM fault-matrix pass is claimed here.
+
+Host task3/guest task2/RPC1/scope2/API13/execution4 remain current. Updated guest
+helpers are mandatory for the Run-bound cancellation fields. Persistent
+deletion, unknown parent Run intent, terminal-result/host-receipt total-loss
+recovery and the remaining P0–P9 capability/fault acceptance work remain open.
+
+### 2026-10-10 — durable guest completion evidence and release recovery
+
+Guest execution records now use format 5 and the API schema is 14. A host
+completion stores an immutable `{grant, receipt_hash}` proof with the terminal
+result. SQL commits that record and the stopped authority in one transaction;
+file recovery republishes the stopped authority from the proof after a partial
+publication or API restart. The transition never reconnects to the guest and
+never regenerates expired output. Exact replay is idempotent and cannot affect a
+successor epoch. The host route validates the original authority before accepting
+the receipt.
+
+Persistence RED/GREEN tests cover missing or altered proof, epoch and command
+identity changes, result redaction, release interruption, and successor fencing.
+API and persistence race tests passed with an isolated PostgreSQL 16 instance;
+real Docker host E2E passed after the change. The final full repository race
+will be rerun before this checkpoint is committed. This closes the guest-result
+release window, but persistent deletion, unknown parent Run intent, adoption/GC,
+full SSH lifecycle and the remaining two-VM P9 fault matrix remain open.
+
+### 2026-10-10 — durable metadata deletion intent
+
+Metadata deletion now writes a durable `delete.intent` containing topology UID and
+state serial before the authority-aware state reset. The intent blocks workspace
+publication. If the controller exits after the state commit or during workspace,
+placement, or health cleanup, the next Delete or supervisor scan resumes the
+cleanup and removes the intent only after all local metadata cleanup succeeds.
+The intent is created only after the existing destroy receipt/activity checks, so
+recovery never invents provider quiescence or contacts a provider.
+
+### 2026-10-10 — full real-provider gate rerun
+
+With the configured Firecracker binary, kernel
+`/home/jiandong/.cache/sysbox/artifacts/local/vmlinux-5.10.245`, and rootfs
+`/home/jiandong/.cache/sysbox/rootfs/ubuntu-24.04.ext4`,
+`SYSBOX_FIRECRACKER_BIN=... make test-p9-real` passed.
+
+The run covered real Docker file install (3.28s), node power pause/resume
+(2.58s), guest task and Run completion-loss recovery (including cleanup receipt
+and metadata DELETE), Docker adoption (1.74s), Firecracker controller crash
+recovery (9.70s), generation lifecycle (10.80s), reset with old-generation
+Start/Stop/Pause/Resume/Destroy fencing and cold adoption (23.70s), independent
+cross-process Firecracker recovery (10.40s), and libvirt generation effects
+(2.72s). Firecracker and libvirt resources were cleaned by their tests.
+
+This is a real-provider component gate, not a complete P9 claim: the two-host
+API/Agent failover matrix, partition, disk-full, upgrade/rebuild rehearsal and
+main integration are still outstanding.
+
+### 2026-10-10 — fresh current-commit two-VM lifecycle round
+
+A new lab `/tmp/sysbox-p9-lab-current` was created from the current commit with
+independent KVM kernels, private qcow2 disks, no shared guest mounts, distinct
+boot IDs, bidirectional private networking and nested KVM. `check` passed and
+recorded control boot `12fc6676-3c2c-46f1-98e3-b3480533407a`, execution boot
+`f23adb2f-0c0d-4b16-b9a5-8c4e18b29854`, and `nested_kvm_qemu_started=true`.
+
+The current binary was deployed to both VMs. Because execution had no registry
+access, the host `alpine:3.22` image was exported, SHA256 verified as
+`4cb95149f3e3848b4fca6333430b739695326c82d00c015770d5b4723cfc4225`, transferred
+through pinned SSH and imported explicitly. The first round correctly retained
+uncertain evidence when the image was unavailable. The second round then passed
+Apply and Destroy through the remote Docker provider, produced cleanup receipt
+serial 4 with `empty=true`, and independently queried execution Docker for zero
+containers matching the recorded topology UID. Non-force metadata DELETE then
+succeeded.
+
+This proves a fresh current-format cross-kernel lifecycle round and explicit
+artifact provisioning. It does not close API failover during an active Run,
+partition, database restart, disk-full, upgrade/rebuild, or the full
+provider/SSH/GC matrix.
+
+The GC plan fence is also covered by current contracts: the inventory digest is
+bound into the leased `gc_delete` command/grant, checked against the canonical
+lifecycle aggregate, and revalidated by the owning host before the provider
+effect. A new state or snapshot reference, UID/generation replacement, or
+provider external-ID mismatch rejects the old plan without extending authority.
+
+## PostgreSQL evidence checks for current changes
+
+The new inspection completion test passed with file/SQLite/PostgreSQL under race,
+including host receipt tampering rejection and replay after worker-command retirement.
+A JSONB key-order regression was reproduced and fixed: signed original evidence is
+still authenticated byte-for-byte according to its signature contract, while the
+stored terminal JSON payload is compared canonically during replay. The explicit
+format5-to-format6 importer also passed with all three backends, preserving unknown
+actions and archiving the exact original database representation before conversion.
+
+A second pre-existing fixture cleanup race was reproduced in
+`TestHostResetFailureUsesReturnedExecutorAndDurablePhases`: observing completion
+could precede the asynchronous ReportStop fsync, so TempDir deletion raced the
+writer. Cleanup now cancels its private service and waits on its execution lock
+before removing files. Five focused race repetitions passed. This changes test
+lifetime management, not provider-stop evidence or runtime effect semantics.
+
+Final ordinary gate: `GOCACHE=/tmp/sysbox-gocache go test -p 1 ./... -count=1 -timeout=240s` passed. Complete hostsupervisor/agentexec/Firecracker/libvirt/CLI
+race packages passed, as did vet, docscheck (67 docs), build and release-workflow
+contracts. The legacy `/gc-grant` endpoint now validates an existing dispatched
+command rather than accepting worker-invented leases; the regression reproduced
+an arbitrary action grant before the fix and rejects it afterward. Final GC race
+checks passed. Independent reviews found no outstanding blocker in the delivered
+slices; remaining whole-project work is explicitly listed above.
+
+The final expanded `make test-p9-real` rerun also passed after P5 inspection was
+added: API/Agent GC and inspection, Docker recovery/reset/SSH, CLI SSH file/SQLite,
+real sshd validation, Docker adoption/absence checks, Firecracker/KVM controller
+crash/lifecycle/reset/cross-process recovery and libvirt generation effects. The
+GC compatibility endpoint was separately tightened and its focused race gate
+passed. These are the implemented P9 gates, not the unimplemented full matrix.
+
+## Isolated execution-host fencing (2026-10-18 continuation)
+
+The user-approved fencing boundary is limited to newly created disposable
+acceptance VMs. `scripts/acceptance/host_fencing.py` creates a private two-VM
+lab, pins both guest SSH identities and disks, and marks the execution VM as the
+only disposable fencing target. Preparation installs Docker/libvirt inside that
+new VM and starts two provider canaries: an in-flight Docker `exec` child and a
+local-only persistent libvirt definition without external storage.
+
+The fencing run validates the exact QEMU PID/start-time, executable/argv, disk
+path, QMP peer credentials and VM name. It records an intent, issues QMP power
+off, waits on a pidfd for the original QEMU to exit, reuses the same disk, and
+requires a different execution kernel boot ID while the control VM boot ID stays
+unchanged. After restart it independently observes Docker `Running=false` and
+libvirt `shut off`, verifies the disk device inode is unchanged, and cleans only
+the random canary container/domain. Final proof:
+`/tmp/sb-fence-1018/fence-b4f79330729a4beaa50b69346df50c32.json` (SHA256
+`01f27cd35a6bd2c970be4bd9308cd59cb7d87bdbc35a8afce3e44f906f440898`). It records
+`fencing_claim=host process exclusion only` and `operation_result=unknown`.
+
+This proves whole-host process exclusion for local Docker/libvirt endpoints in a
+new disposable VM. It does not prove an interrupted business operation completed,
+provide remote storage/plugin fencing, or authorize old resources. The retained
+historical incident was not restarted, cleaned, or rewritten. Its read-only
+fencing/continuation plan is `/tmp/sysbox-historical-intent-plan-20261018.json`
+(SHA256 `f266a01f9ba69f7c532cea1eb2d5cd3b5eb5938c3c38f332bf61fba2bc77e52b`),
+with `historical_vm_touched=false`.
+
+### Authenticated evidence intake (2026-10-18)
+
+The follow-up adds a production API admission/receipt path and the external
+`sysbox host-fence` attestor. Authority format3 pins the exact original grant,
+immutable command/Run incarnation, observed journal hash, disposable lab and
+controller public key. It freezes the topology and holds the Agent across other
+topologies. Issuance and intake share the host-supervisor request encoding;
+nonterminal Run claims and all command/dispatch admission boundaries honor the
+hold. Receipt acceptance preserves unknown Run/action outcomes and cannot release
+maintenance, even after independent stop evidence.
+
+The real round reused only the explicitly disposable `/tmp/sb-fence-1018` lab
+created for this acceptance. `TestHostFenceDisposableVMIntake` constructs an
+anchored canonical interrupted Run/action fixture, derives its request via the
+production grant-source path, admits it through HTTP, and invokes the real
+Docker/libvirt canary fence script with that admission. The script verifies the
+external controller boot as well as the unchanged control-VM boot, signs only
+post-exit/new-boot evidence, and returns it through the production HTTP receipt
+route. The test then checks exact replay, API reconstruction, revoked original
+grant with no stop receipt, unchanged Run/action and rejected maintenance release.
+This is a synthetic interrupted Run plus real provider canaries, not proof of
+recovering an arbitrary original production workload.
+
+Evidence: `/tmp/sb-fence-1018/fence-2b7f3081f69842bc99e2553a508dc5ec.json`, SHA256
+`de763a8307ed574c91901e671f2248460e3d036f848eb21544c41dc354a0c311`.
+The adjacent `.receipt.json` contains the signed receipt, and
+`/tmp/sb-fence-1018/api-fence-accepted.json` records API acceptance. The final
+receipt still says `operation_result=unknown`; canary cleanup is limited to the
+two randomly named test resources. Historical VM/resources remain untouched.
+
+Reproduction (only with a lab explicitly created for disposable fencing):
+
+```bash
+GOCACHE=/tmp/sysbox-gocache go build -buildvcs=false -o /tmp/sysbox-fence-attestor ./cmd/sysbox
+SYSBOX_HOST_FENCE_ACCEPTANCE_ROOT=/tmp/sb-fence-1018 GOCACHE=/tmp/sysbox-gocache \
+  go test ./pkg/api -run '^TestHostFenceDisposableVMIntake$' -count=1 -v -timeout=8m
+/usr/bin/python3 -m unittest discover -s scripts/acceptance -p test_host_fencing.py
+```
+
+File/SQLite/isolated PostgreSQL race regressions cover request/receipt intake,
+incarnation mismatch, cross-topology claim/dispatch exclusion, forged receipt,
+exact replay and cold reads. There is no production reconciliation/release
+workflow yet; P5/P6/P8/P9 are not declared closed by this evidence intake slice.
+
+Final verification passed: `go test -p 1 ./...`, `go vet ./...`, `make docs-test`,
+the five system-Python fencing tests, and `go test -race` for
+`HostFence|Maintenance` across API/persistence/controlplane/CLI with isolated
+PostgreSQL enabled. Logs are `/tmp/sysbox-fence-full-final.log`,
+`/tmp/sysbox-fence-race-final.log` and `/tmp/sysbox-fence-real-final.log`.
+The full regression also exposed an SSH test fixture that assumed umask022;
+explicitly setting the source fixture mode now makes its preservation assertion
+valid under umask077 without changing transfer behavior.
+
+### Post-fence observation and disposition plan (2026-10-18)
+
+The next slice connects an accepted fence to the existing owning-Agent read-only
+observation protocol. `recovery-plan` compares the original Run/journal hash and
+lists remaining per-action blockers. `observe` uses a request-digest/key-derived
+command ID and an atomic create-once outbox; concurrent or terminal retries do
+not modify command leases, resurrect commands or rerun effects. Existing keys
+still return the original command after metadata drift; new observations are
+rejected. A known fence-bound report whose snapshot changed is reported as stale.
+
+Contract tests across filesystem, SQLite and isolated PostgreSQL cover missing
+fence receipt, administrative access, concurrent request replay, claimed and
+retired command replay, normal production recovery authorization, exact report
+binding, wrong resource identity, stale observation time, wrong serial, unknown
+presence, API reconstruction and journal drift. State/action/Run snapshots are
+unchanged by plan reads and observation/report intake. Drift is injected directly
+into the test repository only to verify refusal; no historical data is modified.
+
+The existing Agent/supervisor test now gives the observation command a fence
+ActionID and checks that its completion event preserves it. This exposed and
+fixed the Agent recovery-completion path dropping command proof fields. The test
+uses the real local supervisor socket and owning-host read-only observation
+executor; it does not require a VM reboot or execute a provider mutation.
+
+This is observation and triage, not reconciliation/release acceptance. Reports
+still lack new-boot host signatures, so `observation_not_host_boot_attested`
+remains explicit; provider/guest/reset blockers are not cleared by reported
+presence. No Run/action is completed and no stop receipt or host release is
+created. The previous physical fencing evidence remains unchanged; this slice
+does not claim a second real Docker/libvirt recovery run.
+
+Verification passed: `go test -p 1 ./...`, `go vet ./...`, `make docs-test`, and
+`go test -race ./pkg/api ./pkg/agentexec -run 'HostFence|RecoveryRunner|RemoteRecovery|HostRecovery'`
+with isolated PostgreSQL enabled. Logs: `/tmp/sysbox-post-fence-full.log` and
+`/tmp/sysbox-post-fence-race.log`. Independent read-only review found no blocking
+issues; its stale-plan diagnostic recommendation was implemented and tested.
+
+### New-boot host-signed observation (2026-10-18)
+
+Fence-bound recovery authorization now includes the admitted request digest and
+accepted receipt's new boot ID. The production HostRunExecutor checks its trusted
+supervisor boot/key before observation, performs the existing read-only resource
+reads, repeats canonical API authorization, and signs the complete report with a
+domain-separated Ed25519 message. The proof binds command delivery owner/attempt,
+Run incarnation, topology/serial, observation time and every resource result.
+
+The recovery plan validates against the configured owning-host public key,
+retained command lease and original fence binding. Valid proof changes only
+`observation_attestation` to verified and removes the missing-attestation blocker.
+Unsigned reports remain informational; invalid signatures leave presence unknown.
+No grant stop, Run/action outcome, replay or hold-release transition is added.
+
+File/SQLite/isolated PostgreSQL contracts exercise persisted/cold-read signed
+reports, wrong keys, old boots, changed delivery attempts, payload tampering,
+original-journal drift and refused reauthorization. A production API HTTP to
+HostRunExecutor to report persistence to recovery-plan test produces a signed
+unknown result when the journal lacks a candidate identity; it cannot infer
+absence. The supervisor socket test checks proof forwarding by the Agent and
+rejects a mismatched boot. Separate tests change/drop the binding after provider
+reads and verify that no signed report escapes.
+
+These are protocol, storage and host-executor tests. They do not constitute a new
+real Docker/libvirt recovery or VM power-cycle acceptance. Historical VMs and
+journals remain untouched. Original intent reconciliation and explicit host
+release, plus the broader P5/P6/P8/P9 fault matrix, remain open.
+
+Verification passed: `go test -p 1 ./...`, `go vet ./...`, `make docs-test`, and
+`go test -race ./pkg/api ./pkg/agentexec ./pkg/controlplane -run 'HostFence|FenceObservation|RecoveryRunner|RemoteRecovery|HostRecovery'`
+with isolated PostgreSQL enabled. Logs: `/tmp/sysbox-signed-observation-full.log`
+and `/tmp/sysbox-signed-observation-race.log`. Independent read-only review found
+no blocking correctness or security defects.
+
+### Explicit release for independently completed deletion (2026-10-18)
+
+The explicit release endpoint now closes the hold only for an already-reconciled
+empty delete topology: terminal original destroy Run, all actions succeeded,
+retained delete identities, exact signed absent report on the fenced new boot,
+no pending GC/reset continuation, no unresolved topology activity, and independent
+stop receipts for the original parent plus every retained host/topology grant.
+It never converts unknown into success and never synthesizes a stop receipt.
+
+Authority format4 retains the immutable release key, observation ID, signed
+report, verifier public key, lifecycle SHA256 and release time. Release and barrier
+state publish together. Same-key retries survive restart and key configuration
+changes, and cannot clear a later independent barrier. Other retries conflict.
+New fence observations/reauthorization are disabled after release; existing
+observation/report and release evidence remain readable.
+
+Persistence tests reject unknown actions, running Runs, missing candidates,
+residue, missing action coverage, unsigned/tampered reports, foreign keys,
+wrong scope and absent independent stops. File/SQLite/PostgreSQL API contracts
+check pending command rejection, concurrent exact retries, unchanged state/action/
+Run contents, cold replay, new host work after release and a later barrier that
+survives stale release retries. These tests construct already-completed delete
+records and independent stop evidence; they do not recover a real old intent.
+
+Review identified a file publication gap between releasing the lifecycle lock
+and committing authority. The fix writes/fsyncs authority inside the lifecycle
+callback while retaining record→authority→lifecycle lock order. A deterministic
+test observes the ledger before lifecycle unlock; it failed with the old delayed
+publication order and passes with the compound commit. SQL adapters hold their
+transaction locks through commit. Independent review found no remaining blockers.
+
+This slice does not reboot VMs, mutate historical resources or complete the
+unknown-effect reconciliation path. Nonempty topologies and unknown old intents
+remain held; P5/P6/P8/P9 are not declared fully closed.
+
+Verification passed: `go test -p 1 ./...`, `go vet ./...`, `make docs-test`, and
+`go test -race ./pkg/api ./pkg/persistence ./pkg/agentexec ./pkg/controlplane -run 'HostFence|FenceObservation|Maintenance|RecoveryRunner'`
+with isolated PostgreSQL enabled. Logs: `/tmp/sysbox-fence-release-full.log` and
+`/tmp/sysbox-fence-release-race.log`. The final focused persistence rerun also
+passed after replacing mutex-copy test fixtures with independent state values.
+
+### Unknown-delete closure on disposable Docker/libvirt hosts (2026-10-18)
+
+`reconcile-delete` now connects original anchored intent, whole-host fencing,
+new-boot host-signed absence and deletion-residue evidence to lifecycle metadata
+commit. It never replays provider delete. The interrupted Run remains failed and
+nonrecoverable with an explicit reconciliation reason; the original command is
+retired and the parent grant stop references the completed fence decision. The
+hold remains until explicit release, which checks the retained signed preimage
+against the exact committed postimages without rewriting the signed report.
+
+Authority format5 stores the prepared decision and hashes of lifecycle/Run/command
+preimages and postimages. File tests interrupt after lifecycle, Run and command
+writes; cold retries finish the same decision while grant/hold remain exclusive.
+Run history is atomically replaced under its stable lock, avoiding a torn JSONL
+append that would strand recovery. SQL commits all postimages and authority in one
+transaction. Cold validation rejects illegal hashes and orphaned fence-delete
+stops. Historical ledgers are not migrated or modified.
+
+Real acceptance used only the explicitly disposable `/tmp/sb-fence-1018` lab.
+For each provider the fixture creates a random container/domain, deletes it, and
+leaves a synthetic canonical original deletion intent without a result. After
+pre-admitted execution-VM power-off/reboot, a compiled observer runs inside that
+VM using production HostRunExecutor and actual local Docker/libvirt providers.
+It calls the production API for authorization, signs exact absence/residue
+observations with the independently enrolled host key, and sends the report back
+through the normal persistence path. The API reconciles, cold-replays, explicitly
+releases, and confirms new host work can be claimed. Both provider rounds passed.
+This is a lost-deletion-result scenario with a synthetic journal; it is not a
+kill injected into a live production delete syscall or every provider fault mode.
+
+Evidence under `/tmp/sb-fence-1018/`:
+
+| Artifact | SHA256 |
+|---|---|
+| `delete-closure-host-observation-docker.json` | `3e886bd35951246c9ae63d528cdfe657cb6985142eb447da154707cd5a2a5d2a` |
+| `delete-closure-reconciled-docker.json` | `a888caa520f7f740454d8da2953f4b125629412dfb3ba7bcdeb2101264aec728` |
+| `delete-closure-released-docker.json` | `0b744ecc181c5f1449c695b3ae93ec1f88945eb8cf10af7ef61612d553acd112` |
+| `delete-closure-host-observation-libvirt.json` | `5c80ae029fefbf9a2c8c9b00eda23c670dd2d6e36a0fb08ed1a5b5188c175dde` |
+| `delete-closure-reconciled-libvirt.json` | `49261c44f1ff9576a0383ab8a0e42da69dd2f2d6cf653416fb76f9b57afd1de8` |
+| `delete-closure-released-libvirt.json` | `05dc17a7bb3003cfcf34efc9bdb1c76a7c2bac14f83b089b25ee863e5a9983cd` |
+
+Docker power proof: `fence-2e1514fa429746d5b28a86cc54771751.json`, SHA256
+`0f0e2882ce7f835961c1139f4d93be1be31ce36d2df5eb725bf52e2a41175093`.
+Libvirt power proof: `fence-736aa087865244aba7c665b0b677085d.json`, SHA256
+`2a29c0176deb4da1711aaf8e330ed5cbd0ae0353a8f85764391541bae79dd2d7`.
+The first libvirt fixture omitted its managed identity and was rejected; the
+fixture was corrected without weakening production identity validation.
+
+Reproduce only with an explicitly scoped disposable lab:
+
+```bash
+CGO_ENABLED=0 GOCACHE=/tmp/sysbox-gocache go test -c -o /tmp/sysbox-fence-observer.test ./pkg/agentexec
+GOCACHE=/tmp/sysbox-gocache go build -buildvcs=false -o /tmp/sysbox-fence-attestor ./cmd/sysbox
+SYSBOX_HOST_FENCE_ACCEPTANCE_ROOT=/tmp/sb-fence-1018 SYSBOX_DELETE_CLOSURE_PROVIDER=docker \
+  GOCACHE=/tmp/sysbox-gocache go test ./pkg/api -run '^TestHostFenceDeleteClosureDisposableVM$' -count=1 -v -timeout=8m
+```
+
+Repeat with `SYSBOX_DELETE_CLOSURE_PROVIDER=libvirt`. No real historical VM or
+resource is targeted. Missing original anchors, remote daemons, attachments,
+child effects, create/reset/composite work and nonempty results still fail closed.
+
+Validation passed: full `go test -p 1 ./...`, `go vet ./...`, docs checks,
+three-backend race suite with isolated PostgreSQL, provider locality/residue
+regressions, and both real VM rounds. Logs: `/tmp/sysbox-delete-closure-full.log`,
+`/tmp/sysbox-delete-closure-race.log`, `/tmp/sysbox-delete-closure-docker.log`,
+`/tmp/sysbox-delete-closure-libvirt.log`. Independent review found no remaining
+blockers after the atomic history fix; its cold-provenance suggestions were also
+implemented and tested. This closes the supported unknown-delete path, not the
+whole P5/P6/P8/P9 matrix.
+
+### Requirement reconciliation and current-build rerun (2026-10-18)
+
+The new strict campaign inventories all 20 original P5/P6/P8/P9 implementation
+bullets plus four stage acceptance criteria, preserving their exact wording.
+Its 18 gates specify exact Go packages/tests, required database variables and
+external artifacts. A skip, missing test, unfinished stream, changed package,
+nonzero exit, changed source/embedded binary or changed helper/kernel/rootfs fails
+verification. Declared remaining scope cannot be cleared by a passing contract.
+
+Final gate directory: `/tmp/sysbox-campaign-final2-1018/`; reconciliation output:
+`/tmp/sysbox-reconciliation-final-1018.json`. All 18 gates passed. Source/build-input
+SHA256: `a53309e1d9eeddeecc22b1ee539dac09729eccae01948431f520b7cf07eebd4b`.
+The requirement result is **9 verified within declared scope, 15 open**, not full
+P5/P6/P8/P9 completion. See the row-by-row table in the implementation tracker.
+The first campaign correctly failed PostgreSQL subtest skips because persistence
+requires `SYSBOX_TEST_POSTGRES_DSN`, whereas API uses `SYSBOX_TEST_DATABASE_URL`;
+both were explicitly configured for the final isolated database run.
+
+P6 fixes include preserving identical unresolved snapshot/current journal entries
+without resolving/rewinding them, and bounded catalog-digest-based retention.
+Retention protects unresolved/workflow/restore references and applies only an
+unchanged computed deletion list; it never deletes provider resources. Large
+catalog plans remain below the HTTP body bound. Filesystem, SQLite and PostgreSQL
+contract gates passed, including replay and changed-catalog rejection.
+
+`make test-p9-real` also passed on the current build: Docker remote lifecycle,
+GC/adoption/SSH/file/power, Firecracker generation/reset/cold adoption/cross-process
+and controller crash, and libvirt generation/unowned adoption. Both amd64/arm64
+embedded helpers were rebuilt from current source. Python acceptance tests now
+run on system Python3.10 after replacing `hashlib.file_digest` and fixing a nested
+f-string quoting incompatibility; all 57 tests passed. Release/archive/OCI/workflow
+gates passed. A Firecracker delayed-reaper fixture was separated from a legitimate
+procfs process-exit uncertainty window; 30 focused repeats passed without changing
+production process-identity checks.
+
+A new deployment inside the explicitly disposable `/tmp/sb-fence-1018` used fresh
+DB `sysboxp9_final_1018`, two API services and the owning execution Agent/supervisor,
+without shared guest filesystems. Binary SHA256:
+`af3637dac22ba25dfa33f6915f0408a5a911226021bb9ab5115e3a2d7e4716b6`.
+Docker Apply→Observe→Reset→Destroy→cleanup receipt→ordinary metadata DELETE passed;
+independent exact-owner Docker container/network queries returned no residue.
+Evidence: `/tmp/sb-fence-1018/final-1018/lifecycle.json`, SHA256
+`af9b8191248b64d58af2a7c8f317f1c8b3c605223c27ab9dc134fecee8043ddb`.
+Isolation evidence SHA256:
+`f8c5f07b9f690c7098d226385176242d0bf2193c23570c3cd3a1ccd899b048a9`.
+
+The 384MiB disposable control VM initially soft-locked during package deployment.
+It alone was expanded to1024MiB; its disk and first deployment DB were preserved.
+The execution VM was restarted only to reestablish its QEMU socket LAN connection,
+before Agent registration/work began. No historical VM or database was touched.
+This validates the new baseline deployment, not live failover during work or a
+complete upgrade of a retained historical incident. Main remains unmerged.
+
+### Live fault campaign continuation (2026-10-18)
+
+A new bounded `fault_campaign.py` wrapper checks the disposable lab scope before
+any service action, requires an actual running child and matching parent resource
+checkpoint, then invokes the existing fault injectors. Cleanup is ordinary
+Destroy plus exact-owner container/network absence and metadata DELETE; no force
+cleanup or unknown-intent clearing is used. All rounds use the existing isolated
+`sysboxp9_final_1018` deployment and a current helper image with its enrolled issuer
+public key. Historical labs/resources remain untouched.
+
+- Primary API failover: `/tmp/sb-fence-1018/fault-failover-6813a3da69b2`.
+  Original guest child and parent completed on backup while primary remained
+  stopped, then primary was restored. Original identities and signed completion
+  were retained; cleanup finished with zero owned residue.
+- Database outage: `/tmp/sb-fence-1018/fault-database-64ec62da4c6e`.
+  Guest watchdog confirmed cancellation in24.51seconds while PostgreSQL was down;
+  DB process changed from1447 to5992 after restart. Original stop receipt was
+  acknowledged, confirmed-failure parent cleanup finished normally.
+- Private-network partition: `/tmp/sb-fence-1018/fault-private-network-40349e9ede7f`.
+  Test LAN was disconnected while NAT management stayed usable; the original
+  task stopped, the same database process remained alive, connectivity restored,
+  and normal cleanup/metadata deletion completed.
+
+Each directory retains `summary.json`, `fault.json`, `cleanup.json`. The wrapper's
+verifier rejects changed task identities, absent stop signatures, missing service
+restoration, missing confirmed termination, or nonempty provider residue. This
+extends P9.4 live evidence; it does not substitute for the entire provider/transport
+and injection-boundary matrix.
+
+P6.2 migration inventory was checked against `main=b1cc43d`: the Snapshot SPI
+exists, but Docker/Firecracker/libvirt implement no `CreateSnapshot` provider
+method or descriptor snapshot capability. The new provider capability regression
+pins that fact. Metadata snapshots are supported; VM/memory/disk snapshots were
+not existing implemented functionality and are explicitly reported unsupported.
+
+#### Repeatability failure and evidence provenance correction
+
+The first three live rounds above passed, but a repeated primary failover did
+**not**: `/tmp/sb-fence-1018/fault-failover-9b102f2a2e22` records cancellation of
+the original child and confirmed failed parent. Primary service was restored.
+The next workload (`p9-135f615b0b64`, Run
+`request-4450307e3bc4c74668dd6ae69e64d4291d1154f74564f1aa7b9fa6bb43108bb6`)
+timed out during Docker start before fault injection and remains unknown; the
+container exists. Further local fault dispatch was stopped. This newly created
+acceptance incident is preserved; it is not force-cleaned or declared complete.
+The earlier confirmed-failure topology is cleaned only through normal recovery
+Destroy and exact-owner absence verification.
+
+These rounds ran deployed CLI SHA256
+`af3637dac22ba25dfa33f6915f0408a5a911226021bb9ab5115e3a2d7e4716b6`.
+A current source rebuild produced
+`d0d2e0ba30d401113dd64c8820ec5e7c20b7d29ac4c73b8cd677e8cc4f8a775d`;
+therefore they cannot be relabeled current-source execution. The fault wrapper
+now records both deployed binaries before and after, and the strict recorded-
+evidence gate rebuilds the current CLI and rejects a different digest. It also
+refuses prior managed containers before creating another workload. P9.4 remains
+open until the failed repeat is diagnosed and a clean current deployment passes.
+Hashing old JSON alone is not proof that current code executed.
+
+The upgrade preservation phase `/tmp/sb-fence-1018/upgrade-fca4fd13322e` archived
+the quiescent test DB and host directories and verified both service groups
+restored. Evidence SHA256:
+`67c968fe20755ac7df1af6ce650bb7b44c6352ba39086d1749339b46eecea6a8`.
+This is only stop-writer/backup/restoration rehearsal, not full old-version
+migration or rebuilt-deployment acceptance. Archive restoration attempts both
+roles even if one fails, and records errors before returning failure.
+
+Final verifier hardening reads each API/Agent/supervisor systemd MainPID and hashes
+`/proc/<pid>/exe`, requiring `binary_identity_kind=service-proc-exe-v1`; an installed
+file hash cannot masquerade as the running build. Older successful/failed rounds
+without this binding remain historical diagnostics and cannot pass the new
+current-build gate. New-round preflight also rejects owned networks and unresolved
+host intents even if no container survived. The confirmed-failure failover topology
+was normally destroyed and metadata-deleted with zero exact-owner residue;
+`p9-135f615b0b64` remains preserved as unknown. No new fault was injected into it.
+
+### Child observation timeout handling (continuation)
+
+Investigation found a reproducible supervisor control-flow defect: the first
+read-side `Dispatcher.Observe` deadline caused `RunChildren.watch` to cancel the
+task, despite the timeout not proving authority revocation. The new path retries
+only observation deadlines, at most twice after the initial read, with a fresh
+check of the exact existing grant before each retry and an unlocked100ms interval.
+Each read retains its2s budget; all retries are bounded by the original parent
+context and monotonic grant deadline. Only successful signed renewal advances
+that deadline. Identity errors, explicit authorization rejection and parent
+cancellation still fail closed. Start and Renew are never retried by this path.
+
+Regression tests first failed on the old implementation, then passed for a real
+2s read timeout followed by completion, three-attempt limit, identity conflict,
+revocation before retry and parent cancellation. Host supervisor race tests passed.
+This is a demonstrated code defect consistent with the observed timeout logs,
+not proof of the unique cause of the earlier live failover failure. The failed
+round's unknown create is unchanged; P9.4 remains open pending clean current-build
+live fault revalidation.
+
+Validation: full `go test -p 1 ./...` passed (log
+`/tmp/sysbox-observation-retry-full.log`); host supervisor race suite and focused
+real-timeout/revocation/caller-budget tests passed. `go vet ./pkg/hostsupervisor`,
+docs checks and independent code review passed. No live VM effect was invoked by
+this fix's validation, and no historical or retained unknown record was altered.
+
+### Current-build live fault revalidation after observation retry fix (2026-10-18)
+
+A fresh disposable lab `/tmp/sb-retry-1018` was created after the observation
+retry fix; its control/execution boots are `d29128e1-2481-48cd-976e-7532ba797a1e`
+and `c1052abd-f50d-41b0-bd19-81045d42cee6`. Current source binary SHA256 on all
+four running API/Agent/supervisor MainPIDs was
+`5f86af09989f4764f5f8905cab66d604e2ac757e100db43d3c18f7cf9f952d64`.
+
+Two independent live primary failovers passed. The second round included recovery
+observation deadline logs but the original task completed with exit code0; no
+cancellation was invented. Both rounds verified backup parent completion while
+primary stayed stopped, service restoration, normal Destroy, exact-owner provider
+absence and metadata DELETE:
+
+| Round | Summary | Fault | Cleanup |
+|---|---|---|---|
+| `fault-failover-0a2eaa781b50` | `88cc9c2fc3dc742891e866fc3fecbd38ded33f6d1bb616d99ceee492639c554b` | `c05e0742e639648f2bc918134300f4c81ca0d2b3b5f4748b86c9c4a9bf405eb6` | `727e52e7bf9cbd369b66c8ea3b927c8fd834edc1a099d423d506db73fccd94da` |
+| `fault-failover-a7fd2f9e0ebc` | `aab4cfa3c223d4ebf10231e8625178045fb1643af17d41bfb66289714f18c5a6` | `61194b1c00978778d1a47c8f8900fbb662bdbd6a960bedf333aa5c0b6ac9cc01` | `a0d9a19ecce5ca40b94647f32fd61893d88960d9e66160d371aa912fe7f59abf` |
+
+Database outage passed in `fault-database-b037987c4c63`: guest cancellation was
+confirmed in24.36 seconds, PostgreSQL PID changed after restoration, original
+stop evidence was acknowledged and cleanup/metadata deletion completed. SHA256:
+summary `4ec77fcea04da9aef9c66f9e04e0e6a9e00ed0aed81fef5c604a83ee17075721`,
+fault `c3d814ad756d172f69607136228194610f0f3877ef61590d59edbafc705e46e8`,
+cleanup `b56abaad84d739ab48e96a8b8090135b4848e4c08ddb25586cbb0c62d61c8bf2`.
+
+Private LAN partition passed in `fault-private-network-222f567bca56`, preserving
+NAT management while stopping the private link and restoring it before cleanup.
+SHA256: summary `540ba441627f31864fa5b3baa2c710317a84ed720d61bdc411477df44581419e`,
+fault `1b76e30eedb74ec6956ee59b5593fb7e5c28ec8610e4e1143b9f58ab4e4d3670`,
+cleanup `ec5a004db2620ea1b339dd8e2de0816e26030225b6d2ac499ef16ccca862d00f`.
+
+Strict current-source `live-fault-evidence` passed after rebuilding the CLI inside
+the Go gate with `GOCACHE=/tmp/sysbox-gocache`; it compared all three rounds'
+service-proc-exe-v1 identities and exact task/parent/cleanup evidence. The prior
+failed round in `/tmp/sb-fence-1018` remains preserved and is not used as positive
+proof. The earlier unknown create remains untouched in its disposable lab.
+This closes the current P9.4 live fault campaign scope, not every possible fault
+injection or the remaining P5/P6/P8/P9 open rows.
+
+### Retry-fix current-build revalidation (2026-10-18)
+
+The bounded child-observation retry fix was deployed to a fresh lab
+`/tmp/sb-retry-1018` (binary SHA256
+`5f86af09989f4764f5f8905cab66d604e2ac757e100db43d3c18f7cf9f952d64`). It requires
+an exact running task, parent checkpoint and clean provider scope before each
+round. Two primary API failovers passed, including one with recovery-observation
+deadline logs: the original child completed with exit code0, the backup parent
+completed while primary stayed stopped, and normal cleanup removed exact-owner
+resources. Database outage passed with guest stop in24.36s and a changed database
+PID after restore. Private LAN partition passed while preserving NAT management.
+
+The final strict live-fault gate passed using service-proc-exe-v1 fingerprints and
+all nine evidence files. Evidence directories:
+
+- `fault-failover-0a2eaa781b50` and `fault-failover-a7fd2f9e0ebc`
+- `fault-database-b037987c4c63`
+- `fault-private-network-222f567bca56`
+
+The earlier failure remains in `/tmp/sb-fence-1018` as a diagnostic incident; its
+unknown create was never force-cleaned. The repaired rounds do not retroactively
+rewrite or erase that failure. P9.4 live-fault scope is now verified for the
+current build; full P9 still has other open cells (DB/API failover combinations,
+disk-full, upgrade, broader provider/transport fault matrix).
+
+### GC domain coverage (2026-10-19)
+
+GC reference snapshots now report revision/artifact/cache/placement domains with
+explicit complete/not_applicable status, digest and count. Malformed attributes
+are rejected; catalog collection rejects incomplete status. Contract tests pass
+on persistence and CLI paths. This closes the silent “domain absent means empty”
+case. Cross-host offline catalogs still lack an external revision/artifact/cache
+producer, so P8.2 remains open for that environment rather than being overclaimed.
+
+### GC domain correction and verification (2026-10-19)
+
+The external inventory callback introduced in `8c85991` is a read-only
+planning adapter, not a deployed cross-host catalog producer. Its extended
+inventory digest is deliberately rejected by local reservation and grant
+validation. Cross-host deletion still requires durable catalog fencing and
+revalidation; a callback and a hash do not establish that authority.
+
+Regression tests exposed two omissions: snapshot-only domain references were
+collected after domain finalization, and external domains overwrote local
+summaries. Domain validation and hashing now run after retained snapshots are
+collected. External inventory must explicitly enumerate all four known domains
+(empty lists represent an observed empty domain); missing/unknown domains or
+empty reference values fail closed. Combined domain hashes and counts retain
+local evidence. Concurrent provider access is synchronized.
+
+The Python acceptance suite was rerun using system Python with loopback
+listeners permitted: all 67 tests passed, with no skips. The earlier socket
+failure was a sandbox restriction, not a reason to leave the authorized check
+unfinished. The GC tests include explicit rejection of local deletion using an
+external planning digest. P8.2 remains open for actual cross-host publication,
+fencing, and deletion-time revalidation.
+
+### Durable external GC source publication (2026-10-19)
+
+External sources can now publish through a durable begin/complete protocol.
+Incomplete publication, stale CAS, missing domains, and expired inventory block
+new GC reservations. The reservation pins a complete inventory and freezes
+source writes until an independently verified deletion receipt. Its digest and
+resource references flow through the existing reservation, batch, grant, and
+host authorization path; there is no new provider deletion implementation.
+
+The regression matrix covers independent file/SQLite connections and real
+PostgreSQL, topology identity/version binding, cold reading, retained snapshots,
+reference-source-only catalog visibility, metadata deletion refusal, and expiry
+before/after reservation. HTTP tests run on all three stores. The real Docker
+gate `TestRemoteDockerGCExternalSourceFencingE2E` publishes an external reference,
+proves the exact container is protected, removes the reference under publication
+fencing, and verifies one deletion plus cold receipt recovery through the owning
+Agent/host chain. This is a participating publisher fixture; production external
+revision/artifact/cache/placement integrations remain required for P8.2 closure.
+
+Enrollment opts the aggregate into format 7 so old writers cannot ignore the
+new protections. Format 6 aggregates continue working until explicitly enrolled.
+There is no implicit migration or change to historical lab data.
+
+### Production GC publisher integration (2026-10-19)
+
+Opt-in service publishers now wrap real workspace/revision materialization,
+placement, HTTP/local artifact cache and Docker OCI resolution paths. Artifact
+publication contexts reach runtime kernel and plan resolution as well as
+Firecracker/libvirt image/reset resolution. Remote execution bridges forward
+that context hook. A missing source configuration is refused for an already
+enrolled topology; local CLI execution is also refused for enrolled topology.
+
+`TestGCProductionPublisherCrashRemainsIncomplete` starts an independent process,
+waits for an actual HTTP download, kills that process, then opens a fresh bridge.
+The persisted source stays updating; GC and another download are rejected.
+Other regressions prove intent exists while downloading, mutable URL invalidation
+cannot precede permission, and two independent workspaces retain separate source
+records on file/SQLite/PostgreSQL. The real Docker external-source GC fixture now
+enables production publication and rejects a concurrent actual workspace upsert.
+
+This does not close deployment-wide enrollment or global registry/shared-cache
+GC. The opt-in deployment boundary requires old writers stopped and all relevant
+writers configured. No historical environment was enrolled or modified.
+
+### Retirement and two-kernel publisher enablement (2026-10-19)
+
+`/tmp/sb-retry-1018/gc-rollout-1019/` records publisher enablement after checking
+that no managed execution resources or unresolved journals remained. All four
+old service processes were stopped and MainPID=0 verified before installation.
+Distinct producer IDs were configured for both APIs, the execution supervisor,
+and worker. Original binaries/configuration are retained in each guest's
+`/var/tmp/gc-rollout-1019/`. The rollout script initially failed during staging;
+services remained stopped, and staging resumed without replacing original
+backups. No historical lab was changed.
+
+With publisher configuration enabled, topology `p9-d8e1e2bb2f4c` completed real
+Apply, Reset, and Destroy across the two kernels. Provider absence was verified.
+The control-plane catalog contained execution-host workspace/artifact sources
+and placement sources. Retiring its completed artifact source preserved its
+manifest and rejected another begin request with HTTP 409. Metadata remains
+retained because source retirement deliberately does not erase references.
+
+Reset cancellation investigation added exact authority failure timing and earlier
+boundary diagnostics. Eight ordinary and twelve concurrently loaded repetitions
+passed, which does not establish the original failure's cause. Host execution
+now retains cancellation causes for watchdog rejection, grant expiry, and
+explicit cancellation instead of collapsing them all to context canceled.
+The watchdog cause regression failed before this change and passed afterward.
+No authority timeout or uncertain-result recovery rule was relaxed.
+
+### Local shared-catalog cache deletion boundary
+
+Cache plans now bind content SHA-256, inode/device/size/mtime, private root,
+relative path and the entire SQL catalog. Real-file SQLite tests cover exact
+unlink, references, stale plans, recreated-file rejection, symlink/hardlink
+refusal and unresolved intent refusal. SQLite and PostgreSQL tests verify the
+catalog lock also excludes new topology creation. PostgreSQL apply is refused:
+review identified that a dropped remote transaction can release its lock before
+local unlink, so a durable global reservation is required before enabling it.
+SQLite apply keeps the local write lock through intent fsync, revalidation,
+unlink and receipt fsync. No production cache was deleted in this acceptance.
+
+### PostgreSQL durable cache reservation continuation
+
+The earlier PostgreSQL apply refusal is superseded by durable database fencing.
+An exclusive catalog transaction validates the full inventory and plan, installs
+statement-level guards, and commits a machine-bound pending reservation before
+local deletion. Pending reservations block even direct SQL lifecycle writes and
+new topology insertion. READ COMMITTED trigger reads observe a reservation that
+committed while a writer waited for the table lock; other isolation levels are
+explicitly rejected. A disconnected remote transaction is no longer the sole
+protection around local unlink.
+
+Real PostgreSQL regressions terminate a test backend, exit an independent process
+after committing the reservation, test raw update/delete/truncate rejection, and
+queue a writer before the reservation commits. The pending row survives and
+prevents publication. Exact local done receipts support cold reconciliation after
+lost completion, with no second unlink. Recreated files are preserved. No
+incomplete intent is automatically cleared and no generic force-unfreeze exists.
+
+These tests use isolated schemas and private temporary host caches. The cache
+must be exclusively used by enrolled publishers from that catalog; enrollment of
+unrelated writers/global registries is not inferred. Administrative DDL access
+remains trusted. The historical intermittent Reset cancellation is deferred at
+user request, with diagnostics and original failed evidence retained.
+
+
+### Cross-kernel PostgreSQL cache reservation evidence
+
+`/tmp/sb-retry-1018/pg-cache-reservation/summary.json` records the current
+binary and two distinct kernel boot IDs. The test binary ran on the execution
+VM while connecting to the isolated PostgreSQL catalog on the control VM.
+Connection termination, independent process exit after reservation, queued
+writer fencing, old isolation rejection and exact done-receipt reconciliation
+all passed. No host cache outside the temporary test root was touched.
+
+### GC lifecycle tail: intent receipt recovery and retired domains
+
+A real independent subprocess exits immediately after unlink with an exact
+intent and no completion receipt. Recovery takes the original host flock,
+verifies absence, syncs the directory and publishes completion without another
+unlink. Tests reject a paused deleter holding the lock, present target, and
+foreign PostgreSQL host binding. Missing/corrupt evidence remains fail-closed.
+
+Metadata DELETE now releases fully retired domain-only sources after all
+existing execution-stop/activity checks, empty state, no snapshots, no explicit
+external source resource references, no pending GC and no unresolved actions.
+Raw Delete remains forbidden. File/SQLite/PostgreSQL race regressions verify
+fresh identity and no accidental placement source reenrollment during cleanup.
+Independent review found no blocking issue in these transitions.
+
+The new two-kernel topology `p9-5380fcb5d859` completed Apply/Reset/Destroy,
+source retirement, explicit removal of its three automatic metadata snapshots,
+and metadata DELETE. The first DELETE correctly returned 409 while snapshots
+remained. The snapshot API's 204 response required correcting the test script's
+JSON-only response handling; no server behavior was weakened. Final evidence is
+`/tmp/sb-retry-1018/gc-tail-1019/`, including the old/new running binary hashes,
+provider absence, retired source manifests, and metadata deletion. The final
+retry removed two snapshots after the first had already returned 204.
+
+New provider gates create two isolated objects per provider and test stale
+generation rejection, exact target deletion, independent absence, and survivor
+preservation. Libvirt additionally retains sentinel disk files; Firecracker
+verifies the other VM is still running. This closes the primitive zero-damage
+cell, not the full non-Docker owning-agent batch interruption matrix.
+
+### Stage 1 final disposition matrix
+
+The stage boundary is GC lifecycle completion for enrolled private caches and
+retired domain-only topology sources. It includes: absent-file receipt recovery;
+exact-present-file abort with file preserved; PostgreSQL reservation-before-intent
+abort; completed receipt reconciliation; original deleter still holding the lock;
+foreign machine, replacement, invalid and contradictory receipt quarantine.
+Inspection exposes a machine-readable disposition. Manual quarantine preserves
+evidence and moves new work to a separately enrolled catalog rather than forcing
+an unverifiable old catalog open.
+
+A new three-backend regression found metadata reset could commit before local
+cleanup and then strand replay on the changed UID. Exact UID/serial deletion
+receipts now allow only unchanged empty successor cleanup, with old/new authority
+checked. Old receipts are cleared by unrelated resets. Cold service cleanup tests
+pass on file, SQLite and PostgreSQL. Review additionally found and fixed invalid
+abort evidence falling through to a valid intent; conflicting receipts now retain
+the reservation. Abort is audited locally and in PostgreSQL as `outcome=aborted`.
+
+### Stage 2: same-catalog global revisions and libvirt batch recovery
+
+Cache inventory now scans the same database's unbound global revision registry.
+It verifies each content-addressed tree and decodes file bytes, protecting both
+embedded artifacts by content hash and textual digest/path references. Invalid
+rows fail the entire inventory. SQLite uses its catalog write transaction;
+PostgreSQL also locks the revision table and installs the durable cache guard
+on revision INSERT/UPDATE/DELETE/TRUNCATE. PostgreSQL apply requires an already
+initialized revision registry, avoiding a future-table publication gap. Separate
+registries and global revision object deletion are outside this slice.
+
+The libvirt batch API fixture routes two exact UUIDs through API/owning Agent/
+host signed grants, blocks state/snapshot publication during deletion, loses a
+completion acknowledgement, reconstructs the API, and recovers receipts without
+a second provider deletion. An unrelated domain remains defined. This covers
+batch sequencing and lost-receipt/cold-API recovery; it is not an OS-kill matrix
+at every provider effect boundary and does not cover Firecracker batch dispatch.
+
+### Firecracker batch and non-Docker process exit acceptance
+
+`TestRemoteFirecrackerGCBatchRecoveryE2E` creates three real VMs. Two are removed
+through API/Agent/host batch dispatch; state and snapshot writes conflict during
+the reservation. The test deterministically loses a completed receipt response,
+reconstructs the API and cold coordinator, and verifies a receipt is actually
+replayed with its original hash. Exactly two provider deletions occur and the
+third VM remains running. This extends the libvirt batch recovery fixture.
+
+`TestNonDockerGCProcessCrashBoundariesE2E` runs six real scenarios: libvirt and
+Firecracker each exit an independent deletion process before provider effect,
+after successful provider deletion but before outcome persistence, and before
+reporting the already sealed completion. The process calls `os.Exit` at exact
+boundaries (no deferred cleanup); this is not a random SIGKILL timing test.
+Cold recovery never invokes provider deletion again. Before outcome commit it
+retains uncertain and emits no completion, even if the provider target is absent.
+After outcome/seal commit it reports the signed receipt, historical observation
+returns deletion, and reuse of the stopped grant is fenced. Survivor objects
+remain present. These gates do not cover every provider-internal call, API/Agent
+process kill, or separate global revision registry/retention.
+
+Review tightened the Firecracker batch fixture so both distinct batch receipts
+must hit the loss boundary before recovery begins, and both exact signed structs
+must replay through the cold coordinator. Firecracker evidence captures PID/start
+identity and socket before deletion; afterward it independently checks the
+original process is gone and the socket removed, rather than relying only on a
+missing provider manifest. The survivor is explicitly required to remain running.
+The reviewed batch and all six process-exit cases passed together.
+
+Final cold-recovery validation stops and joins the old Firecracker host service
+before clearing acknowledgement loss and invoking the cold coordinator. This
+prevents its background recovery loop from consuming the very receipts the test
+must demonstrate replaying. Cleanup joins the service only once. Two consecutive
+real race-enabled batch rounds passed after this test-only correction. The prior
+failed strict gate and the intermediate double-wait timeout remain recorded at
+`/tmp/sysbox-stage2-nondocker-gates/` and
+`/tmp/sysbox-stage2-fc-cold-fixed.log`; production authority behavior is unchanged.
+
+### Global revision retention preview continuation
+
+A read-only retention endpoint now enumerates global revisions on file, SQLite
+and PostgreSQL and computes keep-last/age/batch candidates. All historical Run
+references and decoded snapshot-only lifecycle references protect revisions.
+Corrupt revision content, scoped catalog configuration and legacy local state
+reject the observation. Review reproduced two initially missing reference sets
+(fixed topology selector and legacy state) and regressions now enforce refusal.
+Run references are streamed with budgets and the final digest is encoded into a
+hash rather than a second full combined allocation. Lifecycle aggregate size
+still follows the existing repository reader and remains a documented limit.
+
+This is preview only. Revision deletion is deliberately not exposed before the
+Run admission/reference race is closed transactionally. It does not close stage
+2 global revision retention/deletion acceptance.
+
+### Revision deletion versus new Run reference admission
+
+SQLite and PostgreSQL now retire a selected global revision and establish Run
+admission guards in the same transaction. Independent-connection race tests run
+simultaneous deletion and Run insertion: both cannot commit. Existing historical
+Run references prevent deletion; deletion winning causes subsequent SaveRun and
+independent SaveAgentCommand publication to fail without a durable Run.
+PostgreSQL transactions explicitly request READ COMMITTED regardless of pool
+default, addressing the stale-snapshot interleaving found during review.
+
+Retained commands/checkpoints/plans and decoded lifecycle/snapshot evidence are
+checked while locked. Durable revision retirement markers fence new auxiliary
+references after deletion commits. File registry deletion remains unsupported.
+HTTP tests exercise production persistence APIs with real SQLite/PostgreSQL.
+
+### Stage 2 consolidated scope verification
+
+The current delivery matrix lives in
+`docs/design/2026-10-07-parallel-implementation-tracker.md` (Stage 2 section).
+It replaces stale historical statements without erasing earlier evidence.
+`scripts/acceptance/stage2.json` selects all 15 P8-related gates for one-source
+verification, and separately states unsupported file-registry deletion, federated
+catalogs, automatic bulk retention apply, and unverified full P9 fault matrices.
+
+Additional tests exercise file/scoped-catalog and bulk-request refusal without
+mutating registry data, snapshot-only and historical Run retention during actual
+SQL deletion, exact 128-member batch acceptance and 129-member rejection. This
+consolidation cannot close original P8/P9 gaps merely by changing the stage label.
+
+
+### Atomic retention batch execution (2026-10-21)
+
+SQLite/PostgreSQL retention-apply now executes the requested policy candidates
+in one catalog transaction. Tests reject selecting the newest keep-last entry,
+prove a later referenced member rolls back earlier deletions and guard DDL,
+and verify actual late Run admission invalidates the preview. The HTTP path
+applies a two-member batch while preserving the newest revision and refuses
+old preview replay. File execution remains explicitly rejected while writer
+coordination is implemented separately; this slice does not close stage 2.
+
+
+### File registry retirement and non-Docker journal faults (2026-10-21)
+
+The implementation now includes explicit file retirement and enrolled independent
+file registries. Contract gates cover Run/deletion races, encoded snapshots,
+lifecycle writes, cold-process refusal, payload reclamation, offline consumers,
+manifest loss at both default and external registry paths, execution ledger and
+reset-return publication, and rejection of enrollment that would forget peers.
+The protocol and upgrade boundary are documented in `docs/reference/api.md`.
+
+The real libvirt/Firecracker coordinator process suite now contains five phases
+per provider: before effect, after effect, before receipt report, missing journal,
+and corrupt journal. It preserves an independent survivor and checks provider
+absence/process identity where applicable. Unit fault tests additionally cover
+uncancellable callbacks, outcome publication failure and concurrent waiters
+when a journal disappears. A durable admission anchor blocks missing-ledger
+replay, with validation repeated under the topology lock before intent publication.
+
+These cases do not close unknown GC reservation reconciliation after host fencing,
+full API/Agent SIGKILL, or every provider-internal partial call. Preserve unknown
+and the reservation; do not erase anchors, reconstruct an empty journal, infer
+success from absence, or reuse the cache-only abort workflow for provider GC.
+The historical lab remains read-only.
+
+Validation for this implementation: `go test -p 1 ./...` passed
+(`/tmp/sysbox-registry-final-full.log`); `go vet ./...` and the focused final
+vet pass succeeded; docscheck passed for 68 canonical documents. Python acceptance
+tool tests passed (67 run, one skipped; not evidence of the skipped scenario).
+The real 10-case non-Docker process suite passed with race detection
+(`/tmp/sysbox-nondocker-reviewed-faults.log`, 201.401 seconds). Earlier concurrent
+full-run timeouts were rerun in isolation and passed; the final full run passed.
+No root-cause fix for unrelated intermittent timeouts is claimed.
+
+### Unknown GC fencing disposition (2026-10-21, implementation in progress)
+
+The new lab `/tmp/sysbox-gc-fencing-20261021` is independently marked disposable;
+no historical lab was changed. Real libvirt and Firecracker rounds prove whole
+execution-VM power-off/restart, old QEMU exclusion, distinct new boot, unchanged
+control guest, corrupt GC journal archival, signed fresh presence observation,
+command retirement and reservation release with historical result still unknown.
+Logs: `/tmp/sysbox-gc-whole-vm-retry.log` (libvirt) and
+`/tmp/sysbox-gc-whole-vm-firecracker-final.log` (Firecracker). Firecracker target
+manifest/disk is deliberately retained; ordinary cleanup rejected its old boot
+anchor in an earlier round, whose failure evidence remains.
+
+File/SQLite/PostgreSQL tests cover interruption after prepared decision, command
+retirement and reservation disposition. The child exits without defers; restart
+must finish the exact decision while old grants remain rejected. Final release
+checks the retired command under authority locking. These tests do not yet cover
+every provider-internal partial call or all random API/Agent SIGKILL windows.
+
+### Remote file-registry consumer acceptance (2026-10-21)
+
+A separate execution VM connected over verified HTTPS using a dedicated test CA
+and private per-consumer token. No work directory was shared with the registry.
+`TestRemoteRegistryAcrossIsolatedVMHTTPS` passed in 4.279 seconds; evidence is in
+`/tmp/sysbox-remote-registry-vm.log` and the lab's `remote-registry-*` directories.
+The sequence was uninitialized rejection, full enrollment, pin-before-publication,
+retained-reference rejection, explicit complete-scan release, retirement and
+late-reference rejection. Root/catalog/binding loss, stale request ordering,
+malformed/empty JSON and materialized-directory references have race regressions.
+SQL consumers are not covered by this file consumer protocol.
+
+The remote-registry full run passed the API and PostgreSQL suites but hit one
+existing Firecracker process-exit race in
+`TestDestroyNodeDoesNotWaitOnProcessAlreadyOwnedByReaper` (identity changed during
+probe). Its isolated race rerun passed 10 times. This is retained as a failed
+full-run result, not claimed as a root-cause fix or a clean total acceptance.
+
+### P6 independent-process restore boundaries (2026-10-21)
+
+`TestSnapshotRestoreIndependentProcessCrashMatrix` covers file, SQLite and
+PostgreSQL with child process exit after the durable maintenance barrier, after
+restore commit and after barrier release. A cold workflow finishes the exact
+request, rejects the old grant and stale state serial, and historical retry
+cannot rewind a subsequent state mutation. All nine cases passed with race
+detection; the strengthened resource-observation assertions passed in
+`/tmp/sysbox-p6-process-final.log` (5.198 seconds). The grant was explicitly
+stopped before these crash cases; the assertion checks non-resurrection, not
+the separate active-worker stop protocol. This adds actual
+process-exit evidence to earlier in-process reconstruction tests; it does not
+claim every state operation or random instruction-level SIGKILL is covered.
+
+### Firecracker fenced residue cleanup with a new GC grant
+
+The follow-up whole-VM round now performs the full sequence: unknown disposition,
+new reference inventory/reservation, fresh post-reboot session/grant, original
+manifest-byte archival, residual removal and a new signed success receipt.
+`/tmp/sysbox-gc-fresh-cleanup-real.log` passed with race detection in 52.756s.
+The original reservation still has no deletion receipt and retains its disposition
+hash. The new reservation has the success receipt; repeating its grant never
+invokes cleanup twice. History is selected by the manifest's original boot, so
+an intervening later reboot does not erase independently verified stop evidence.
+Prepared never-started manifests continue through normal GC rather than requiring
+a reboot proof. Wrong owner, old grant, current-boot manifest and bad signatures
+are rejected. The lab was stopped with all disks and evidence retained.
+
+### Ownership transfer implementation and acceptance extension
+
+The control-plane contract now exercises source retirement, target reservation,
+new command grant, authenticated host completion and exact result replay across
+file/SQLite/PostgreSQL. Independent child-process exits after reservation/freeze,
+source retirement and target state commit recover without reissuing the old
+provider effect (`/tmp/sysbox-transfer-process-matrix.log`). This complements the
+coordinator boundary test, which explicitly uses a marker rather than claiming
+real provider execution in each crash cell.
+
+Real provider evidence: libvirt cold transfer/new-owner observation/old-owner
+refusal/destroy (`/tmp/sysbox-libvirt-transfer-real.log`); actual API-host-provider
+commit/release (`/tmp/sysbox-transfer-api-real.log`, 1.844s); Docker cold transfer,
+start/observe/destroy (`/tmp/sysbox-docker-transfer-real.log`, 1.763s); Firecracker
+prepared-generation transfer followed by real KVM cold start/observe/destroy
+(`/tmp/sysbox-firecracker-transfer-real.log`, 9.425s). Signed original manifest
+history retains the physical artifact path while old ownership is rejected.
+These runs do not substitute for every provider-internal OS-kill permutation.
+
+### Independent SQLite/PostgreSQL revision consumers
+
+Both SQL backends passed real HTTP consumer retirement and late-Run rejection,
+lost durable acknowledgment retry, mixed referenced/unreferenced batch rollback,
+and enrollment-loss refusal. A separate multi-peer transport test confirms the
+central registry retains its object and intent when a later peer fails after an
+earlier acknowledgment. `/tmp/sysbox-sql-federation-final.log` records the SQL
+race regressions; socket-sandbox failure logs are not counted as acceptance.
+The protocol deliberately retains irreversible consumer fences on partial
+failure instead of claiming a distributed atomic rollback.
+
+### P6 final requirement reconciliation
+
+The final P6 run `/tmp/sysbox-p6-final-unified/run.json` passed all five selected
+gates on one source digest: snapshot-api, snapshot-storage, authority-api,
+provider-snapshot-boundary and state-restore-process-matrix. Required PostgreSQL
+variables were present; no selected test skipped. Added coverage includes all
+three backends for concurrent state+journal snapshots, child-process exit after
+freeze/commit/release, and an independently reopened live old worker rejecting
+Authorize/Renew both before and after confirmed-stop restoration. Original
+lineage/resource-incarnation conflicts, unresolved journal preservation and
+force-unlock stop evidence remain covered by the same run. This reconciles P6's
+listed acceptance criteria; it does not close P9's broader upgrade/fault matrix.
+
+### Returned adoption callback recovery
+
+Adoption now persists a host-owned returned-result proof after a successful,
+uncancelled provider callback and before updating the main effect ledger. Failure
+of the latter can be recovered from the exact grant/effect/result proof without
+calling the provider again. Independent process exit after the proof boundary is
+covered. Missing/invalid proofs, callback errors and cancellation retain unknown;
+this does not authorize recovery of arbitrary old daemon requests. Proof size is
+bounded to 16 MiB on both publication and recovery. Local and remote revision
+scans retain references in `returned-*.proof.json`; ledger scanning skips these
+auxiliary records. Result integrity uses the protected host directory, while the
+original authorization envelope is signature-verified.
+
+### Canonical single-use GC admission
+
+Before invoking provider deletion, the owning agent must consume
+`POST /v1/agents/{agent}/gc-claim`. The canonical reservation records the exact
+execution grant once. Claim validates the current session, active epoch, fresh
+expiry and maintenance/fencing barriers in the authority/lifecycle transaction.
+A lost claim response is unknown: retry is rejected even for an identical grant.
+Deleting both the local journal and its anchor cannot reopen a consumed claim.
+Recovery requires the explicit host-fence disposition; it does not infer success.
+This guarantee assumes the canonical authority and lifecycle storage survive.
+
+Aggregate format 12 records admission while retaining the inventory's prior
+format for digest stability. Metadata reset clears admission history only after
+quiescence and preserves ownership retirement/target tombstones. Older writers
+must be drained before enabling this format.
+
+
+### 2026-10-21 fixed-revision combined acceptance
+
+All 31 selected stage-2/P5 strict gates passed at e5ddeee, with no selected
+skips: /tmp/sysbox-stage23-e5ddeee-combined/run.json. This covers file atomic
+batches, HTTPS pins, SQL federation, canonical single-use GC, fenced disposition,
+real provider lifecycle/GC, and ownership recovery. Source SHA256:
+daf2beef111de41b384644905bf247db70f71e1730de853922d373ff577fcdff.
+The ordinary full Go suite also passed: /tmp/sysbox-stage23-e5ddeee-full.log.
+
+Current helpers passed real whole-VM fencing in both non-Docker cases:
+/tmp/sysbox-stage23-e5ddeee-libvirt-vm-fence-corrected.log and
+/tmp/sysbox-stage23-e5ddeee-firecracker-vm-fence.log. An initial invocation used
+invalid GC kind libvirt; its exact disposable domain was removed before rerunning
+with the correct kind domain. Historical labs were untouched.
+
+The subsequent test-only follow-up replaces all ten non-Docker GC process exits
+with parent-driven SIGKILL. Strict evidence:
+/tmp/sysbox-gc-provider-sigkill-strict/run.json. Ownership workflow SIGKILL now
+covers seven paths on file/SQLite/PostgreSQL, including operation completion,
+idempotent stop retry and barrier release. Strict evidence:
+/tmp/sysbox-p5-api-intermediate-verified/run.json. Completion already stores the
+grant stop; the later handler stop call is a retry. Tests check persisted stop
+receipts and barriers before recovery and exactly one target serial increment.
+
+These tests kill after production persistence functions return, or after the HTTP
+handler completes with its response discarded. They do not simulate arbitrary
+kills inside provider calls or database commits. Docker host reporting uses a
+callback; libvirt/Firecracker host tests keep the API alive. Pre-return adoption
+without durable return evidence remains unknown and cannot replay or release its
+source barrier. Provider-internal partial-write recovery and the broader P9
+provider/transport/upgrade matrix remain open.
+
+### Explicit recovery of adoption ownership after unknown return
+
+The recovered-owned path is now implemented. An adoption whose provider wrote
+ownership but whose callback never returned can be explicitly reconciled after
+an enrolled whole-execution-VM fence. The host archives the original intent as
+fenced/unknown and signs a fresh observation of exact target ownership and
+provider recovery state. The API commits that observed resource once with status
+unknown, records an independent recovery receipt, retires the old dispatch and
+releases the exact holds. It does not mark the original operation successful.
+Existing failed operations retain their original error and timestamps.
+
+Operator flow:
+
+1. POST `/v1/topologies/{topology}/adoptions/{operation}/host-fences` with an
+   `Idempotency-Key` and the original issued `grant`. The admitted request binds
+   the complete canonical adoption digest and the enrolled controller.
+2. Fence only the enrolled disposable execution VM and submit its signed receipt
+   to the existing `/v1/topologies/{topology}/host-fences/{fence}/receipt` endpoint.
+3. On the restarted host, run `sysbox host-fence inspect-adoption <fence-id>
+   --socket <host-supervisor-socket>` to obtain the signed disposition JSON.
+4. POST that JSON to
+   `/v1/topologies/{topology}/host-fences/{fence}/reconcile-adoption`. Exact retry
+   preserves the first recovery and never overwrites successor state.
+
+The host authorizes through
+`/v1/agents/{agent}/adoption-fences/{fence}/authorize`. Docker/libvirt must be
+local to the fenced execution host; libvirt fencing requires qemu:///system.
+Provider lookup uses immutable external identity, not a logical node name.
+Normal adoption completion and recovery serialize authority and lifecycle
+commits; a late success receipt cannot overtake an admitted fence. GC reference
+freezes remain effective. Transfer recovery records a separate disposition hash,
+retains source retirement/preparation, and releases its exact source barrier.
+
+Compatibility: authority format 7 and aggregate format 13 require draining old
+writers. Recovery proofs and disposition history survive metadata resets.
+Historical production scenes remain read-only under the agreed rollout boundary.
+
+Verified functionality includes authenticated host/API recovery on file, SQLite
+(including topology-selector URLs) and PostgreSQL, existing failed operation
+preservation, transfer target/source release, and late completion/GC exclusion.
+Real provider read-only recovery was exercised for Docker, libvirt and
+Firecracker. `/tmp/sysbox-adoption-fence-whole-vm4.log` verifies an actual unowned
+libvirt domain, real ownership mutation, injected lost callback, whole-VM
+power fencing and recovery without deleting the domain or inventing success.
+
+Historical boundary of the initial owned-recovery slice (superseded below):
+source/unowned/absent cancellation and matching canonical adoption actions were
+not yet supported. Conflicting evidence still deliberately retains holds. Firecracker
+previous-boot process anchors are now handled by the fenced recovery described below. The recovered-
+owned path does not close those cases or the full P9 transport/upgrade matrix.
+
+
+### Firecracker adoption recovery across execution-host reboot
+
+The host coordinator now passes the admitted fence and a canonical reauthorization
+callback to Firecracker recovery. Under the generation lock, the provider verifies
+exact target ownership, current/new boot, signed whole-VM stop evidence, original
+process boot and absence of current-kernel launch references. Unresolved attachment
+intent is refused. The original manifest bytes and controller proof are fsynced to
+a content-addressed archive before old process/PID fields are cleared and the
+existing generation becomes stopped. No old PID is signaled and no disk or
+ownership is recreated. Retry requires the matching archive and an unadvanced
+generation; a newly launched process cannot be cleared by replaying the old fence.
+The trusted host must retain full process visibility for the residue inspection.
+
+Cold Start now recreates validated owner-controlled socket parent directories;
+these can disappear when ephemeral storage is cleared at host reboot. This fixed
+an actual recovered-VM restart failure found during acceptance.
+
+Real evidence: /tmp/sysbox-fc-adoption-recovery-whole-vm2.log. A running KVM VMM
+was fenced by restarting the enclosing execution VM, its old-boot adoption intent
+was reconciled through authenticated host/API requests, and the preserved VM was
+started again, observed running, and destroyed. Original result remained unknown.
+Source/unowned/absent disposition and matching canonical adoption actions are
+now implemented below. Conflicts retain holds; arbitrary run/reset/guest actions
+are outside adoption disposition.
+
+### Explicit cancellation of fenced adoption unknowns
+
+A fenced adoption may now be explicitly cancelled when the fresh host
+observation proves one of three exact outcomes: `cancel-source` (the original
+transfer source is still inactive and owns the object), `cancel-unowned` (the
+inactive object has no ownership identity), or `cancel-absent` (the exact
+external object is gone). Source and unowned objects remain in the reference
+inventory and are never deleted by cancellation. Target-owned or conflicting
+objects are rejected and retain the hold.
+
+Use `sysbox host-fence inspect-adoption --cancel <fence-id> --socket <socket>`
+and submit the resulting signed proof to the same
+`/v1/topologies/{topology}/host-fences/{fence}/reconcile-adoption` endpoint.
+The decision preserves the original operation as unknown, retires its dispatch,
+releases the exact fence and (for transfer) the exact source barrier. It does
+not add a resource to state or restore old ownership. A matching canonical
+adoption action is archived with a disposition ID; its original status and
+result remain unchanged, old run replay is rejected, and new reset/adoption
+requests may proceed. GC reference snapshots include the archived candidate and
+cancelled source/unowned object identity.
+
+The cancellation and settled-action paths pass file, SQLite and PostgreSQL
+contract/race tests. Affected-package full regression with an isolated PostgreSQL
+instance passed. Real provider cancellation observations pass for temporary
+libvirt and Docker objects. The earlier blocked whole-VM attempt is superseded by the 2026-10-22 run:
+`/tmp/sysbox-cancel-verified-matrix.json` records five passing real whole-VM
+cases: libvirt unowned/absent/source and Firecracker source/source-absent.
+Only the enrolled disposable execution VM was power-fenced. No production or
+historical scene was changed.
+
+The strengthened reproducible gate is `adoption-whole-vm-cancellation`, selecting
+`TestAdoptionFenceWholeVMCancellationMatrixE2E`; it fixes all five scenarios
+explicitly and checks the retained provider identity in `adoption-cancel/`
+references, old-grant rejection, source retirement, exact release and fresh
+admission. `adoption-cancellation` now selects the actual cancellation tests,
+instead of accidentally repeating the owned-recovery test. Run artifacts go to
+`/tmp/sysbox-cancel-closure-gates`; only a passed run.json establishes success.
+Build the probe with `go test -c -tags=e2e ./pkg/hostsupervisor`, and the attestor
+with `go build -buildvcs=false ./cmd/sysbox`. Set `SYSBOX_GC_FENCE_LAB`,
+`SYSBOX_GC_FENCE_PROBE_BINARY`, `SYSBOX_GC_FENCE_ATTESTOR`, and the isolated
+`SYSBOX_TEST_DATABASE_URL`; select the cancellation, reset-settled and whole-VM
+gates with `python3 scripts/acceptance/campaign.py run --gate <id> --output <new-dir>`.
+The gate fingerprints the helper/attestor; signed per-round evidence is retained
+under the lab's `adoption-round-*` directories. Failed rounds retain exact fixture
+identities for diagnosis and explicit cleanup, never broad provider deletion.
+
+Scope: transfer preparation uses the internal prepare helper, not the entire
+public preparation/confirmation protocol. Firecracker source fixtures are real
+prepared manifests, not running KVM VMMs. The separate running-KVM recovery
+record above remains the evidence for old-boot process cleanup and cold restart.
+Aggregate format is 14 (legacy 13 readable); authority format is 7. Older format
+numbers elsewhere in this chronological record describe historical slices.
+
+P5.3 and P8.2 no longer list obsolete implementation blockers in campaign.json.
+This closes those functional subitems, not their complete current-release gate
+set. Historical e5ddeee combined 31-gate evidence remains historical; P5 full
+provider/transport faults and P9 final upgrade/integration acceptance stay open.
+
+2026-10-22 strict follow-up result: all three selected gates passed without skips
+(`adoption-cancellation`, `adoption-reset-settled`,
+`adoption-whole-vm-cancellation`). The latter ran all five fixed real scenarios.
+Recorded source SHA256:
+`5bffa73c35ea777b7f731ee933a4dc5b9f04ba379b8b1ab7ace1b9968e096393`;
+base HEAD was `692c853` plus the recorded working-tree changes. Do not describe
+this as testing the unmodified base commit or the full campaign. Reconciliation
+in `/tmp/sysbox-cancel-closure-reconciliation.json` deliberately remains incomplete:
+P5.3/P8.2 are unverified until their complete same-source gate sets are supplied.
+
+Cleanup: successful rounds removed their precise fixtures. The failed source
+preparation round's inactive libvirt UUID was checked against its recorded XML
+and removed; `/tmp/sysbox-gc-fencing-20261021/cancellation-fixture-cleanup.json`
+records the identity. Both isolated VMs and the test PostgreSQL container were
+stopped; disks and failure/success evidence remain for audit.
+
+### Explicit Run intent disposition: first operational slice (2026-10-22)
+
+The new `reconcile-intents` endpoint performs evidence-bound retain/absence
+choices for exact non-composite actions. It preserves original action outcomes,
+archives all matching Run actions, keeps candidate references in GC inventory,
+ends the original Run as failed/unknown and retires its command. File prepared
+writes and SQL transactions release the exact authority barrier last. Successor
+admission and old-decision replay are verified without rewriting successors.
+
+This is PR #53's first mutation slice, not completion of all Run/reset/guest
+recovery. Reset, unresolved attachments/children, incomplete composite guest effects
+and missing immutable candidate identity remain blocked. Retention requires
+provider private state. No arbitrary external command is replayed.
+
+Evidence: `/tmp/sysbox-intent-api-contract-fixed.log` (three-backend new/old fence
+API race regression), `/tmp/sysbox-intent-retain-absent-api.log` (both choices,
+current completion reporting and successor protection),
+`/tmp/sysbox-intent-persistence-full.log` (complete persistence race suite), and
+`/tmp/sysbox-intent-api-full-fixed.log` (complete API suite with PostgreSQL).
+The first full API run exhausted connections because the shared test fixture did
+not close cached lifecycle pools; test cleanup was fixed and the rerun passed.
+
+Real libvirt: `/tmp/sysbox-intent-libvirt-whole-vm3.log` passed using a real exact
+UUID fixture, enclosing execution-VM power fence/reboot, current agentexec host
+observer, authenticated report, explicit absence disposition and fresh admission.
+Only `changed-incarnation-false/local` is selected for the real-VM round; backend
+coverage comes from separate contract tests. Initial fixture/private-version and
+incorrect observer-binary attempts are retained as failures, not passes.
+
+Compatibility: this slice writes aggregate 15 and authority 8; existing adoption
+and GC histories remain valid. Independent review caught and fixed JSONB private
+JSON formatting comparisons, file observation-ID retry binding, and prepared
+recovery after unrelated authority clock advancement.
+
+### Reset source disposition before replacement admission (2026-10-22)
+
+Reset observations now report the source and any recorded replacement separately;
+the composite reset status remains unknown. For accepted/preparing/prepared/
+destroying/destroy_returned/destroyed phases, with no replacement, EffectComplete,
+ResetSSH, active child or attachment, an exact post-fence source observation can
+support explicit retention or proven residual absence. Applying and ambiguous
+replacement windows still refuse disposition.
+
+Source retention keeps the actual old generation and archives the unused target
+generation. Later Read/Delete use the actual retained generation; a fresh Reset
+uses its next actual generation only when the previous decision proves creation
+was never admitted. Old Run replay remains rejected. The retained live resource
+loses its old reset_handle; the original archive keeps it. Otherwise a fresh
+Reset would mistakenly resume a token tied to the old action.
+
+Evidence: `/tmp/sysbox-reset-source-verified.log` covers file/SQLite/PostgreSQL
+retain/absence APIs, residual SPI calls, generation selection and handle archival.
+`/tmp/sysbox-reset-source-libvirt-whole-vm3.log` passes real isolated libvirt source
+absence after whole-VM fencing, nested old-generation observation, authenticated
+report and explicit disposition/new admission. Earlier attempts exposed obsolete
+fixture assertions and JSON decoding into a nonzero synthetic report; both were
+corrected without weakening signature or identity checks. This is not a running
+replacement or incomplete guest-configuration recovery claim.
+
+### Retained incomplete resources and repeated recovery (2026-10-22)
+
+`retain-incomplete` and `retain-replacement-incomplete` preserve original unknown
+results while restricting retained resources to explicit rebuild/destruction.
+The archive retains a recovery obligation independent of editable live metadata.
+Successful reset/delete action evidence resolves it; a strictly later signed
+fenced disposition can transfer it to the next generation. Removing/reidentifying
+resources, changing provider/private identity or retiring metadata cannot bypass
+an unresolved obligation. Exact JSON identity comparisons preserve large integers.
+
+Evidence: `/tmp/sysbox-incomplete-chain-verified.log` (three-backend incomplete API
+and two successive signed fence/disposition decisions followed by journaled Delete
+and metadata retirement); `/tmp/sysbox-incomplete-affected-full.log` (full API,
+persistence, runtime, state and controlplane suites with isolated PostgreSQL).
+`/tmp/sysbox-incomplete-replacement-libvirt-vm2.log` verifies old-generation absence
+and retained exact replacement after actual enclosing-VM power fencing. The fixture
+is a stopped diskless libvirt domain, not a real running guest configuration fault.
+Its exact UUID is removed by cleanup after the assertions.
+
+A real failure revealed presence/health conflation: a stopped domain was reported
+unknown because the normal health read returned drift. Intent observation now
+accepts independently verified exact provider presence without claiming healthy
+configuration or action success. The first failed run remains recorded.
+
+### Scoped guest file reboot termination (2026-10-22)
+
+A file result lost across guest reboot can now be terminal unknown, but only for
+an installation originally signed with `guest-tmpfs` scope. Host identity and
+old/new guest boot are bound in the receipt; guest filesystem validation uses the
+same parent FD as staging/link/rename. Unscoped requests and non-tmpfs filesystems
+remain blocked. This restriction fixes the review finding that remote filesystem
+writes may outlive the guest process and cannot be fenced by reboot alone.
+
+`/tmp/sysbox-guest-file-scoped-verified.log` passes scope binding, non-tmpfs refusal,
+unscoped reboot refusal, host journal recovery, signature checks and the three
+backend API failed/unknown-to-successor flow. `/tmp/sysbox-file-real-tmpfs-vm.log`
+passes actual installation in a new tmpfs mounted only in the enrolled disposable
+execution VM; the mount, test directory and binary were removed afterward.
+The boot-change unit fixture does not by itself claim a full real guest reboot
+with an in-flight file write. Complete guest/provider/transport integration remains
+tracked in the three-PR execution ledger.
+
+### PR #53: parent linkage, retained dependencies and real file reboot
+
+The parent/child API contract now admits a derived guest task before host fencing,
+refuses parent intent disposition while the child is unresolved, exposes the
+child's exact epoch/boot/resource in recovery-plan, accepts a signed unknown-result
+reboot stop receipt, and then commits the original parent disposition. File,
+SQLite and isolated PostgreSQL passed under the race detector
+(`/tmp/sysbox-parent-link-green.log`). No grant is released by plan inspection.
+
+Pre-replacement Reset may retain its original node with unstarted, unchanged
+pinned SSH dependencies. The disposition transaction validates the dependencies
+against canonical state and retains their exact inventory; changed, missing or
+started dependencies and source-absence disposition are rejected. Incomplete
+non-reset/replacement retention can preserve attachments under the existing
+archive-backed rebuild/delete obligation; metadata writers cannot drop or
+substitute attachment evidence. Attachment absence is still not inferred from
+node absence.
+
+`TestFileInstallRealGuestRebootUnknown` runs the real guest installer through the
+SSH helper protocol in the enrolled disposable VM. A test-only installer hook
+pauses after `prepared` on a verified tmpfs target. The existing fencing controller
+then powers off the exact QEMU process, verifies its exit, restarts the same disk,
+and verifies a new boot and unchanged control VM. The host records a signed
+quiescent **unknown** result. The old SSH reply is held until that receipt is
+persisted, then released; it cannot overwrite the receipt. Cold observation
+preserves it, without reinstalling.
+
+Actual run: `/tmp/sysbox-file-reboot-ssh-real2.log`, race detector enabled.
+Controller evidence:
+`/tmp/sysbox-gc-fencing-20261021/fence-377b22e8d15044bbb481510ae95d4010.json`,
+SHA256 `c4e10a6e4bd947358cf7c97378b9174a7bb7ff2c6af03915f153aab347dda665`.
+Guest boot changed from `e13c017b-2088-4ad8-8ca7-9f283ee640c6` to
+`759f38d0-359c-4404-91b8-ae9d7441cdf0`. The unique test mount/directory was cleaned.
+An earlier setup-only attempt used an invalid oversized test grant; its precise
+session directory was subsequently removed as well. The test probe is a current
+static `pkg/guesttask` test binary, not a production helper replacement.
+
+Reproduction (only an enrolled disposable lab):
+
+```sh
+CGO_ENABLED=0 go test -c -o /tmp/sysbox-file-fence-probe.test ./pkg/guesttask
+SYSBOX_GC_FENCE_LAB=/path/to/enrolled-lab \
+SYSBOX_FILE_FENCE_PROBE=/tmp/sysbox-file-fence-probe.test \
+go test -race ./pkg/hostsupervisor -run '^TestFileInstallRealGuestRebootUnknown$' -count=1 -timeout=12m
+```
+
+This is SSH and tmpfs evidence. It does not prove vsock reboot transport, persistent
+or remote filesystem cessation, started ResetSSH disposition, attachment absence,
+or discovery of an unrecorded creation identity. These remain first-stage gaps;
+none is counted as passed or moved out of scope by this acceptance entry.
+
+This slice's same-source campaign passed all four new gates with zero skips:
+`intent-operational-api`, `intent-operational-cli`,
+`intent-composite-obligations`, `file-ssh-whole-vm-reboot`.
+Machine report: `/tmp/sysbox-stage1-campaign-20261022-r1/run.json`.
+Source SHA256: `1c65d204a9b341eb3a13ac2fea1f7d6df37d48ee3b008837371d3e6f6201a130`.
+All six affected packages passed full race regression in
+`/tmp/sysbox-stage1-full-regression.log`: API, runtime, persistence,
+hostsupervisor, guesttask, CLI. This is slice validation, not the full PR 1 gate.
+
+### PR #53: derived SSH cessation without inventing a result (2026-10-23)
+
+Implemented helper `ssh-stop`, scope-format-3 fencing against both current and
+older helper processes, exact stop retry after a partial write, host cold recovery,
+and distinct signed SSH unknown-stop receipts. API completion distinguishes
+cessation from successful key mutation and accepts exact historical retry.
+A typed authorization-conflict error permits stop on HTTP 409 only; outages do
+not permanently retire an active request.
+
+Focused five-package race contracts passed in
+`/tmp/sysbox-ssh-stop-final-contract.log`, including file/SQLite/PostgreSQL API
+contracts. The isolated test PostgreSQL container was restarted with an actual
+mapped port of 33478; stale port 33454 was connection-refused, not counted as pass.
+
+`TestSSHStopRealGuestProtocol` passed using the current static guesttask test
+probe and the pinned SSH host identity of the enrolled disposable VM:
+`/tmp/sysbox-ssh-stop-real-guest3.log`. It stopped an unknown original request at
+epoch 2, rejected its delayed mutation, admitted a fresh epoch-3 SSH configuration,
+retried the epoch-2 stop and verified the successor still present. Guest boot:
+`9101565b-e11d-4905-8ecb-08308339d974`. The unique test directory and tmpfs mount
+were removed. The initial cleanup detected root-private traversal denial; the
+script now checks mountpoint with sudo and refuses deletion after failed unmount.
+
+This closes the derived child-authorization cessation slice, not started ResetSSH
+metadata reconciliation or the full first-stage acceptance gate. The original
+unknown remains unknown and its enclosing Reset stays held until independently
+accounted for.
+
+All five affected packages passed full race regression in
+`/tmp/sysbox-ssh-stop-full.log` (API 182.580s). Four same-source machine gates passed
+without skips in `/tmp/sysbox-ssh-stop-campaign-20261023/run.json`:
+`derived-ssh-stop-api`, `ssh-stop-guest-contract`, `ssh-stop-host-contract`,
+`ssh-stop-real-helper`. Source SHA256:
+`6c7a42434aa68f7472d7c09698e4265370bfa0b4474222375cc8158c4468b2ef`.
+Independent review found and verified fixes for mixed-old-helper replay and
+mistaking transient authority failures for revocation.
+
+
+### PR #53: atomic post-setup Reset/SSH publication (2026-10-23)
+
+The public host-fence API now retains a verified replacement node together with
+all journal-recorded committed SSH results in one metadata transition. Exact old
+node absence includes the provider residue proof; nested SSH observations use the
+replacement node rather than canonical old-node state. The immutable original
+journal remains uncertain and the resulting Run is failed/unknown. Archive GC
+references retain each old SSH record and each committed result.
+
+Three same-source machine gates passed with zero skips, including file, SQLite
+and dedicated PostgreSQL public API contracts, prepared-write crash/retry and
+actual runtime observer coverage: `reset-ssh-disposition-api`,
+`reset-ssh-disposition-transaction`, `reset-ssh-disposition-observer`.
+Report: `/tmp/sysbox-reset-ssh-publish-campaign-20261023-final/run.json`.
+Source SHA256:
+`9807cf9391c43d44863ab87396777f2ec1643e6fec63fa72070c38d9c7ea7082`.
+All four affected packages (API, persistence, runtime, controlplane) passed full
+race regression in `/tmp/sysbox-reset-ssh-publish-full.log` (API 308.137s).
+PostgreSQL used the disposable container's inspected port 33481. Independent
+review found no blocking issue. The public API fixture supplies synthetic
+committed provider/SSH observations; it is a backend/protocol contract, not real
+full Reset acceptance or evidence for the remaining provider/transport matrix.
+
+This closes only the recorded-results publication window. A started child with
+no durable result remains blocked. Attachment absence, composite generations,
+unrecorded creation identity, persistent-file/vsock stop proofs, and complete
+repeated operator recovery still remain first-stage work.
+
+
+### PR #53: discoverable lost SSH Result (2026-10-23)
+
+A started ResetSSH dependency with no parent Result can now be explicitly
+published when the guest still holds its exact committed receipt, pinned
+configuration is unchanged, and the complete signed source/replacement/child
+observation and stop ledger pass. Discovery and inspection are read-only. The
+original journal/archive keep nil Result and unknown status; publication uses a
+detached candidate. GC reconstructs its reference from archived signed evidence.
+
+Four same-source machine gates passed with zero skips:
+`reset-ssh-disposition-api`, `reset-ssh-disposition-transaction`,
+`reset-ssh-disposition-observer`, `ssh-stop-real-helper`.
+Report: `/tmp/sysbox-reset-ssh-lost-campaign-20261023-guards/run.json`.
+Source SHA256:
+`9c72a9c0cecb3c60422659e2ed21666d747bd585708aacff5d02cc04da0d0fb4`.
+Backend contracts include file/SQLite/dedicated PostgreSQL, original-history
+preservation, exact prepared-write recovery, stale/missing/foreign result rejection
+and archive references. Independent production review found no blocking issue.
+
+The real SSH/helper test committed a fresh epoch-3 SSH result, used a cold
+transport client to discover and validate that exact receipt/configuration, then
+verified the old epoch-2 stop retry preserved the successor. It also rejected the
+delayed old mutation. Guest boot: `c936a74a-a607-4c71-ba53-d24d7ff3c32d`.
+The unique root-private test directory and tmpfs mount were cleaned by the fixture.
+This proves the real receipt-discovery protocol; the enclosing Reset disposition
+is still a synthetic public API/backend contract, not a full real Reset round.
+
+No committed receipt, changed configuration without original desired metadata,
+attachments/composite generations, unrecorded create identities, persistent-file
+and vsock stop proofs, and the full repeated operator flow remain open. Neither
+this slice nor its passing gates closes the first-stage checklist.
+
+
+Final guard review added refusal of old SSH attachments and unresolved recovery
+obligations on previous/result records; three regression counterexamples failed
+against the earlier guard and pass after the correction. The final runtime and
+persistence packages passed full race regression in
+`/tmp/sysbox-reset-ssh-lost-guards-full.log` (2.332s/68.806s). These guards apply to
+both recorded and discovered-result paths; they never discard the obligation.
+
+
+A concurrent full four-package race run passed persistence/runtime/controlplane
+but failed API in existing `TestGuestDeliveryFailureWithAuthorityWaitsForHost`
+(`stopped/local`): its bounded two-second reconciliation returned context deadline
+exceeded. Log: `/tmp/sysbox-reset-ssh-lost-full.log`. It is not counted as a pass.
+Without concurrent VM/campaign load, the exact case passed five consecutive
+three-backend race rounds with unchanged limits:
+`/tmp/sysbox-reset-ssh-guest-failure-repro.log`. This supports load sensitivity but
+does not establish a specific filesystem or scheduler root cause. No production
+limit or fail-closed behavior was weakened.
+
+
+The final-source serial full API race recheck passed (397.894s):
+`/tmp/sysbox-reset-ssh-lost-api-recheck.jsonl`; stderr is empty. The previously
+failing guest-delivery case passed within that full run (1.81s). Together with
+final runtime/persistence race and controlplane race above, all four affected
+packages have passing full regression; the earlier loaded failure remains logged.
+Host SSH discovery socket/canonical-identity race contracts also passed in
+`/tmp/sysbox-reset-ssh-lost-host-contract.log`. Disposable VMs were stopped with
+disks retained after acceptance; the dedicated PostgreSQL container was stopped
+only after all database verification completed.
+
+
+### PR #53: unknown SSH node obligation and changed desired metadata
+
+Unknown ResetSSH can now use explicit retain-incomplete: exact replacement node
+retained unknown with a rebuild/delete requirement, stale old-node SSH metadata
+removed atomically, original journal/archive untouched, and old SSH identities
+retained for GC. Signed prepared-write retries preserve the same postimage.
+Three-backend public API coverage includes child-stop-before-parent ordering,
+refused ordinary work/metadata removal, successful explicit deletion resolving
+the requirement, fresh admission, and old-decision retry preserving the deletion.
+Changed-config lost-result recovery reconstructs desired metadata only under the
+immutable admitted digest. Independent review found no blocking issue.
+
+Three same-source gates passed without skips:
+`/tmp/sysbox-reset-ssh-unknown-campaign-20261023/run.json`; source SHA256
+`bdfc1f4dda4c9be0adb72176dab905abc1bc8eb3932debd2bd41ffdf3846b435`.
+Full runtime/persistence/controlplane race: `/tmp/sysbox-reset-ssh-unknown-full.log`.
+Full API race: `/tmp/sysbox-reset-ssh-unknown-api-full.jsonl` (all passed).
+The focused three-backend API round also passed in
+`/tmp/sysbox-reset-ssh-unknown-api.log`. These are backend/protocol contracts,
+not a full real Reset/operator round. Remaining fixed stage-1 checklist stays open.
+
+
+### PR #53: attachment residue and missing create identity
+
+Implemented signed attachment count/residue coverage, explicit absent metadata
+commit, independent old/new ResetSSH attachment accounting, and read-only
+immutable-graph discovery for a lost create ID. Only exact discovered identities
+can be retained under a node rebuild/delete requirement; original journal and
+archive keep nil Candidate. File/SQLite/PostgreSQL API tests cover child cessation,
+canonical publication, metadata-removal refusal, successful explicit destroy,
+fresh admission and old-decision retry. Pinned input loading and immutable digest
+mismatch are covered separately. Composite discovery with links/routes/provisioners
+and providers without complete residue evidence remain unresolved.
+
+Seven same-source contract gates passed with no skips:
+`/tmp/sysbox-attachment-discovery-campaign-20261023/run.json`.
+Source SHA256: `b3caa6f3c57b69bebcbb31697e39b6786cddb666aa64dbabce323039802a0a53`.
+Runtime/persistence/controlplane full race passed in
+`/tmp/sysbox-attachment-discovery-core-full.log`; agentexec initially could not
+listen inside the sandbox, then passed with local sockets allowed in
+`/tmp/sysbox-attachment-discovery-agent-full.log` (8.065s). The preceding attachment
+API full race passed in `/tmp/sysbox-attachment-absence-api-full.jsonl` (292.281s).
+Current discovery API full regression is recorded separately below.
+
+Real enrolled execution-VM Docker validation passed:
+`/tmp/sysbox-attachment-discovery-real-20261023.log`: NAT endpoint cleanup,
+independent veth residue, exact disappearance, same-name replacement rejection,
+and cold owner/UID/generation discovery after discarding a create response.
+The exact test container/network/veth and uploaded probe were cleaned.
+`/tmp/sysbox-network-attachment-real-20261023.log` passed empty bridge, retained
+port, **detached but present** veth refusal and exact disappearance. This last
+case was added after independent review found a bridge-only check insufficient.
+Review also caught a missing AttachmentCount in actual nested observation; the
+real observer regression now asserts it. Both blockers were corrected and reviewed.
+These are real protocol/SPI tests plus synthetic enclosing API contracts, not yet
+the full repeated real Reset/operator integration gate.
+
+Current attachment/discovery API full race passed (376.837s):
+`/tmp/sysbox-attachment-discovery-api-full.jsonl`; stderr empty. The final source
+matches the seven-gate report. Missing-create observation, signed-crash history/GC
+and three-backend public disposition were also independently focused-race checked.
+
+### Persistent-file same-boot cessation (2026-10-23)
+
+`file-stop` now fences an exact unknown file installation without inventing its
+outcome: durable cancellation, exclusive writer-lock handoff, scope-format-3
+admission fence, then a separate stopped-unknown tombstone. The original install
+journal stays unknown/nonquiescent. The target parent and control directory must
+both be guest-kernel-local tmpfs/ext4, and the guest boot must still match.
+NFS/FUSE/overlay and changed-boot persistent-file requests remain unresolved.
+
+The isolated enrolled execution VM passed actual ext4/SSH/helper lost commit
+outcome recovery, cold observation, delayed-original rejection, successful next
+epoch, and old-stop retry preserving the successor. Evidence:
+`/tmp/sysbox-persistent-file-real-final-20261023.log`. Full affected six-package
+race regression passed in `/tmp/sysbox-persistent-file-full-20261023.log`;
+complete API race regression with PostgreSQL passed in 235.154s:
+`/tmp/sysbox-persistent-file-api-full-20261023.jsonl`. Independent review found
+and verified fixes for prior-boot tombstone reuse and control-directory FS scope;
+additional negative testing fixed foreign agent/session grant acceptance.
+
+The API records the result as Failed/unknown and seals only the exact stopped
+grant. Exact receipt retry after successor admission preserves the successor.
+This closes the same-boot local persistent-file path; it does not claim the full
+stage-1 operator campaign or true vsock reboot acceptance.
+
+Final same-source five-gate campaign passed with zero skips:
+`/tmp/sysbox-persistent-file-campaign-final-20261023/run.json`. The earlier
+campaign `/tmp/sysbox-persistent-file-campaign-20261023/run.json` retains a failed
+real SSH setup: execution guest serial showed RCU stalls/CPU soft lockups while
+QMP remained running. Stopping/restarting the exact enrolled disposable lab,
+retaining disk/logs, restored SSH and the unchanged-source campaign passed. This
+failed environment run is not counted as acceptance.
+
+### Real vsock unknown stop and Firecracker residue boundary (2026-10-23)
+
+The enrolled execution VM exposes KVM/vhost-vsock even though the outer workspace
+host lacks vhost-vsock. `scripts/acceptance/vsock_file_stop.py` builds the current
+helper, guest probe and provider test itself; a Go build overlay embeds that
+helper without changing tracked release binaries. The test checks its embedded
+helper hash. The wrapper rejects skips/failures, requires exactly two runs and
+passes per named test, records artifact hashes, and writes passed only after
+cleanup. Failed/timeout scenes retain their exact UUID directory for inspection.
+
+The real KVM/vsock test injects a commit-intent unknown state using the production
+Engine and original signed request, then asks the production vsock helper to
+stop it. Original journal remains unknown, delayed request is rejected, distinct
+successor content is installed and read back after an old-stop retry. It does
+not claim simultaneous active-writer stopping or changed-boot storage cessation.
+
+Firecracker now implements local-only generation/attachment residue observation.
+It binds topology/resource/generation directory, manifest/config and both sockets;
+foreign identity and an unrelated missing directory are rejected. Real owned TAP
+acceptance proves that missing VMM artifacts cannot discharge a retained TAP,
+and exact TAP absence is required. Transfer paths differing from the generation
+creation path remain unresolved. Full runtime/Firecracker race passed in
+`/tmp/sysbox-firecracker-fence-core-20261023.log` before the final directory-binding
+hardening; focused hardened tests also passed.
+
+The first combined rerun lost its outer execution VM: workspace kernel OOM logs
+identify registered QEMU PID 2713380 as the victim. Restart had expanded the
+original 1 GiB execution budget to the two-VM default 6 GiB (plus 3 GiB control).
+The lab now persists/requires explicit budgets; its known original 384 MiB/1 GiB
+budget was restored. `test_two_vms` and `test_host_fencing` pass; the latter has an
+existing opt-in real-enrollment skip, which is not claimed as real acceptance.
+The combined budgeted real run passed two rounds of each test, with cleanup:
+`/tmp/sysbox-vsock-fence-budgeted-20261023/run.json`. Earlier failed runs remain.
+
+Final reviewed source rerun passed both real tests twice with cleanup passed:
+`/tmp/sysbox-vsock-fence-reviewed-20261023/run.json`, source SHA256
+`17038723cf954a0f70fb1d0d7956e5c31791656f4eb5db94ede994925318ee48`.
+Final hardened runtime/Firecracker full race regression passed:
+`/tmp/sysbox-firecracker-fence-core-final-20261023.log` (Firecracker 10.993s).
+Independent final review found no remaining blocker in this slice.
+
+### Composite guest setup identity discovery (2026-10-23)
+
+Explicit missing-create intent discovery now accepts routes/provisioners without
+links. The read-only path discovers ownership identity only; it forces replay
+forbidden/incomplete, while ordinary discovery still rejects the same configuration.
+Runtime negative/positive tests, signed disposition preserving original journal,
+and three-backend public API disposition passed; full runtime race regression
+passed in `/tmp/sysbox-composite-identity-runtime-20261023.log`. Independent review
+found no blocker. Links without complete inventory remain unresolved.
+
+### Linked-node/router identity inventory (2026-10-25, not real-accepted)
+
+Explicit incomplete intent recovery now asks the owning provider for a complete
+attachment inventory, including when desired inputs contain no attachments. No
+SPI means unknown. Firecracker compares locked manifest/config/TAP/target identity;
+libvirt compares the full domain XML interface set, bridges and network generation;
+Docker NAT compares daemon endpoints with every non-loopback link in the pinned
+container network namespace. Namespace FD, sandbox path and current PID namespace
+must retain the same dev/inode before and after inspection. Null network exceptions
+require actual null driver and network mode. Raw-veth request reconstruction in
+Docker remains unsupported/unknown, not silently omitted.
+
+Signed discovered attachments bind count, unique names, node, driver and opaque
+state. Both nodes and routers can be retained only as incomplete, preserving
+original nil Candidate/unknown history and references. Router recovery uses
+explicit destroy followed by recreation; targeted router reset is not implemented.
+
+Focused race contracts passed for runtime, persistence, API (file/SQLite), Docker,
+Firecracker and libvirt: `/tmp/sysbox-linked-contracts-20261025.log`. Full runtime
+and persistence race passed in `/tmp/sysbox-linked-runtime-persistence-20261025.log`
+(1.705s and 22.770s). Independent final review found no remaining code blocker.
+The changed Docker/Firecracker real acceptance probes compile. Actual provider,
+PostgreSQL and whole-VM/repeated operator integration have NOT run: automatic
+permission review timed out twice for VM startup and twice for elevated regression;
+those commands were not executed. No skip or local contract substitutes for these.
+
+Prepared next checks after permission service recovery:
+
+- Start the enrolled `/tmp/sysbox-gc-fencing-20261021` using its recorded budgets;
+  start dedicated PostgreSQL and inspect its current port before setting test DSN.
+- Run `scripts/acceptance/vsock_file_stop.py` with the existing local Firecracker,
+  kernel and rootfs assets; its TAP test now includes read-only exact attachment
+  discovery and empty/foreign generation rejection. It builds current helpers.
+- Run current Docker `TestDockerFencedAttachmentResidueE2E` in the execution VM;
+  it now validates full NAT inventory and rejects omitted/foreign endpoints.
+- Run full provider/API race including PostgreSQL, then finish raw-veth discovery,
+  vsock whole-VM reboot and repeated public operator disposition/destroy/fresh work.
+
+### Stage 1 frozen-scope closure — 2026-10-26
+
+All three remaining groups frozen on 2026-10-25 are implemented and accepted.
+Unified report: /tmp/sysbox-stage1-closure-20261026.json, SHA256
+05cb1a93e991c51f0853c33c0214342c3cfa7ecf0a2cafb1f09d7dc38c88519d.
+Implementation source SHA256:
+176e631866236d66378f0632e798ce02b9838fb70f888a715497b385f2087bd2.
+
+Docker raw-veth and NAT inventory passed twice, including omitted links, foreign
+network generation, substituted peer and actual detached extra veth rejection.
+Both kernel NSIDs and reciprocal peer indices bind the endpoints. Real libvirt
+XML/owned bridge inventory passed twice. Real Firecracker manifest/config/TAP
+inventory passed twice. Linked router signed disposition passed file/SQLite/PG,
+preserving unknown history and archive-backed obligations.
+
+Public CLI recovery passed twice (68.048s total): real execution-host QEMU
+power-off/restart, actual signed host observation, retain-incomplete, production
+independent UID 65534 Agent/root supervisor Destroy, fresh Apply, old-decision
+retry and final Destroy. Initial interrupted Run/action is a seeded fixture;
+subsequent provider operations/completion are real. Separately, whole guest
+microVM kernel reboot while a real vsock task runs passed twice: old request is
+refused, unknown stop is signed, successor executes and old-stop retry preserves
+it. Persistent-file same-boot stop and TAP residue also passed twice.
+
+Final evidence:
+- /tmp/sysbox-stage1-contract-final-20261026/run.json: 19 gates, zero skips.
+- /tmp/sysbox-stage1-added-contracts-20261026.log: new linked/router, JSONB,
+  original-journal and raw peer contracts including PostgreSQL.
+- /tmp/sysbox-stage1-vsock-final-20261026/run.json: three tests, two rounds each,
+  wrapper-built current helper provenance and successful cleanup.
+- /tmp/sysbox-stage1-operator-renew-final-20261026.jsonl: two public operator rounds.
+- /tmp/sysbox-stage1-raw-final-20261026.log: two actual Docker inventory rounds.
+- /tmp/sysbox-libvirt-inventory-real-20261025.log: two actual libvirt rounds.
+- /tmp/sysbox-stage1-api-full-20261025.jsonl: full API race, 245.779s.
+- /tmp/sysbox-stage1-full-core-20261026.log: affected core race; initial Agent
+  failure was an old fixture lacking StartedAt, corrected and followed by full
+  passing /tmp/sysbox-stage1-agent-renew-final-20261026.log.
+
+Integration found and fixed JSONB reordering of embedded provider evidence,
+shallow resource-copy mutation of original journal, and prior-boot guest tasks
+blocking successor admission. Clock lag required bounded waiting before effects
+and use of newly signed/renewed grants: authenticate signature/boot first, verify
+again at actual current time, retain old monotonic renewal deadline. No timestamp
+is fabricated or authorization extended. v1 observation verification remains
+unchanged; deploy API v2 verification before hosts emitting v2 reports.
+
+Failed fixture permissions, disk exhaustion, archive and clock/renewal runs are
+retained and not counted as passes. Failed operator UUID journals/schemas remain
+bound for inspection; service processes were stopped. Unknown/ambiguous identity,
+unaccounted shared namespace links and remote storage effects stay fail-closed.
+Router uses explicit destroy/recreate. Whole P5/P8/P9 fault permutations and
+release/upgrade integration remain stages 2/3, not extra stage-1 conditions.

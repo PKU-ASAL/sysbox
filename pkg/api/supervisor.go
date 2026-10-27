@@ -79,9 +79,38 @@ func (s *Supervisor) loop() {
 
 func (s *Supervisor) Scan(ctx context.Context) {
 	now := time.Now().UTC()
-	s.server.agentService().MarkStaleOffline(ctx, now)
+	if err := s.server.workspaceService().RecoverDeletionIntents(ctx); err != nil {
+		slog.Warn("deletion intent recovery failed", "error", err)
+	}
+	if err := s.server.agentService().reconcileConsoleCompletions(ctx); err != nil {
+		slog.Warn("console completion reconciliation failed", "error", err)
+	}
+	if err := s.server.agentService().reconcileConsoleCancellations(ctx); err != nil {
+		slog.Warn("console cancellation reconciliation failed", "error", err)
+	}
+	if err := s.server.agentService().reconcileGuestExecutionCancellations(ctx); err != nil {
+		slog.Warn("guest execution cancellation reconciliation failed", "error", err)
+	}
+	if err := s.server.agentService().reconcileGuestHostCompletions(ctx); err != nil {
+		slog.Warn("guest host completion reconciliation failed", "error", err)
+	}
+	if err := s.server.agentService().reconcileUnissuedSSHFailures(ctx); err != nil {
+		slog.Warn("unissued SSH failure reconciliation failed", "error", err)
+	}
+	if err := s.server.agentService().reconcileUnissuedGuestFailures(ctx); err != nil {
+		slog.Warn("unissued guest failure reconciliation failed", "error", err)
+	}
+	if err := s.server.agentService().RepublishPendingCommands(ctx); err != nil {
+		fmt.Printf("[supervisor] republish pending commands: %v\n", err)
+	}
+	if err := s.server.agentService().RepublishAssignedRuns(ctx); err != nil {
+		fmt.Printf("[supervisor] repair assigned run commands: %v\n", err)
+	}
+	if err := s.server.agentService().MarkStaleOffline(ctx, now); err != nil {
+		fmt.Printf("[supervisor] update agent liveness: %v\n", err)
+		return
+	}
 	s.server.jobs.markExpiredLeases(now)
-	s.server.agentService().ReconcileLostCommands(ctx, now)
 	s.server.jobs.markConvergenceDeadlineExceeded(now, s.server.cfg.ConvergeTimeout())
 	names, err := s.server.workspaceService().Names(ctx)
 	if err != nil {
@@ -99,31 +128,55 @@ func (s *Supervisor) Scan(ctx context.Context) {
 }
 
 func (s *Supervisor) ScanTopology(ctx context.Context, topology string) error {
+	if err := s.server.reconcileGCOutbox(ctx, topology); err != nil {
+		return err
+	}
+	if err := s.server.finishCommittedRestores(ctx, topology); err != nil {
+		return err
+	}
 	st, err := s.server.workspaceService().LoadState(topology)
 	if err != nil {
-		return err
+		// The first create may have durable intent but no committed resource yet.
+		// That aggregate still needs observation after a crash.
+		repository, repositoryErr := s.server.actionRepository(topology)
+		if repositoryErr != nil {
+			return repositoryErr
+		}
+		actions, actionsErr := repository.LoadActions(ctx, topology)
+		if actionsErr != nil {
+			return actionsErr
+		}
+		if len(actions) == 0 {
+			return err
+		}
+		st, err = repository.LoadState(ctx, topology)
+		if err != nil {
+			return err
+		}
 	}
 	snap := HealthSnapshot{
 		Topology: topology,
 		Observed: time.Now().UTC(),
 		Health:   s.server.authoritativeTopologyHealth(ctx, topology, st),
 		Policy:   s.policy,
-		AutoHeal: s.policy != SupervisorPolicyObserveOnly,
+		AutoHeal: false,
 	}
 	s.maybeRepair(topology, &snap)
 	s.reconcileRecoverable(ctx, topology, &snap)
+	if len(snap.Recovered) > 0 {
+		if repository, err := s.server.actionRepository(topology); err == nil {
+			if refreshed, err := repository.LoadState(ctx, topology); err == nil {
+				snap.Health = s.server.authoritativeTopologyHealth(ctx, topology, refreshed)
+			} else {
+				snap.LastError = err.Error()
+			}
+		}
+	}
 	return s.server.saveHealthSnapshot(topology, snap)
 }
 
-// reconcileRecoverable closes the recovery loop for a topology: it finds runs
-// that crashed after mutating the outside world but before recording the result
-// in state, and reconciles their checkpoint journal so the orphaned objects are
-// adopted back.
-//
-// Recovery used to happen only when someone called POST /v1/runs/{id}/recover
-// by hand. The supervisor already walks every topology on an interval, so it is
-// the natural place to look; reconcileCheckpointJournal is idempotent and
-// guarded by CheckMutationSafety, so running it here is safe to repeat.
+// reconcileRecoverable only observes already authorized durable actions. It
+// never replays checkpoint patches or starts provider/guest operations.
 func (s *Supervisor) reconcileRecoverable(ctx context.Context, topology string, snap *HealthSnapshot) {
 	runs := s.server.jobs.recoverableRuns(topology)
 	if len(runs) == 0 {
@@ -135,8 +188,7 @@ func (s *Supervisor) reconcileRecoverable(ctx context.Context, topology string, 
 		return
 	}
 	for _, run := range runs {
-		owner := fmt.Sprintf("sysbox-api:supervisor:%s", run.ID)
-		report, err := reconcileCheckpointJournal(ctx, s.server.apiStore, topology, run.ID, mgr, owner)
+		report, err := s.server.reconcileCanonicalActions(ctx, topology, run.ID, mgr)
 		if err != nil {
 			snap.LastError = fmt.Sprintf("reconcile run %s: %v", run.ID, err)
 			continue
@@ -160,23 +212,10 @@ func (s *Supervisor) maybeRepair(topology string, snap *HealthSnapshot) {
 		snap.Action = "skipped_running_operation"
 		return
 	}
-	if latest := s.server.latestRun(topology); latest != nil && latest.Status == controlplane.RunFailed && latest.Recoverable {
-		snap.Action = "blocked_recovery_required"
-		return
-	}
-	// This is a fresh drift-repair decision, not a resume of a fabricated parent.
-	run := s.server.jobs.start(topology, "apply")
-	snap.Action = "restart_apply_started"
-	snap.RunID = run.ID
-	required, err := requiredCapabilitiesForTopology(s.server.workspaceService().HCLFile(topology))
-	if err != nil {
-		s.server.jobs.finish(run, err)
-		snap.Action = "restart_apply_failed"
-		return
-	}
-	if err := s.server.scheduling().DispatchRun(context.Background(), run, required); err != nil {
-		snap.Action = "restart_apply_failed"
-	}
+	// A broad historical restart flag is not authorization for replacement,
+	// destruction, or arbitrary guest setup. A bounded action plan is required.
+	snap.Action = "approval_required"
+	snap.LastError = "runtime drift requires an explicitly approved action plan"
 }
 
 func (s *Server) healthSnapshotFile(topology string) string {

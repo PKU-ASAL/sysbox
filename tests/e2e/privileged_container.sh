@@ -12,9 +12,4 @@ docker run "${common[@]}" "${image}" \
 docker run "${common[@]}" -v /var/run/docker.sock:/var/run/docker.sock "${image}" \
 	go test -count=1 -tags e2e -v -run '^TestDocker(OwnedPolicyLifecycle|StartPreservesNamedNetworkNamespace)E2E$' ./pkg/provider/docker
 
-docker run "${common[@]}" \
-	-v /usr/sbin/ip:/usr/sbin/ip:ro \
-	-v /lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu:ro \
-	-v /lib64:/lib64:ro \
-	-e PATH=/usr/sbin:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/bin:/sbin:/bin \
-	"${image}" go test -count=1 -tags e2e -v -run '^TestCheckpoint.*E2E$' ./pkg/api
+make -C "${root}" test-firewall-recovery-e2e

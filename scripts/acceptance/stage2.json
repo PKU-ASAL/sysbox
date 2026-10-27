@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "id": "stage2-supported-delivery",
+  "title": "Global revision coverage and non-Docker GC acceptance",
+  "scope": "SQL and file atomic retirement batches; shared-path and HTTPS file consumers; explicit SQL downstream federation; provider GC and fenced unknown disposition",
+  "gates": [
+    "gc-cli",
+    "gc-api",
+    "gc-host",
+    "gc-storage",
+    "gc-domain-coverage",
+    "revision-retention-preview",
+    "revision-delete-storage",
+    "revision-delete-api",
+    "real-docker-api",
+    "real-libvirt-gc-api",
+    "real-firecracker-gc-api",
+    "non-docker-gc-process-crash",
+    "real-docker-provider",
+    "real-libvirt",
+    "real-firecracker",
+    "file-registry-retirement",
+    "file-revision-gate",
+    "file-effect-ledger",
+    "file-reset-return",
+    "file-revision-batch",
+    "remote-revision-protocol",
+    "remote-revision-api",
+    "sql-revision-federation",
+    "gc-fenced-disposition-api",
+    "gc-fenced-disposition-host",
+    "gc-fenced-disposition-storage",
+    "firecracker-fenced-cleanup"
+  ],
+  "boundaries": {
+    "file_registry": "single and atomic batch retirement under shared catalog flock; committed proof index and required anchor protect late admission; explicit retired-payload cleanup; old writers must be drained",
+    "sql_registry": "same-catalog SQLite/PostgreSQL atomic retirement; explicit enrolled downstream federation installs permanent guards and collects all durable acknowledgements before central retirement; partial downstream retirement is not rolled back",
+    "provider_batch": "1..128 candidates; ordered, each receipt required",
+    "cache_batch": "one exact private host file per apply",
+    "revision_batch": "preview limit 1..128; file committed proof index or SQL transaction provides atomic local retirement; policy and references are rechecked",
+    "faults": "coordinator process crashes and journal loss refuse replay; canonical single-use claim survives all host-local evidence loss; explicit whole-VM fencing and fresh signed observation dispose unknown libvirt/Firecracker GC without inventing success",
+    "unenrolled_registry": "unregistered repositories are outside federation; they cannot be treated as empty consumers or receive deletion guarantees"
+  },
+  "not_closed": [
+    "full API/Agent SIGKILL matrix and provider-internal partial calls",
+    "full P8/P9 original acceptance",
+    "latest-release same-revision final integration (P9); the historical e5ddeee combined 31-gate run passed and is not current-release evidence"
+  ],
+  "evidence_rule": "all selected strict gates must pass on the same source digest and commit; failure/skip/missing environment does not close scope; original requirement remaining items stay open"
+}

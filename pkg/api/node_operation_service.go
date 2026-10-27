@@ -3,18 +3,21 @@ package api
 import (
 	"context"
 	"fmt"
-	"time"
+	"log/slog"
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/oslab/sysbox/pkg/state"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 type NodeOperationService struct {
-	workspace      *WorkspaceService
-	scheduler      *SchedulerService
-	operations     *nodeOperationStore
-	publishCommand func(context.Context, string, controlplane.AgentCommand) (controlplane.AgentCommand, error)
+	workspace   *WorkspaceService
+	scheduler   *SchedulerService
+	operations  *nodeOperationStore
+	wakeCommand func(string, controlplane.AgentCommand) error
 }
 
 type ImportNodeRequest struct {
@@ -24,12 +27,80 @@ type ImportNodeRequest struct {
 	Substrate string
 }
 
-func newNodeOperationService(workspace *WorkspaceService, scheduler *SchedulerService, operations *nodeOperationStore, publishCommand func(context.Context, string, controlplane.AgentCommand) (controlplane.AgentCommand, error)) *NodeOperationService {
+type AdoptionPlan struct {
+	Decision    string `json:"decision"`
+	Topology    string `json:"topology"`
+	TopologyUID string `json:"topology_uid"`
+	Serial      int64  `json:"serial"`
+	Address     string `json:"address"`
+	ExternalID  string `json:"external_id"`
+	Substrate   string `json:"substrate"`
+	AgentID     string `json:"agent_id,omitempty"`
+	Reason      string `json:"reason,omitempty"`
+}
+
+// AdoptionPlan is read-only. It never probes or mutates a provider; the
+// confirm phase requires an owning-agent evidence record with this exact
+// topology identity and serial.
+func (s *NodeOperationService) AdoptionPlan(ctx context.Context, topology string, req ImportNodeRequest) (AdoptionPlan, error) {
+	plan := AdoptionPlan{Decision: "unsupported", Topology: topology, Address: req.Type + "." + req.Name, ExternalID: req.ID, Substrate: req.Substrate}
+	if req.Type != "sysbox_node" || req.Name == "" || req.ID == "" || req.Substrate == "" {
+		return plan, fmt.Errorf("adoption plan requires type, name, external id and substrate")
+	}
+	st, err := s.workspace.LoadState(topology)
+	if err != nil {
+		return plan, err
+	}
+	plan.TopologyUID, plan.Serial = st.TopologyUID, st.Meta.Serial
+	if st.FindResource(address.Resource(req.Type, req.Name)) != nil {
+		return plan, fmt.Errorf("%w: adoption address already exists", persistence.ErrConflict)
+	}
+	if _, err := driver.DefaultRegistry.RequireOwnershipAdoption(req.Substrate); err != nil {
+		plan.Reason = err.Error()
+		return plan, nil
+	}
+	if s.scheduler == nil {
+		plan.Reason = "owning agent scheduler unavailable"
+		return plan, nil
+	}
+	agent, err := s.scheduler.SelectAgentForTopology(ctx, topology, []string{req.Substrate}, "")
+	if err != nil {
+		plan.Reason = err.Error()
+		return plan, nil
+	}
+	plan.Decision = "inspection_required"
+	plan.AgentID = agent.ID
+	plan.Reason = "owning agent inspection evidence required before confirm"
+	return plan, nil
+}
+
+func (s *NodeOperationService) enqueue(ctx context.Context, topologyUID string, op controlplane.NodeOperation) (controlplane.NodeOperation, error) {
+	if topologyUID == "" || op.ResourceUID == "" || op.Generation < 1 {
+		return controlplane.NodeOperation{}, fmt.Errorf("node operation requires complete topology and resource ownership proof")
+	}
+	if s.operations == nil || s.operations.store == nil {
+		return controlplane.NodeOperation{}, fmt.Errorf("node operation store not configured")
+	}
+	op.CommandID = "node-op-" + op.ID
+	op.LeaseEpoch = 1
+	cmd := controlplane.AgentCommand{TopologyUID: topologyUID, ID: op.CommandID, AgentID: op.AgentID, Type: "node_operation", Status: controlplane.AgentCommandStatusQueued, Protocol: controlplane.AgentProtocolVersion, CreatedAt: op.CreatedAt, Operation: op, ActionID: op.ActionID, ResourceUID: op.ResourceUID, Generation: op.Generation, LeaseEpoch: op.LeaseEpoch}
+	if err := s.operations.store.CreateNodeOperationDispatch(ctx, op, cmd); err != nil {
+		return controlplane.NodeOperation{}, err
+	}
+	if s.wakeCommand != nil {
+		if err := s.wakeCommand(op.AgentID, cmd); err != nil {
+			slog.Warn("node operation committed; command wakeup deferred", "operation_id", op.ID, "error", err)
+		}
+	}
+	return op, nil
+}
+
+func newNodeOperationService(workspace *WorkspaceService, scheduler *SchedulerService, operations *nodeOperationStore, wakeCommand func(string, controlplane.AgentCommand) error) *NodeOperationService {
 	return &NodeOperationService{
-		workspace:      workspace,
-		scheduler:      scheduler,
-		operations:     operations,
-		publishCommand: publishCommand,
+		workspace:   workspace,
+		scheduler:   scheduler,
+		operations:  operations,
+		wakeCommand: wakeCommand,
 	}
 }
 
@@ -37,23 +108,24 @@ func (s *NodeOperationService) CompleteFromAgent(agentID, opID string, op contro
 	if op.ID == "" {
 		op.ID = opID
 	}
-	if op.ID != opID {
-		return op, fmt.Errorf("operation id mismatch")
-	}
 	if op.AgentID == "" {
 		op.AgentID = agentID
 	}
-	if op.AgentID != agentID {
-		return op, fmt.Errorf("operation agent id mismatch")
+	if s.operations == nil || s.operations.store == nil {
+		return op, fmt.Errorf("node operation store not configured")
 	}
-	if op.EndedAt.IsZero() && (op.Status == controlplane.NodeOperationStatusDone || op.Status == controlplane.NodeOperationStatusFailed) {
-		op.EndedAt = time.Now().UTC()
+	completed, err := s.operations.store.CompleteNodeOperation(context.Background(), agentID, opID, op)
+	if err != nil {
+		return op, err
 	}
-	s.operations.Save(op)
-	return op, nil
+	return *completed, nil
 }
 
 func (s *NodeOperationService) Lifecycle(ctx context.Context, topology, name, operation string, subj requestSubject) (controlplane.NodeOperation, error) {
+	if s.workspace.lockAdmission != nil {
+		unlock := s.workspace.lockAdmission(topology)
+		defer unlock()
+	}
 	st, err := s.workspace.LoadState(topology)
 	if err != nil {
 		return controlplane.NodeOperation{}, err
@@ -69,7 +141,10 @@ func (s *NodeOperationService) Lifecycle(ctx context.Context, topology, name, op
 	if err != nil {
 		return controlplane.NodeOperation{}, err
 	}
-	op := s.operations.Create(controlplane.NodeOperation{
+	if res.OwnerUID != st.TopologyUID {
+		return controlplane.NodeOperation{}, fmt.Errorf("node ownership differs from topology")
+	}
+	return s.enqueue(ctx, st.TopologyUID, prepareNodeOperation(controlplane.NodeOperation{
 		Topology:    topology,
 		Workspace:   topology,
 		Operation:   operation,
@@ -78,14 +153,126 @@ func (s *NodeOperationService) Lifecycle(ctx context.Context, topology, name, op
 		AgentID:     agent.ID,
 		RequestedBy: subj.User,
 		Roles:       subj.Roles,
-	})
-	if _, err := s.publishCommand(ctx, agent.ID, controlplane.AgentCommand{
-		Type:      "node_operation",
-		Operation: op,
-	}); err != nil {
+		ActionID:    "", ResourceUID: res.ResourceUID, Generation: res.Generation,
+	}))
+}
+
+func (s *NodeOperationService) SSHAccess(ctx context.Context, topology string, node string, req controlplane.SSHAccessRequest, operation string, subj requestSubject) (controlplane.NodeOperation, error) {
+	return s.sshAccess(ctx, topology, node, req, operation, subj, nil)
+}
+
+// selected is supplied only by the credential-owning local CLI controller.
+// Public admission always goes through normal host placement and scheduling.
+func (s *NodeOperationService) sshAccess(ctx context.Context, topology string, node string, req controlplane.SSHAccessRequest, operation string, subj requestSubject, selected *controlplane.Agent) (controlplane.NodeOperation, error) {
+	return s.sshAccessTarget(ctx, topology, node, req, operation, subj, selected, nil)
+}
+
+// candidate is used only after the local credential owner validates an exact
+// admitted reset SSH child. Public requests never supply candidate state.
+func (s *NodeOperationService) sshAccessTarget(ctx context.Context, topology string, node string, req controlplane.SSHAccessRequest, operation string, subj requestSubject, selected *controlplane.Agent, candidate *state.Resource) (controlplane.NodeOperation, error) {
+	if operation != "ssh_access_apply" && operation != "ssh_access_delete" {
+		return controlplane.NodeOperation{}, fmt.Errorf("unsupported ssh access operation")
+	}
+	if req.Topology != topology || req.Node != node {
+		return controlplane.NodeOperation{}, fmt.Errorf("ssh access target mismatch")
+	}
+	if req.User != "" {
+		return controlplane.NodeOperation{}, fmt.Errorf("invalid SSH request: user is selected from canonical node configuration")
+	}
+	if err := validatePathSegment(node, "node"); err != nil {
 		return controlplane.NodeOperation{}, err
 	}
-	return op, nil
+	// Validate public payload before reading state. This placeholder is used
+	// only for shape validation and is never dispatched or persisted.
+	if err := req.Mutation("validation", operation == "ssh_access_delete").Validate(); err != nil {
+		return controlplane.NodeOperation{}, fmt.Errorf("invalid SSH mutation: %w", err)
+	}
+	st, err := s.workspace.LoadState(topology)
+	if err != nil {
+		return controlplane.NodeOperation{}, err
+	}
+	res := st.FindResource(address.Resource("sysbox_node", node))
+	if candidate != nil {
+		if selected == nil || !candidate.Address.Equal(address.Resource("sysbox_node", node)) {
+			return controlplane.NodeOperation{}, persistence.ErrConflict
+		}
+		res = candidate
+	}
+	if res == nil {
+		return controlplane.NodeOperation{}, fmt.Errorf("node %q not found", node)
+	}
+	if res.OwnerUID != st.TopologyUID {
+		return controlplane.NodeOperation{}, fmt.Errorf("node ownership differs from topology")
+	}
+	user, err := canonicalSSHUserFromResource(*res)
+	if err != nil {
+		return controlplane.NodeOperation{}, err
+	}
+	req.User = user
+	if req.User == "" {
+		return controlplane.NodeOperation{}, fmt.Errorf("canonical SSH user unavailable")
+	}
+	mutation := req.Mutation(req.User, operation == "ssh_access_delete")
+	if err := mutation.Validate(); err != nil {
+		return controlplane.NodeOperation{}, fmt.Errorf("invalid SSH mutation: %w", err)
+	}
+	persistedOperation := "guest_ssh_access_apply"
+	if operation == "ssh_access_delete" {
+		persistedOperation = "guest_ssh_access_delete"
+	}
+	var owner controlplane.Agent
+	if selected == nil {
+		owner, err = s.scheduler.SelectAgentForTopology(ctx, topology, []string{res.Driver}, "")
+		if err != nil {
+			return controlplane.NodeOperation{}, err
+		}
+	} else {
+		if selected.ID == "" || selected.IsBlocked() {
+			return controlplane.NodeOperation{}, fmt.Errorf("local execution owner unavailable")
+		}
+		owner = *selected
+	}
+	op := prepareNodeOperation(controlplane.NodeOperation{ID: req.ID, Topology: topology, Workspace: topology, Operation: persistedOperation, Node: node, Substrate: res.Driver, AgentID: owner.ID, RequestedBy: subj.User, Roles: subj.Roles, ResourceUID: res.ResourceUID, Generation: res.Generation, SSHMutation: &mutation})
+	return s.enqueue(ctx, st.TopologyUID, op)
+}
+
+func canonicalSSHUserFromResource(resource state.Resource) (string, error) {
+	return substrate.CanonicalGuestUser(resource.Attributes["desired"])
+}
+
+func (s *NodeOperationService) AdoptionConfirm(ctx context.Context, req controlplane.AdoptionRequest, subj requestSubject) (controlplane.NodeOperation, error) {
+	if err := req.Validate(); err != nil {
+		return controlplane.NodeOperation{}, err
+	}
+	if req.AgentID == "" {
+		req.AgentID = subj.User
+	}
+	st, err := s.workspace.LoadState(req.Topology)
+	if err != nil {
+		return controlplane.NodeOperation{}, err
+	}
+	if st.TopologyUID != req.TopologyUID || st.Meta.Serial != req.ExpectedSerial {
+		return controlplane.NodeOperation{}, fmt.Errorf("%w: adoption plan is stale", persistence.ErrConflict)
+	}
+	addr, err := address.Parse(req.Address)
+	if err != nil {
+		return controlplane.NodeOperation{}, err
+	}
+	if st.FindResource(addr) != nil {
+		return controlplane.NodeOperation{}, fmt.Errorf("%w: adoption address already exists", persistence.ErrConflict)
+	}
+	if _, err := driver.DefaultRegistry.RequireOwnershipAdoption(req.Provider); err != nil {
+		return controlplane.NodeOperation{}, err
+	}
+	agent, err := s.scheduler.SelectAgentForTopology(ctx, req.Topology, []string{req.Provider}, req.AgentID)
+	if err != nil {
+		return controlplane.NodeOperation{}, err
+	}
+	if agent.ID != req.AgentID {
+		return controlplane.NodeOperation{}, fmt.Errorf("%w: owning agent changed", persistence.ErrConflict)
+	}
+	op := prepareNodeOperation(controlplane.NodeOperation{ID: req.ID, Topology: req.Topology, Workspace: req.Topology, Operation: "adoption_apply", Node: addr.Name, Type: addr.Type, Name: addr.Name, ExternalID: req.ExternalID, Substrate: req.Provider, AgentID: req.AgentID, RequestedBy: subj.User, Roles: subj.Roles, ResourceUID: req.ResourceUID, Generation: req.Generation, Adoption: &req})
+	return s.enqueue(ctx, st.TopologyUID, op)
 }
 
 func (s *NodeOperationService) Import(ctx context.Context, topology string, req ImportNodeRequest, subj requestSubject) (controlplane.NodeOperation, error) {
@@ -101,30 +288,5 @@ func (s *NodeOperationService) Import(ctx context.Context, topology string, req 
 	if req.Substrate == "" {
 		return controlplane.NodeOperation{}, fmt.Errorf("substrate is required")
 	}
-	if _, err := driver.DefaultRegistry.RequireImport(req.Substrate); err != nil {
-		return controlplane.NodeOperation{}, err
-	}
-	agent, err := s.scheduler.SelectAgentForTopology(ctx, topology, []string{req.Substrate}, "")
-	if err != nil {
-		return controlplane.NodeOperation{}, err
-	}
-	op := s.operations.Create(controlplane.NodeOperation{
-		Topology:    topology,
-		Workspace:   topology,
-		Operation:   "import",
-		Type:        req.Type,
-		Name:        req.Name,
-		ExternalID:  req.ID,
-		Substrate:   req.Substrate,
-		AgentID:     agent.ID,
-		RequestedBy: subj.User,
-		Roles:       subj.Roles,
-	})
-	if _, err := s.publishCommand(ctx, agent.ID, controlplane.AgentCommand{
-		Type:      "node_operation",
-		Operation: op,
-	}); err != nil {
-		return controlplane.NodeOperation{}, err
-	}
-	return op, nil
+	return controlplane.NodeOperation{}, driver.Wrap(driver.ErrorUnsupported, req.Substrate, "ownership adoption plan/confirm is not implemented", nil)
 }

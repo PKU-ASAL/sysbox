@@ -1,0 +1,88 @@
+package hostsupervisor
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"strings"
+
+	"github.com/oslab/sysbox/pkg/address"
+	"github.com/oslab/sysbox/pkg/controlplane"
+)
+
+// RunRequest is the only worker-visible input for the first host-run slice.
+// It carries immutable revision/action identity, never HCL paths, provider
+// handles, credentials, or arbitrary provider arguments.
+type RunRequest struct {
+	RunID          string `json:"run_id"`
+	Topology       string `json:"topology"`
+	TopologyUID    string `json:"topology_uid"`
+	Revision       string `json:"revision"`
+	ActionID       string `json:"action_id"`
+	ResourceUID    string `json:"resource_uid"`
+	Generation     int64  `json:"generation"`
+	Action         string `json:"action"`
+	Target         string `json:"target,omitempty"`
+	ExpectedSerial int64  `json:"expected_serial"`
+}
+
+func (r RunRequest) Validate() error {
+	if r.RunID == "" || r.Topology == "" || r.TopologyUID == "" || r.Revision == "" || r.ActionID == "" || r.ExpectedSerial < 0 {
+		return fmt.Errorf("run request requires immutable identity")
+	}
+	if !controlplane.IsRunExecutionOperation("run_" + r.Action) {
+		return fmt.Errorf("unsupported host run action")
+	}
+	if strings.ContainsAny(r.RunID+r.Topology+r.Revision+r.ActionID+r.ResourceUID, "/\\\x00") {
+		return fmt.Errorf("run request contains unsafe identity")
+	}
+	if r.ResourceUID == "" {
+		if r.Generation != 0 || r.Target != "" {
+			return fmt.Errorf("topology run carries resource target")
+		}
+	} else if r.Generation < 1 || r.Target == "" {
+		return fmt.Errorf("resource run requires target identity")
+	}
+	return nil
+}
+
+func (r RunRequest) Digest() (string, error) {
+	if err := r.Validate(); err != nil {
+		return "", err
+	}
+	raw, err := json.Marshal(r)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+func ValidateRunGrant(g controlplane.SignedExecutionGrant, req RunRequest, boot string) error {
+	digest, err := req.Digest()
+	if err != nil {
+		return err
+	}
+	if g.Grant.Operation != "run_"+req.Action || g.Grant.Digest != digest || g.Grant.ActionID != req.ActionID || g.Grant.Scope != (controlplane.ExecutionScope{TopologyUID: req.TopologyUID}) || g.Grant.TargetBootID != boot || g.BootID != boot {
+		return controlplane.ErrInvalidExecutionGrant
+	}
+	return nil
+}
+
+// ValidateChildTarget is called only after resolving the child through canonical
+// state or this Run's checkpoint. Reset may replace the original incarnation,
+// but cannot expand execution to a different node or topology.
+func (r RunRequest) ValidateChildTarget(ref TargetRef) error {
+	if ref.Topology != r.Topology || ref.Scope.TopologyUID != r.TopologyUID || ref.Node == "" || ref.Scope.ResourceUID == "" || ref.Scope.Generation < 1 {
+		return fmt.Errorf("host Run child topology or identity mismatch")
+	}
+	if r.Target == "" {
+		return nil
+	}
+	target, err := address.Parse(r.Target)
+	if err != nil || target.Type != "sysbox_node" || target.Name != ref.Node {
+		return fmt.Errorf("host Run child outside selected node")
+	}
+	return nil
+}

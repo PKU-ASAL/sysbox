@@ -1,27 +1,25 @@
 package firecracker
 
 import (
+	"context"
 	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
 
 func TestStaleCleanupRejectsSocketWithoutOwnershipAnchor(t *testing.T) {
-	dir := t.TempDir()
-	socket := filepath.Join(dir, "firecracker.sock")
-	require.NoError(t, os.WriteFile(socket, nil, 0600))
-	err := killOwnedStaleFirecracker(dir, "vm-1", socket)
-	require.ErrorContains(t, err, "ownership anchor")
-	require.FileExists(t, socket)
+	s, h, _, _ := manifestFixture(t, false)
+	hs := h.Provider.(*HandleState)
+	require.NoError(t, os.Remove(hs.ManifestPath))
+	require.ErrorContains(t, s.DestroyNode(context.Background(), h), "manifest missing")
+	require.DirExists(t, hs.VMDir)
 }
 
 func TestStaleCleanupRemovesSocketForExitedOwnedProcess(t *testing.T) {
-	dir := t.TempDir()
-	socket := filepath.Join(dir, "firecracker.sock")
-	require.NoError(t, os.WriteFile(socket, nil, 0600))
-	require.NoError(t, writeProcessAnchor(filepath.Join(dir, "firecracker.pid"), processAnchor{PID: 999999, StartTime: "1", Socket: socket, VMID: "vm-1"}))
-	require.NoError(t, killOwnedStaleFirecracker(dir, "vm-1", socket))
-	require.NoFileExists(t, socket)
+	s, h, _, cmd := manifestFixture(t, true)
+	require.NoError(t, cmd.Process.Kill())
+	_ = cmd.Wait()
+	require.NoError(t, s.DestroyNode(context.Background(), h))
+	require.NoFileExists(t, h.Provider.(*HandleState).Socket)
 }

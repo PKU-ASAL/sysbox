@@ -74,7 +74,7 @@ func (s *Server) handleGetWorkspaceLease(w http.ResponseWriter, r *http.Request)
 	}
 	lock, err := mgr.LockInfo(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
+		writeError(w, stateOperationErrorStatus(err), err)
 		return
 	}
 	writeJSON(w, http.StatusOK, controlplane.Lease{ProjectID: controlplane.DefaultProjectID, Workspace: topology, Lock: lock})
@@ -88,7 +88,7 @@ func (s *Server) handleListWorkspaceSnapshots(w http.ResponseWriter, r *http.Req
 	}
 	snapshots, err := s.listSnapshots(r.Context(), topology)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
+		writeError(w, stateOperationErrorStatus(err), err)
 		return
 	}
 	out := make([]controlplane.Snapshot, 0, len(snapshots))
@@ -204,7 +204,7 @@ func (s *Server) listSnapshots(ctx context.Context, topology string) ([]state.Sn
 	}
 	snapshots, ok := mgr.Backend().(state.SnapshotBackend)
 	if !ok {
-		return nil, nil
+		return nil, state.ErrUnsupported
 	}
 	return snapshots.ListSnapshots(ctx)
 }

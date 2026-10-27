@@ -2,8 +2,11 @@ package state
 
 import (
 	"context"
+	"errors"
 	"fmt"
 )
+
+var ErrUnsupported = errors.New("state backend capability unsupported")
 
 // Manager reads and writes state through a Backend. By default it uses
 // LocalBackend (file on disk with flock). The backend can be swapped for
@@ -58,35 +61,35 @@ func (m *Manager) ListTopologies(ctx context.Context) ([]TopologyMetadata, error
 	if b, ok := m.backend.(TopologyLister); ok {
 		return b.ListTopologies(ctx)
 	}
-	return nil, nil
+	return nil, ErrUnsupported
 }
 
 func (m *Manager) Snapshot(ctx context.Context, reason string) (*Snapshot, error) {
 	if b, ok := m.backend.(SnapshotBackend); ok {
 		return b.Snapshot(ctx, reason)
 	}
-	return nil, nil
+	return nil, ErrUnsupported
 }
 
 func (m *Manager) Delete(ctx context.Context) error {
 	if b, ok := m.backend.(DeleteBackend); ok {
 		return b.Delete(ctx)
 	}
-	return nil
+	return ErrUnsupported
 }
 
 func (m *Manager) LockInfo(ctx context.Context) (LockInfo, error) {
 	if b, ok := m.backend.(LockInfoBackend); ok {
 		return b.LockInfo(ctx)
 	}
-	return LockInfo{}, nil
+	return LockInfo{}, ErrUnsupported
 }
 
 func (m *Manager) ForceUnlock(ctx context.Context) error {
 	if b, ok := m.backend.(LockInfoBackend); ok {
 		return b.ForceUnlock(ctx)
 	}
-	return nil
+	return ErrUnsupported
 }
 
 // Load reads the state from the active backend.

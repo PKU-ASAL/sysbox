@@ -42,11 +42,12 @@ const (
 )
 
 type State struct {
-	mu        sync.RWMutex `json:"-"`
-	Version   int          `json:"version"`
-	Lineage   string       `json:"lineage"`
-	Resources []Resource   `json:"resources"`
-	Meta      StateMeta    `json:"-"`
+	mu          sync.RWMutex `json:"-"`
+	Version     int          `json:"version"`
+	Lineage     string       `json:"lineage"`
+	TopologyUID string       `json:"topology_uid,omitempty"`
+	Resources   []Resource   `json:"resources"`
+	Meta        StateMeta    `json:"-"`
 }
 
 type StateMeta struct {
@@ -62,6 +63,9 @@ type Resource struct {
 	Driver        string            `json:"driver"`
 	SchemaVersion int               `json:"schema_version"`
 	ExternalID    string            `json:"external_id,omitempty"`
+	OwnerUID      string            `json:"owner_uid,omitempty"`
+	ResourceUID   string            `json:"resource_uid,omitempty"`
+	Generation    int64             `json:"generation,omitempty"`
 	Attributes    Attributes        `json:"attributes"`
 	Private       json.RawMessage   `json:"private,omitempty"`
 	Dependencies  []address.Address `json:"dependencies,omitempty"`
@@ -151,7 +155,7 @@ func (r *Resource) lookup(key string) any {
 	return r.RuntimeValue(key)
 }
 
-var runtimePrivateKeys = map[string]bool{"container_id": true, "pid": true, "netns": true, "bridge": true, "docker_network_id": true, "image_id": true, "vm_dir": true, "tap_name": true}
+var runtimePrivateKeys = map[string]bool{"container_id": true, "pid": true, "netns": true, "bridge": true, "managed_bridge": true, "docker_network_id": true, "image_id": true, "vm_dir": true, "tap_name": true}
 
 func MustAttributes(input map[string]any) Attributes {
 	result, err := NewAttributes(input)
@@ -200,8 +204,9 @@ func (r *Resource) Bridge() string                { return r.Str("bridge") }
 // ReconstructHandle combines public observations with opaque driver state.
 func (r *Resource) ReconstructHandle(codec NodeStateCodec) (substrate.NodeHandle, error) {
 	handle := substrate.NodeHandle{
-		ID:  r.ContainerID(),
-		Net: substrate.NetInfo{PrimaryIP: r.PrimaryIP()},
+		ID:         r.ContainerID(),
+		Generation: r.Generation,
+		Net:        substrate.NetInfo{PrimaryIP: r.PrimaryIP()},
 	}
 	if blob, err := r.ProviderState(); err != nil {
 		return handle, err

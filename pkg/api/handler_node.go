@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"net/http"
 
 	"github.com/oslab/sysbox/pkg/address"
@@ -133,6 +134,76 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 		ID:        body.ID,
 		Substrate: body.Substrate,
 	}, s.requestSubject(r))
+	if err != nil {
+		writeError(w, nodeOperationStatus(err), err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, op)
+}
+
+func (s *Server) handleAdoptionPlan(w http.ResponseWriter, r *http.Request) {
+	topology := r.PathValue("topology")
+	if err := validatePathSegment(topology, "topology"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	var body ImportNodeRequest
+	limitBody(w, r)
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	plan, err := s.nodeOperations().AdoptionPlan(r.Context(), topology, body)
+	if err != nil {
+		writeError(w, nodeOperationStatus(err), err)
+		return
+	}
+	writeJSON(w, http.StatusOK, plan)
+}
+
+func (s *Server) handleSSHAccess(w http.ResponseWriter, r *http.Request) {
+	topology := r.PathValue("topology")
+	if err := validatePathSegment(topology, "topology"); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	var body struct {
+		Operation string `json:"operation"`
+		Node      string `json:"node"`
+		controlplane.SSHAccessRequest
+	}
+	limitBody(w, r)
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	body.SSHAccessRequest.Topology = topology
+	body.SSHAccessRequest.Node = body.Node
+	if body.SSHAccessRequest.ID == "" {
+		body.SSHAccessRequest.ID = body.ID
+	}
+	op, err := s.nodeOperations().SSHAccess(r.Context(), topology, body.Node, body.SSHAccessRequest, body.Operation, s.requestSubject(r))
+	if err != nil {
+		writeError(w, nodeOperationStatus(err), err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, op)
+}
+
+func (s *Server) handleAdoptionConfirm(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("agent")
+	if err := s.verifyAgentRequest(r, agentID); err != nil {
+		writeError(w, http.StatusUnauthorized, err)
+		return
+	}
+	var req controlplane.AdoptionRequest
+	limitBody(w, r)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	req.AgentID = agentID
+	op, err := s.nodeOperations().AdoptionConfirm(r.Context(), req, s.requestSubject(r))
 	if err != nil {
 		writeError(w, nodeOperationStatus(err), err)
 		return

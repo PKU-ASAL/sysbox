@@ -39,7 +39,33 @@ func registerGuestExecDriver(t *testing.T, d driver.GuestExec) {
 	old := driver.DefaultRegistry
 	driver.DefaultRegistry = driver.NewRegistry()
 	t.Cleanup(func() { driver.DefaultRegistry = old })
-	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "guest-test", Version: "1", GuestExec: d, NodeState: guestCodec{}}))
+	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "guest-test", Version: "1", Node: guestConnectionNode{connection: legacyGuestConnection{exec: d}}, GuestExec: d, NodeState: guestCodec{}}))
+}
+
+func TestCheckDataPreservesTransportTruncationFlags(t *testing.T) {
+	for _, stream := range []string{"stdout", "stderr"} {
+		t.Run(stream, func(t *testing.T) {
+			previous := driver.DefaultRegistry
+			driver.DefaultRegistry = driver.NewRegistry()
+			t.Cleanup(func() { driver.DefaultRegistry = previous })
+			result := substrate.ExecResult{Stdout: "retained prefix", Stderr: "retained prefix", ExitCodeKnown: true, StdoutTruncated: stream == "stdout", StderrTruncated: stream == "stderr"}
+			conn := &fixedGuestConnection{result: result}
+			require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "guest-test", Version: "1", Node: guestConnectionNode{connection: conn}, GuestExec: &guestTestDriver{}, NodeState: guestCodec{}}))
+			root, eval := parseChecks(t, checkNodeHCL+`
+check "capture" {
+ data "sysbox_exec" "probe" {
+  node = sysbox_node.web.id
+  argv = ["true"]
+ }
+ assert {
+  condition = data.sysbox_exec.probe.truncated
+  error_message = "transport truncation was hidden"
+ }
+}`)
+			checks := evaluateChecks(context.Background(), guestState(t, "guest-test"), root.Checks, eval)
+			require.Empty(t, checks.FailedChecks, checks.Message)
+		})
+	}
 }
 
 // A check whose data probe matches the author's assertion passes: no failed
@@ -111,10 +137,7 @@ type recordingDriver struct {
 
 func (d *recordingDriver) ExecInNode(_ context.Context, _ substrate.NodeHandle, req substrate.ExecRequest) (substrate.ExecResult, error) {
 	d.argv = append([]string{req.Program}, req.Args...)
-	return substrate.ExecResult{ExitCode: d.exitCode}, nil
-}
-func (*recordingDriver) ExecBackground(context.Context, substrate.NodeHandle, substrate.ExecRequest) (int, error) {
-	return 0, nil
+	return substrate.ExecResult{ExitCode: d.exitCode, ExitCodeKnown: true}, nil
 }
 
 // reachState builds a state with two nodes; core has a primary_ip so that a

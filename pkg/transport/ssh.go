@@ -1,13 +1,13 @@
 package transport
 
 import (
-	"bytes"
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
-	"strings"
+	"path/filepath"
 	"time"
 
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -16,6 +16,7 @@ import (
 
 // SSHConnection implements Connection over standard SSH (cli-based).
 type SSHConnection struct {
+	executionIdentity
 	host         string
 	port         string
 	user         string
@@ -24,18 +25,19 @@ type SSHConnection struct {
 	insecureHost bool // skip host key verification (for lab environments)
 	knownHosts   string
 	netns        string
+	runCommand   func(*exec.Cmd) error
 }
 
 func NewSSHConnection(host, user, privateKey, password string) *SSHConnection {
-	return &SSHConnection{host: host, user: user, privateKey: privateKey, password: password, insecureHost: true}
+	return &SSHConnection{host: host, user: user, privateKey: privateKey, password: password}
 }
 
 func NewSSHConnectionWithPort(host, port, user, privateKey, password string) *SSHConnection {
-	return &SSHConnection{host: host, port: port, user: user, privateKey: privateKey, password: password, insecureHost: true}
+	return &SSHConnection{host: host, port: port, user: user, privateKey: privateKey, password: password}
 }
 
 func NewSSHConnectionInNamespace(namespace, host, port, user, privateKey, password string) *SSHConnection {
-	return &SSHConnection{host: host, port: port, user: user, privateKey: privateKey, password: password, insecureHost: true, netns: namespace}
+	return &SSHConnection{host: host, port: port, user: user, privateKey: privateKey, password: password, netns: namespace}
 }
 
 func NewSSHConnectionInNamespaceWithTrust(namespace, host, port, user, privateKey, password, knownHosts string, insecure bool) *SSHConnection {
@@ -65,9 +67,7 @@ func (c *SSHConnection) sshArgs() []string {
 	if c.privateKey != "" {
 		args = append(args, "-i", c.privateKey)
 	}
-	// Host key verification: disabled for lab environments (default),
-	// or strict for production use. Disabling host key verification
-	// allows MITM attacks and should only be used in isolated networks.
+	// Strict by default; lab-only host key bypass must be explicit.
 	args = append(args, c.hostKeyArgs()...)
 	args = append(args, "-o", "LogLevel=ERROR")
 	if c.password != "" {
@@ -95,52 +95,42 @@ func (c *SSHConnection) OpenConsole(ctx context.Context, req ConsoleRequest) (su
 	return NewSSHConsoleSessionWithRunner(ctx, "ip", append([]string{"netns", "exec", c.netns, resolveSSHBin()}, c.sshArgs()...), req)
 }
 
-func (c *SSHConnection) Exec(ctx context.Context, req substrate.ExecRequest, stdout, stderr io.Writer) (substrate.ExecResult, error) {
+func (c *SSHConnection) Exec(ctx context.Context, req substrate.ExecRequest, stdout, stderr io.Writer) (result substrate.ExecResult, err error) {
+	ctx, cancel := req.Context(ctx)
+	defer cancel()
+	defer func() { result, err = substrate.FinishExecution(ctx, result, err) }()
 	command, err := RemoteCommand(req)
 	if err != nil {
-		return substrate.ExecResult{}, err
+		return substrate.ExecResult{ErrorClass: substrate.ExecErrorInvalid}, err
 	}
-	var stdoutBuffer, stderrBuffer bytes.Buffer
+	stdoutBuffer := substrate.NewExecCapture(req.OutputLimitBytes, stdout)
+	stderrBuffer := substrate.NewExecCapture(req.OutputLimitBytes, stderr)
 	sshArgs := append(c.sshArgs(), command)
 	execCmd := c.command(ctx, sshArgs)
 	execCmd.Stdin = req.Stdin
-	execCmd.Stdout = &stdoutBuffer
-	execCmd.Stderr = &stderrBuffer
-	runErr := execCmd.Run()
-	result := substrate.ExecResult{Stdout: stdoutBuffer.String(), Stderr: stderrBuffer.String()}
+	execCmd.WaitDelay = time.Second
+	execCmd.Stdout = stdoutBuffer
+	execCmd.Stderr = stderrBuffer
+	run := c.runCommand
+	if run == nil {
+		run = func(cmd *exec.Cmd) error { return cmd.Run() }
+	}
+	runErr := run(execCmd)
+	result = substrate.ExecResult{Stdout: stdoutBuffer.String(), Stderr: stderrBuffer.String(), StdoutTruncated: stdoutBuffer.Truncated(), StderrTruncated: stderrBuffer.Truncated()}
 	if exitErr, ok := runErr.(*exec.ExitError); ok {
 		result.ExitCode = exitErr.ExitCode()
+		if result.ExitCode < 0 || result.ExitCode == 255 {
+			return result, fmt.Errorf("ssh exec: %w", runErr)
+		}
 	} else if runErr != nil {
 		return result, fmt.Errorf("ssh exec: %w", runErr)
 	}
-	if stdout != nil {
-		_, _ = io.WriteString(stdout, result.Stdout)
-	}
-	if stderr != nil {
-		_, _ = io.WriteString(stderr, result.Stderr)
-	}
+	result.ExitCodeKnown = true
 	return result, nil
 }
 
-func (c *SSHConnection) ExecBackground(ctx context.Context, req substrate.ExecRequest) (int, error) {
-	shellCmd, err := RemoteCommand(req)
-	if err != nil {
-		return 0, err
-	}
-	sshArgs := c.sshArgs()
-	// Quote the entire shellCmd as a single argument to `sh -c` so that
-	// multi-word commands are not split by the remote login shell.
-	sshArgs = append(sshArgs, fmt.Sprintf("nohup sh -c %s >/dev/null 2>&1 & echo $!", util.ShellQuote(shellCmd)))
-
-	sshBin := resolveSSHBin()
-	ec := c.namespacedCommand(ctx, sshBin, sshArgs...)
-	out, err := ec.Output()
-	if err != nil {
-		return 0, fmt.Errorf("ssh background: %w", err)
-	}
-	var pid int
-	fmt.Sscanf(strings.TrimSpace(string(out)), "%d", &pid)
-	return pid, nil
+func (c *SSHConnection) Start(ctx context.Context, req substrate.ExecRequest) (substrate.ExecutionHandle, error) {
+	return startTask(ctx, c, c.executionIdentity, req)
 }
 
 func (c *SSHConnection) command(ctx context.Context, sshArgs []string) *exec.Cmd {
@@ -163,32 +153,50 @@ func (c *SSHConnection) namespacedCommand(ctx context.Context, binary string, ar
 	return exec.CommandContext(ctx, "ip", append([]string{"netns", "exec", c.netns, binary}, args...)...)
 }
 
-func (c *SSHConnection) scpCommand(ctx context.Context, args []string) *exec.Cmd {
-	return c.namespacedCommand(ctx, resolveSCPBin(), args...)
-}
-
 func (c *SSHConnection) CopyFile(ctx context.Context, srcPath, dstPath string) error {
-	scpArgs := []string{}
-	if c.port != "" && c.port != "22" {
-		scpArgs = append(scpArgs, "-P", c.port)
+	file, err := os.Open(srcPath)
+	if err != nil {
+		return err
 	}
-	if c.privateKey != "" {
-		scpArgs = append(scpArgs, "-i", c.privateKey)
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return err
 	}
-	scpArgs = append(scpArgs, c.hostKeyArgs()...)
-	scpArgs = append(scpArgs, "-o", "LogLevel=ERROR")
-	scpArgs = append(scpArgs, srcPath, fmt.Sprintf("%s@%s:%s", c.user, c.host, dstPath))
-
-	ec := c.scpCommand(ctx, scpArgs)
-	ec.Stdout = os.Stdout
-	ec.Stderr = os.Stderr
-	return ec.Run()
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("copy source must be a regular file")
+	}
+	digest := sha256.New()
+	if _, err := io.Copy(digest, file); err != nil {
+		return err
+	}
+	expected := fmt.Sprintf("%x", digest.Sum(nil))
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	// Use the same identity/trust/password/namespace path as Exec. The original
+	// destination survives incomplete upload or a failed checksum.
+	script := "set -eu; tmp=$(mktemp -- " + util.ShellQuote(dstPath+".sysbox-transfer.XXXXXX") + "); " +
+		"trap 'rm -f -- \"$tmp\"' EXIT; cat > \"$tmp\"; " +
+		"actual=$(sha256sum < \"$tmp\"); actual=${actual%% *}; " +
+		"[ \"$actual\" = " + util.ShellQuote(expected) + " ]; " +
+		fmt.Sprintf("chmod %04o -- \"$tmp\"; sync -f \"$tmp\"; ", info.Mode().Perm()) +
+		"mv -fT -- \"$tmp\" " + util.ShellQuote(dstPath) + "; sync -f " + util.ShellQuote(filepath.Dir(dstPath)) + "; printf '%s' \"$actual\""
+	result, err := c.Exec(ctx, substrate.ExecRequest{Program: script, Shell: substrate.ShellLinux, Stdin: file, OutputLimitBytes: 128}, nil, nil)
+	if err != nil {
+		return err
+	}
+	if !result.ExitCodeKnown || result.ExitCode != 0 || result.StdoutTruncated || result.Stdout != expected {
+		return fmt.Errorf("SSH file install lacks verified successful checksum receipt")
+	}
+	return nil
 }
 
 // WaitForSSH polls the SSH port until the VM's sshd is ready.
 func (c *SSHConnection) WaitForSSH(ctx context.Context, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -198,9 +206,12 @@ func (c *SSHConnection) WaitForSSH(ctx context.Context, timeout time.Duration) e
 		if err == nil && result.ExitCode == 0 {
 			return nil
 		}
-		time.Sleep(500 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(500 * time.Millisecond):
+		}
 	}
-	return fmt.Errorf("ssh not ready after %v", timeout)
 }
 
 // WaitReady implements substrate.ConnectionWaiter.
@@ -215,13 +226,4 @@ func resolveSSHBin() string {
 		}
 	}
 	return "ssh"
-}
-
-func resolveSCPBin() string {
-	for _, p := range []string{"/usr/bin/scp", "/usr/local/bin/scp"} {
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-	}
-	return "scp"
 }

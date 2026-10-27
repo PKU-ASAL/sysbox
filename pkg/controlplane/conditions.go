@@ -45,6 +45,7 @@ const (
 	PhaseFailed     TopologyPhase = "failed"
 	PhaseDestroying TopologyPhase = "destroying"
 	PhaseGone       TopologyPhase = "gone"
+	PhaseUnknown    TopologyPhase = "unknown"
 )
 
 // TopologyStatus is the readiness projection reported on a topology.

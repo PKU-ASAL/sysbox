@@ -1,0 +1,523 @@
+# Sysbox 完整能力迁移与分布式执行闭环：实施修复计划
+
+日期：2026-10-07。评估基线：`a3ef18e`，worktree `/tmp/sysbox-refactor`。
+
+本文是待实施计划，不是已完成声明。它取代“这些缺口可以全部推迟为独立增强”的范围判断；已有实现与证据仍见[当前实施状态](2026-09-28-runtime-refactor-implementation-status.md)。
+
+## 1. 目标与完成标准
+
+**目标：完整迁移 Sysbox 的受管能力，并让 API、Agent、provider、guest 在独立进程和独立宿主机上形成可恢复、可撤销授权、可核验结果的执行闭环。**
+
+Sysbox 负责基础设施、执行任务和证据，不负责 cyberfield 的场景、业务编排或归档。继续使用现有 repository、action journal、provider capability，禁止另起一套恢复状态机。
+
+完成须同时满足：
+
+- 原有功能逐项完成新模型迁移，包括 import、自动 GC、state 运维、`ssh_access`；临时 Unsupported 只表示阶段未完成，不能计为交付。
+- API/Agent 不共享工作目录也能 Apply/Observe/Recover/Destroy，产物和配置通过明确合同传递。
+- 旧资源代际、旧执行 epoch、旧 Agent session 均不能授权新副作用；断连不产生双执行者。
+- 后台任务在 API/Agent/guest helper 重启后可重新定位，取消有可验证结果；unknown 不伪装成退出或取消成功。
+- 三存储后端共享业务规则；真实跨宿主、真实 provider、真实数据库故障验收通过。
+- 升级、能力矩阵、错误分类、部署路径和构建产物有一致说明；不保留旧格式/旧执行路径回退。
+
+这里的撤销是停止后续授权并终止可控的在途任务，**不意味着已完成的文件写入、创建或外部请求可以自动回滚**。强制取消不了的 daemon 调用必须记录 uncertain 并通过观察处理；不能承诺任意命令 exactly-once。
+
+## 2. 对照当前代码的缺口
+
+| 编号 | 当前基础与证据 | 必须补齐的交付 |
+|---|---|---|
+| G1 远端交付 | `Run.SnapshotPath` 是路径；现有 Docker 全链路 E2E 共享宿主文件；恢复有固定 revision 机制 | 普通执行和恢复统一下载/校验 revision，Agent 本地物化；artifact 按 digest 交付，取消 API 绝对路径依赖 |
+| G2 授权闭环 | completion 校验 lease/attempt，provider 校验 generation；API 当前限定单实例执行 | topology/resource 执行 grant、单调 epoch、Agent session incarnation；资源宿主强制执行 gate；失联自动到期、撤销确认与接管协议 |
+| G3 持久任务 | `pkg/transport/background.go` 以 nohup 启动并返回 PID；Observe/Cancel SPI 尚无 SSH/vsock 实现 | 统一任务 ID、持久 manifest、过程锚点、退出结果、输出读取、进程组/cgroup 终止与重启恢复 |
+| G4 管理能力 | import、GC、snapshot/restore、`ssh_access` 被拒绝或只读 | 在新 ownership/journal/grant 模型上实现，而非恢复旧脚本或直接写 state |
+| G5 元数据与证据 | inventory/projection 缺 producer epoch/sequence；清理检查不枚举 guest execution/file | 有序观测、明确陈旧/未知、完整活跃操作索引；恢复/删除检查涵盖所有可能产生 effect 的操作 |
+| G6 网络能力迁移 | 安全目标证明已建立；Firecracker/libvirt 直接接 Docker NAT 的旧猜名路径已移除 | 正式 managed-network attachment target SPI，提供可验证 bridge 证明，恢复支持组合并实测 |
+| G7 交付验收 | 真 Postgres、KVM、Docker、libvirt 分层通过；新增 guest ready gate | 最终二进制与源码一致、全链路进程故障/断网/跨宿主验收、部署与破坏性重建演练 |
+
+已有销毁回执不重做，但需要在 G2/G5 引入 epoch、所有活跃操作检查及新观测序号后升级失效规则，避免一张旧回执跨授权轮次继续生效。
+
+## 3. 目标分层与依赖
+
+```text
+P0 能力清单、协议与验收基线
+  ├─ P1 远端配置/产物交付 ─────────────┐
+  └─ P2 持久授权与宿主执行 gate ─ P3 持久任务协议
+                                      │
+                    P4 端到端撤销/接管与有序证据
+                                      │
+            ┌─────────────────────────┼────────────────────┐
+      P5 显式 adoption          P6 snapshot/lease      P7 ssh_access/网络迁移
+            └─────────────────────────┼────────────────────┘
+                              P8 自动 GC
+                                      │
+                         P9 全能力跨宿主验收与交付
+```
+
+P1、P2 在 P0 契约确定后可并行。P5/P6/P7 在 P4 的共同授权边界稳定后可并行。P8 必须消费已有的 owned Delete、task cancellation、snapshot retention，不自己猜测和删除。
+
+### 核心协议草案
+
+| 对象 | 必需内容与规则 |
+|---|---|
+| ExecutionGrant | topology UID、resource UID/generation或拓扑范围、action ID、command ID、Agent ID/session、epoch、attempt、有效期、授权操作、期望摘要；签名/认证、不可由 worker 自行续期 |
+| AgentSession | 持久 Agent 身份之外的每次重启会话；旧 session 的报告和 lease renewal 不能覆盖新 session |
+| TaskRecord | task ID、grant 绑定、不可变请求摘要、guest boot ID、PID/start time/cgroup、状态版本、结果、输出游标；不把 PID 当身份 |
+| ObservationEnvelope | owner/resource/generation、producer session、单调 sequence、observed_at、来源、存在性/身份/运行态、完整性；消费端拒绝倒序 |
+| AdoptionPlan | 外部不可变 ID、当前 ownership、目标 UID/generation、配置/依赖摘要、预期版本、用户认领授权；冲突即停止 |
+| AggregateSnapshot | topology UID、schema、state/journal 一致快照、serial、digest、创建时间、依赖对象引用；不是仅复制 resource JSON |
+
+上述是新增合同草案，进入各阶段时固化字段、错误和测试，不把它们当作当前已有接口。所有 wire/schema 变化集中到接口变更清单，统一版本协商，缺必需能力在派发前拒绝。
+
+## 4. 分阶段实施
+
+### P0：冻结能力矩阵与验收基线
+
+范围：`docs/design/*implementation-status*`、`*interface-change-inventory*`、`pkg/api/capabilities.go`、`pkg/driver/capability.go`、`Makefile`、`scripts/release/workflowcheck`。
+
+- [ ] 列出 CLI/API × Docker/Firecracker/libvirt × 文件/SQLite/Postgres 的能力矩阵；每格必须是通过、有明确故障、尚未实现或不适用。
+- [ ] 复核最新 readiness guest 二进制确实由当前源码构建；amd64/arm64 的构建依赖和测试入口不能漏掉新增源文件。补旧 guest 拒绝和自定义 init marker 验收。
+- [ ] 把后续总验收拆成可执行目标：本地合同、双进程、双宿主、故障注入、完整业务拓扑生命周期。
+- [ ] 记录主线分支差异，但不边开发边覆盖重构合同；最终集中整合。
+
+验收：clean build 可重复，版本/capability 与二进制一致；本计划所有缺口都有具体测试入口/阶段负责人。不能仅凭历史测试宣布当前提交通过。
+
+### P1：跨宿主 revision、artifact 与输入交付
+
+修改入口：`pkg/agentexec/agent.go`、`executor.go`、`run_recovery.go`，`pkg/api/revision_snapshot.go`、`execution_bridge.go`，`pkg/controlplane/model.go`、`pkg/artifact`。
+
+- [ ] command/run 只携不可变 revision/artifact 身份与授权下载信息；SnapshotPath 仅为执行宿主本地细节，不作跨宿主位置合同。
+- [ ] Agent 下载并核对整棵 revision tree digest，拒绝路径穿越/不受控 symlink；临时目录完整落盘后原子发布，创建与恢复共用物化函数。
+- [ ] artifact 使用 digest/架构/guest family，支持 Agent 缓存与可靠来源；配置中的本地路径明确归属，不能把 API 主机路径当作 Agent 可读文件。
+- [ ] 敏感输入不进持久日志/快照；API 重启或转移实例后的补交有明确操作状态，Agent 不靠 session affinity 猜测授权。
+- [ ] 在没有共享挂载的独立主机上跑第一条 Apply→Observe→Destroy→receipt→metadata DELETE。
+
+验收：API 的绝对路径在 Agent 上不存在也能完成；错误 digest、下载中断、缺失输入不触发 provider effect；Agent 缓存重建不改变 revision。真正双宿主环境由测试设施提供，未配置时报告“未验收”，不能以 skip 算通过。
+
+### P2：持久 grant 与资源宿主执行边界
+
+现有入口：`pkg/persistence/{run_repository,command_repository,run_completion,node_operation_completion,guest_completion}.go`、`pkg/api/run_admission.go`、`pkg/agentexec/agent.go`、`pkg/substrate/operation.go`、provider effect 入口。建议新增 `pkg/controlplane/execution_grant.go`、`pkg/persistence/execution_grant.go`、`pkg/agentexec/effect_gate.go`。
+
+- [ ] 在共享 repository 中原子分配 scope epoch、绑定 Agent session、签发/续租/撤销 grant；epoch 不随数据库记录删除而回退。
+- [ ] 同一资源上的 Run、NodeOperation、guest exec/file、adoption、GC 都经过同一冲突规则；不能只在 API 进程内 mutex 下互斥。
+- [ ] 资源宿主由常驻 supervisor/gateway 独占受管 provider 凭据和 effect 通道；worker 只提交带 grant 的请求。绕过该边界的运行模式不能宣称同代 fencing。
+- [ ] gate 在效果开始前核验 grant，持久记录 action 去重、最小 epoch 和在途效果；lease 无法刷新时先停止新效果，再由 watchdog 终止可控任务。
+- [ ] epoch只由持久授权事务推进；本机到期使用单调时钟预算，进程/宿主重启后旧grant不能按旧倒计时复活。协议定义最大有效期、时钟偏差及断网停止预算，并测试时钟回拨。
+- [ ] 新 owner 不能仅凭 API lease 超时就与旧 owner 并发执行。必须取得旧 gate 撤销/到期停止证明，或对旧宿主实施可验证 fencing；无法证明时保持 blocked。
+- [ ] 对不可取消的 daemon 调用记录 uncertain，在它返回或经观察澄清前不发互斥替代动作；API completion 拒绝只是最后一道校验，不能当作执行中止。
+
+验收：暂停旧 worker、过期 grant、启用新 epoch、再恢复旧 worker，旧者不能发新 effect；gate 重启不忘记 epoch；数据库/网络不可达期间不无限续权。记录并实测停止上界、时钟偏差假设和强制终止后的残留处理。
+
+### P3：SSH/vsock 统一持久任务管理
+
+现有入口：`pkg/substrate/execution.go`、`pkg/transport/background.go`、`ssh.go`、`vsock.go`、`pkg/vsockrpc/protocol.go`、`cmd/sysbox-init/server.go`。建议新增可独立测试的 `pkg/guesttask`，SSH 与 vsock 使用同一任务实现，经不同传输访问。
+
+- [ ] 实现 Start/Observe/Cancel/List/ReadOutput 的版本化协议；request/task ID 在发出前持久化，相同 ID+摘要重复请求返回原任务，摘要不同冲突。
+- [ ] guest supervisor 持久任务 manifest、请求摘要、boot/process/cgroup 锚点与退出结果；helper 重启能发现原任务，输出支持配额、截断标志和游标。
+- [ ] SSH 通过预装并验证版本的受管 helper 接入，移除 nohup+echo PID 作为正式后台能力的实现；helper 不可用必须在 effect 前说明如何安装。
+- [ ] Cancel 先持久取消意图，定位同一 boot/进程/cgroup 后终止整棵任务，核验退出再返回 confirmed；PID 被复用不能误杀。
+- [ ] guest helper保存可接受的最小epoch并独立执行到期watchdog；暂停旧Agent或断开vsock/SSH时，guest任务不能因上游不再发消息而无限继续获授权。
+- [ ] guest 重启时旧任务标记为 boot-changed/未知退出结果，不伪造 exit code；启动窗口丢失回执通过 task ID 恢复，不重放任意命令。
+- [ ] API guest execution/file、provisioner、后台 Start 与 reset/destroy 任务清理统一消费同一模型；移除 PID-only transitional adapter。
+
+验收：启动结果丢失、helper/Agent/API 各自重启、guest reboot、进程树派生、输出超限、PID 复用、取消与完成并发均有确定测试；SSH/vsock 返回一致语义。
+
+### P4：端到端撤销、接管与完整证据
+
+范围：P2 gate、P3 guest supervisor、`pkg/api/run_recovery.go`、`guest_execution_service.go`、`guest_file_operation_service.go`、`cleanup_inspection.go`、`cleanup_receipt_evidence.go`、`pkg/persistence/agent_metadata_codec.go`。
+
+- [ ] grant 到期/显式 cancel 经 owning Agent gate 传播到 guest task；API 分别显示 requested、stopping、confirmed、unknown，断开 SSH/vsock 不等于已终止。
+- [ ] 续租与 cancellation 全部受当前 epoch/session 约束；旧任务允许只读观察，但不能获新授权继续执行。
+- [ ] inventory/projection 携 producer epoch+sequence，以共享规则原子拒绝倒序；只读快照不授予 ownership。
+- [ ] 活跃操作索引包含 Run、NodeOperation、guest exec/file、adoption/GC/恢复任务；Destroy 与 metadata 删除检查该完整索引。
+- [ ] receipt 加入执行/placement epoch 与观测序号，验证没有随后被准入的任务；API 切换后仍可判定有效性，不能只靠 wall-clock 排序。
+- [ ] 两个 API 共用 Postgres 的准入、outbox、取消、完成、接管实测；配置/秘密交付不能依赖某一个 API 内存才能保持正确性（等待补交可以，但状态必须明确）。
+
+验收：断网、lease 到期、API failover、Agent crash 后任务按合同停止/隔离；重复完成及取消回报幂等；没有新旧执行者同时获得同一互斥 effect 权限。
+
+#### P4 恢复实施补充：资源已完成、子任务未结束
+
+采用现有 effect ledger 的可选 Run checkpoint，不创建第二套恢复日志。
+可信 callback 在同步资源执行成功后封闭子任务准入，把 RunRequest、去除
+Inputs/Cleanup 的资源结果和完整子任务身份清单持久化；随后仅等待或取消子任务。
+checkpoint 不表示整个 Run 成功，也不赋予执行权限。
+
+每个 Run 身份使用独立的宿主 flock，从准入之前持有至 callback 和结果提交结束。
+冷恢复必须取得同一锁，重新读取当前 journal，确认 checkpoint 身份及历史签名，
+逐个停止/观察清单中的任务并核验同一 Run、parent epoch、签名 grant 和停止回执。
+全部停止后只能提交 failed，清理回执重新生成；API 仍检查权威子任务库存后释放父授权。
+存活但不合作的 callback 持锁时不能接管。没有 checkpoint 的 intent 保持 unknown；
+资源 daemon 请求中断的恢复仍须提供独立 quiescence 证据，不能用资源存在性替代。
+
+实施顺序与文件边界：
+
+1. `pkg/effectgate/run_checkpoint.go`：在 intent 上单次保存不可变 checkpoint，
+   绑定当前 signed envelope；续租保留 checkpoint。测试冷读、内容冲突、旧授权拒绝。
+2. `pkg/hostsupervisor/run_checkpoint.go`：执行锁、context checkpoint hook、
+   已封闭子任务清单以及冷恢复；`run_async.go` 在准入前取锁并将锁所有权转移给 callback。
+   测试存活 callback 不被接管、资源已返回但结果丢失可恢复、未记录 checkpoint 不恢复。
+3. `cmd/sysbox/commands/supervisor_cmd.go`：资源成功后、等待子任务之前记录 checkpoint，
+   recovery 使用已有 Dispatcher/ResolveRun。不能由 worker 提交任意 checkpoint。
+4. 回归验证 `go test -race ./pkg/effectgate ./pkg/hostsupervisor`、commands 测试、
+   独立审查，然后双 VM 运行中杀 supervisor 验证失败收敛及正常 Destroy。
+
+此切片不关闭 daemon 未知结果、长期服务 ownership 转移或完整 P9 故障矩阵。
+
+### P5：显式 ownership adoption / import
+
+范围：`cmd/sysbox/commands/import_cmd.go`、`pkg/api/node_operation_service.go`、`pkg/runtime` resource handlers、`pkg/driver/capability.go`、Docker/libvirt/Firecracker 的 managed/discovery 代码。
+
+- [ ] 新增只读 InspectAdoption、生成 AdoptPlan、显式 ApplyAdoption；检查当前 ownership、外部不可变身份、配置、依赖、冲突及能力。
+- [ ] 认领经过 grant+journal，先保存意图，再写 provider ownership，再验证并提交 state；任意阶段崩溃后能发现本次认领结果。
+- [ ] 无 owner 的资源可按计划认领；已有不同 owner 不允许隐式抢占，转移须独立明确授权和旧 owner 退休证明。
+- [ ] Docker labels 不可原地更新等 provider 限制必须形成可验证的持久绑定模型或显式替换计划，不能伪称已经写入标签。
+- [ ] 首先恢复 Docker/libvirt 原有可导入能力；Firecracker 不具备可核验启动/进程材料的任意进程不算可认领，给出具体缺失证据，已具备完整 manifest 的资源支持正式接管流程。
+
+验收：认领后冷恢复、更新、Destroy 全部可用；同名替代对象不能被采用；一半成功时恢复不重复认领、不删除外部原资源。
+
+### P6：aggregate snapshot、restore 与 lease 运维
+
+范围：`pkg/persistence/repository.go`、`filesystem.go`、`sql.go`，`pkg/state/manager.go`，API state endpoints 与 CLI 运维命令。
+
+- [ ] 三后端实现一致快照、列表、校验、保留策略、删除；snapshot 覆盖 state+journal 的同一事务视图，不持久化明文 inputs 或凭据。
+- [ ] 区分“元数据恢复”和“VM/磁盘快照”。恢复 state 不宣称真实 VM 或文件回到了过去；provider snapshot 若属于原功能需单列矩阵验收。
+- [ ] restore 在冻结新受理、撤销当前授权后执行；保留原拓扑身份、提升 metadata revision/epoch，禁止 serial/generation 回退授权，随后强制真实观察与重规划。
+- [ ] snapshot 中带未完成 action 时必须保留为 unresolved，不绕过 journal；不同 lineage 的恢复作为单独导入/灾备流程，不能默认覆盖。
+- [ ] lock/lease inspection 返回实际 owner/epoch/到期/在途情况；force-unlock 变成撤销并等待 gate 停止的审计操作，不 unlink flock 或直接清空 lease。
+
+验收：并发快照、restore 崩溃、旧 worker 恢复、错误 lineage、旧 snapshot 与较新资源冲突全部拒绝或进入需观察状态；三后端恢复语义一致。
+
+### P7：受管 SSH access 与网络能力等价迁移
+
+范围：`pkg/runtime/resource_ssh_access.go`、`pkg/driver/capability.go`、`pkg/substrate`、P3 helper，`pkg/provider/{network,docker,firecracker,libvirt}` NIC 与网络接口。
+
+- [ ] `ssh_access` 通过版本化 guest 配置 SPI：Discover/Observe/Apply/Delete；持久独立配置文件及 ownership/digest，读取实际 keys/config/service/监听状态。
+- [ ] 只修改自己管理的 drop-in/授权 key 文件；删除只撤销自己的访问配置，不删除其他 SSH 用户或停掉共享 sshd。
+- [ ] 软件包/发行版能力明确声明；运行时不可恢复 apt/apk 猜测链。凭据/密钥引用保留安全属性，输出和 journal 不记录秘密。
+- [ ] 用 grant+journal 和任务回执处理配置、reload、观察的崩溃窗口；相同请求可收敛，外部修改报告 drift/conflict。
+- [ ] 网络 provider 正式输出可消费的 managed attachment target，包含网络 UID/generation、真实 bridge/namespace 证明与刷新方式；NIC provider 不推导 Docker `br-<id>` 名称。
+- [ ] 恢复 Firecracker/libvirt 对受支持 Docker NAT 网络的接入；在创建、启动、Observe、Delete 全链路验证 target。混合 topology 的 reset/恢复重新取得并核对该证明。
+
+验收：SSH 访问实际成功、轮换后旧 key 失效、Delete 后自己的 key 失效且其他访问不受损；三 provider 混合网络通信、NAT、同名替换、reset 和无残留销毁实测。
+
+### P8：自动 GC
+
+范围：`cmd/sysbox/commands/gc_cmd.go`、API operation registry、provider inventory/discovery、P5 ownership、P6 snapshot retention。
+
+- [ ] GC 分 Inventory→Candidate→Plan→AuthorizedDelete→Verify；每个候选有 owner/resource/generation、外部 ID、来源、保留期、依赖与引用证据。
+- [ ] 聚合所有 state/journal/task/snapshot/revision/placement 引用，未知、离线、未完整枚举、正在认领/恢复的对象不进入删除计划。
+- [ ] 真正删除前重验 epoch、身份、引用和计划版本，走既有 provider Delete+journal，不新增裸路径/名字删除链。
+- [ ] 删除中断可恢复，按依赖逆序，小批量、限制预算；provider inventory 和本地 artifact/cache GC 分清权限范围。
+
+验收：dry-run 与执行目标一致；计划后新引用、同名替换、旧 epoch、部分查询失败均不误删；自动清理真实测试孤儿后无受管对象受损。
+
+### P9：完整验收、整合与发布
+
+- [ ] 至少两个独立内核/宿主环境，API 与 Agent 不共享工作目录；KVM/libvirt 场景运行在实际支持这些 provider 的 Agent 上。
+- [ ] Docker/Firecracker/libvirt 分别完成 Apply→Observe→Reset→Exec/File→Cancel→Recover→Destroy→receipt→metadata DELETE，另验收 adoption、snapshot、GC、SSH access。
+- [ ] 在准入提交、effect 前后、journal提交前后、回报前后逐点 kill API/Agent/helper；增加断网、延迟、重复/乱序消息、磁盘满、DB重启、不可取消调用。
+- [ ] Postgres 双 API 切换和服务故障矩阵；文件/SQLite 验证各自支持的独立进程范围，不把共享文件锁描述成跨宿主仲裁。
+- [ ] 真实更新/重建演练：停止旧 writer、保留证据、精确处置资源、重建不兼容数据、同步 guest/helper/Agent/API；禁止手改version和共享库整体清空。
+- [ ] 整合最新 main、消除能力表与文档矛盾；独立架构/代码审查，测试产物记录 commit、镜像digest、协议/schema、环境与清理结果。
+
+总验收的缺环境不能以 skip 算通过。发布、推送、合并仍按明确授权进行；实现计划本身不授权删除现有项目或重建用户共享数据库。
+
+## 5. 关键故障验收表
+
+| 故障注入 | 必须观察到的结果 |
+|---|---|
+| API在受理提交后崩溃 | 原key返回原操作，outbox恢复，不重复effect |
+| Agent执行前断网 | 无可用grant不开始；未确认请求保持pending/unknown |
+| 旧worker暂停至lease过期再恢复 | gate拒绝旧epoch；新owner在旧效果未隔离前不能执行 |
+| guest/helper在Start响应前崩溃 | task ID查询到同一任务或明确未知，不盲重放 |
+| Cancel响应丢失 | 相同task ID取消幂等；只有退出证明才confirmed |
+| PID或资源名字复用 | 不观察成旧任务、不误杀、不误删 |
+| restore旧snapshot后旧worker回归 | 旧epoch/serial无法提交或执行；真实资源差异重新规划 |
+| GC计划后有新引用 | CAS/重验拒绝删除，候选失效 |
+| receipt后出现guest任务或新placement | 普通metadata删除拒绝，不凭旧空状态回执放行 |
+| 自定义init或旧guest协议 | 必需能力缺失在effect前发现；正常配置的目标guest完整走通 |
+
+## 6. 组织方式与停止条件
+
+每阶段按“失败回归→最小实现→三后端/对应provider合同→故障验收→独立审查→文档更新→提交”执行。上述是分阶段实施计划；每个阶段开工前固化该阶段的 wire/SPI/schema 与文件级任务清单，不一次性编写整套未来实现。
+
+建议三条工作线：A负责repository/grant/API，B负责Agent/gate/guest task，C负责provider迁移/故障设施；接口文件单一负责人，避免并行引入不同身份模型。P5/P6/P7可分开实施，P8由共同证据合同汇合。
+
+不以“代码存在”“单测通过”“已返回Unsupported”“没有环境所以skip”标记功能完成。只有能力矩阵指定的真实环境、故障门槛通过才关闭对应缺口。若有不可实现的保证，必须说明底层限制和可实现的替代合同，不能悄悄移出总目标。
+
+**执行起点：P0与P1，随后P2/P3形成授权和任务基础，再完成P4闭环。** 这样最早暴露真实远端问题，也为后续功能迁移提供同一套可靠机制。
+
+### 2026-10-09：P4/P6 会话持久化并发边界
+
+Console 的文件、SQLite、Postgres 存储已统一为创建或完整记录 CAS，移除覆盖更新。
+身份字段由共享规则约束；独立 API hub 写入冲突后核验并读取当前状态，保留冲突
+返回以免盲目重放过期操作。启动 lost 观察使用同一 CAS，竞争时重新读取并有限
+重试，持久取消/终态不会被启动恢复覆盖。该项只关闭会话记录的并发写入缺口；
+原子受理/删除边界、会话执行所有权及远端停止证明仍是 P4/P6 的待交付内容，
+不能用该项合同测试替代 P9 双宿主故障验收。
+
+### P6 下一步：会话写入与维护屏障串行化
+
+复用 authority 和生命周期记录，不创建新的锁域。文件后端沿用 records → authority
+顺序，并持锁至原子写入结束；SQLite 使用 `BEGIN IMMEDIATE`；Postgres 先创建/
+锁定 authority 行，再处理 session。状态规则留在 persistence 共享层，后端只提供
+锁内读写。Topology 名称只用于定位完整 lifecycle，再从中验证真实 UID。
+
+- [x] 在 `pkg/api/console_maintenance_test.go` 复现冻结后 Save/CAS 仍可新增活跃
+  会话的问题；覆盖三后端、冻结与首次写入竞争、取消/终态收敛、终态重新激活拒绝。
+- [x] 在 `pkg/persistence/console_repository.go` 固化创建、CAS 和需要新准入的写入规则：新记录
+  必须检查；精确重试不产生新活动；已有未解决会话可写取消、lost 和有效完成；
+  其他引入未解决活动的写入都检查屏障。缺生命周期且有活动屏障时保守拒绝。
+- [x] 将 `pkg/api/run_maintenance.go` 的锁内 topology 检查抽为通用函数，保留
+  Run 的终态放行规则；`console_record_adapters.go` 在 Console Save/CAS 的
+  提交边界调用同一检查，三个后端共用 repository，未保留覆盖写入分支。
+- [x] 验证失败不写入、冻结成功时此前成功受理已可见；运行三后端合同、race、
+  全仓回归，独立审查并记录证据。这不代替 session/outbox 原子受理和远端停止证明。
+
+### 2026-10-09：Console 初次受理与 outbox 同提交
+
+正常创建先准备完整会话、policy 审计和节点检查，再调用共享 ConsoleRepository.Admit。
+文件适配器将不可变初始 command 随 session 一次原子发布；SQL 适配器将 session 与
+command 放在同一事务。沿用现有 authority 锁和维护检查，不增加独立恢复日志。
+已有 session 或 command 冲突时整次受理失败；后续 CAS 保留文件 dispatch seed，
+命令变更记录及退休 tombstone 优先，seed 不复活已退休命令。
+
+- [x] 三后端初次受理、命令冲突回滚、冻结拒绝、共享 command ID 并发唯一胜者。
+- [x] HTTP 不再先落 queued 再单独发布命令；授权审计一起提交，失败不暴露内存会话。
+- [x] 提交后仅 WakeCommand 通知，通知失败仍返回202，由持久 outbox 补投递。
+- [x] 禁止 AgentService.PublishCommand 单独发布 session_open，移除旧创建生产路径。
+- [x] 请求体身份/角色不能替代服务端请求主体；拒绝请求只保存终态审计，无执行命令。
+- [x] 最终全仓回归和验收证据归档。
+
+本项关闭正常初次创建的 session/command 分步写窗口。HTTP idempotency key 受理、
+完整删除事务、宿主会话所有权与签名停止
+证明仍需继续实施；不以本项测试关闭整个 P4/P6/P9。
+
+### Console 取消同提交实施步骤
+
+复用 ConsoleSessionStorage 的可选 dispatch 与既有事务边界；取消使用稳定 command ID，
+共享 Enqueue 判定负责保留已有租约和拒绝冲突/退休。文件记录增加不可变取消 seed，
+与初始 session_open seed 同时保留；SQL 在同一事务核对 session CAS 和取消 command。
+
+- [x] 补充三后端合同，复现 command 冲突后仍持久 cancelling，以及 hub timeout 只有意图无 outbox。
+- [x] 共享 repository 提供取消 CAS；适配器在现有锁域提交意图、audit 和 outbox，
+  精确重试不重置 command，冲突不更新任何记录、不通知本地 relay。
+- [x] HTTP 与 timeout 都走原子取消；HTTP 唤醒失败仍确认 durable cancelling，
+  移除独立 publish 的生产路径；监督恢复只补齐缺失投递，不制造停止证据。
+- [x] 覆盖冷读、完整双 seed 保留、退休、冲突回滚和三后端真实数据库验收，更新文档。
+
+失败 CAS 只刷新缓存，不据 cancelling 状态通知本地 relay；必须完成取消事务才能
+发出本地取消信号。取消调用使用请求 context，已取消请求不发布任何记录。该项
+不把退休取消命令或 transport 断连当作远端停止证据，状态仍由完成/停止协议收敛。
+
+### 2026-10-09：Console 现有会话的权限边界
+
+补齐创建之后的 GET、取消、浏览器 attach 入口，统一检查当前 Console 角色策略；
+拒绝发生在响应会话数据、写入取消和 WebSocket upgrade 之前。缺授权依赖或
+registry 故障明确失败，HTTP 不暴露内部错误。取消审计记录本次主体角色。
+该项只关闭配置角色策略的入口绕过；身份 header 信任、已建立连接的持续授权和
+宿主 grant/停止协议仍是独立边界，不能据此关闭 P0/P4 的全部授权要求。
+
+### 2026-10-09：删除提交内重新检查 Run/Console
+
+删除持有 records/authority 或 SQL 事务后，重新读取最新 Run 与完整 Console
+registry，再提交 lifecycle 变更。读取不经过内存缓存或预检 callback；复用已有
+写入方的 authority 排他边界，阻止“预检通过后受理新活动”的遗漏。
+SQLite Run 读取沿用完整列/JSON 一致性解码器，损坏记录不能被当作终态放行。
+预检和提交共享 Run 完成证据规则：已知终态、有效排队/结束时间、时间不倒序。
+
+这关闭 Run/Console 在删除提交前已受理活动的检查缺口。完整事务仍需把 command、
+guest/node/adoption/GC registry 纳入，并使这些 registry 的全部原始 writer 遵循
+同一排他协议；不能只补一个提交前查询就将整个 P6 删除边界标为完成。
+
+另一个已确认的顺序边界在 WorkspaceService.Delete：deleteStateWithAuthority 返回
+并释放提交锁之后，仍会清理 workspace metadata、目录和 placement。后续实施需
+让整个清理阶段保持持久、可恢复的排他状态，阻止新受理与后清理交错；本次提交内
+检查尚未覆盖这个窗口。
+
+### 2026-10-09：命令 registry 纳入删除提交
+
+删除事务现在读取完整 command 记录，复用已有索引/JSON 校验和 topology/UID
+阻挡规则；未注册 Agent 的命令也必须可见。退休和终态不重复阻挡，缺 UID 时
+payload 名称只能增加阻挡，不能赋予新代际权限。
+Postgres 原始命令写入统一先 materialize/lock authority，再锁 command 行；文件
+后端原有 records 锁与 SQLite 写事务继续提供对应排他。缺失 authority 行的首次
+事务等待、超时无残留和晚到命令阻挡均有三后端测试。
+
+已停止 effect 并不自动退休 delivery；API 删除仍拒绝未解决命令。旧 UID grant
+拒绝/时钟测试以显式外部重建保留该层验证，不通过放松 API 删除来制造条件。
+本项仅建立命令发布与删除的串行边界；raw command 的维护准入规则、guest/node/
+adoption/GC 的完整写入边界及提交后清理排他仍待完成。
+
+### 2026-10-09：原始命令维护准入
+
+共享 `ValidateCommandMaintenance` 在 command adapter 的现有事务内检查新增命令、
+租约取得/扩展及首次派发。冻结范围内拒绝这些新活动；已有租约的 ack/started
+证据、终态、退休、取消、inventory 和 recovery observe 可继续。recover 不作为
+只读操作豁免。文件适配器现在持 records→authority 至发布完成，SQL 保持原锁序。
+显式 UID 直接匹配维护范围；缺 UID 时核对所有 payload 名称对应的完整 lifecycle，
+无法定位的命令遇任一活动屏障保守拒绝，不为其合成所有权。
+
+合同覆盖拒绝后不写入/不返回租约、控制和回报可收敛、多个 payload 范围不遗漏。
+该项不替代 effect grant 验证，也未关闭 guest/node/adoption/GC 原始操作记录与
+完整删除后清理流程的剩余边界。
+
+### 2026-10-09：NodeOperation 原始写入与删除提交
+
+NodeOperation 的原始 Create/CAS 在 authority 排他内检查维护范围，已有终态
+完成仍可收敛。文件锁序为 authority→operation（API compound 外层仍先持
+records），Postgres 在 node 行前锁 authority，SQLite 使用现有写事务。
+文件 dispatch 改用 CreateFilesystemDispatchUnderAuthority，旧名称移除，避免
+在已经持有 authority 的事务内重复加锁。
+
+删除事务读取完整 node registry，按 Topology 匹配，预检和提交共享有效完成时间
+与终态判断。合同覆盖冻结拒绝、完成收敛、无关已知 UID 放行、未知生命周期拒绝、
+晚到 node 阻挡删除，以及仅持 authority 时发布等待且超时无残留。
+这是 NodeOperation aggregate 的存储边界，不代表 adoption/SSH 全功能验收；
+guest execution/file 原始记录与删除后清理恢复流程仍待接入。
+
+### 2026-10-09：Guest execution/file 原始记录与删除提交
+
+node 维护逻辑收拢为 operation_maintenance，共享同一 authority→record 排他机制。
+Guest Create/活跃 CAS 在冻结期间拒绝，已有终态可收敛；文件 CancelRequested
+只允许状态不前进的取消意图，不能附带 queued→running 绕过屏障。
+文件 compound dispatch 明确要求调用方持 authority，旧入口不保留。
+删除、维护与 cleanup-inspection 共用完整 guest codec 解码及 Unresolved 判断，
+包含缺失/倒序时间，拒绝后保持原生命周期 UID/serial。
+
+SQL测试库补齐 authority 表；损坏记录从底层直接注入，读取保护测试不再要求生产
+写入口接受坏数据。真实三后端验证发布等待、超时无残留、冻结/取消/完成和晚到
+记录删除拒绝。该项不等于 guest 远端取消闭环：GuestExecutionService.Cancel
+仍先写 cancelled 再发布/退休 command，其原子受理和停止证据语义需继续迁移；
+删除后清理阶段的持久排他与恢复也仍未完成。
+
+### 2026-10-09：取消链路的 Agent 源命令保护
+
+发现并修复 Agent 收到 cancel_command 后，仅调用 context.Cancel 就替目标命令
+发送 cancelled 的问题。现在只确认取消请求已传达，目标结果仍由目标执行路径
+报告，不因此提前退休其投递租约。Guest 完成回报使用保留 context values 的独立
+超时预算（RequestTimeout，默认30秒），避免直接继承已取消的执行 context。
+执行跟踪使用独立 token 与捕获的 alias，旧执行清理不再删除替代执行的映射。
+
+该项是持久取消迁移的前置修复，不代表停止证明：API 的取消意图/outbox 原子化、
+guest 终态证据与宿主签名停止协议、回报失败后的持久恢复仍需继续实施。
+
+### 2026-10-10：取消意图恢复与授权源校验
+
+Execution 取消改为单调的 cancel_requested，保留非终态及真实执行结果。稳定
+取消命令绑定原始 command、execution 实例和创建时间，重启扫描补齐缺失 outbox，
+不重置已有租约或复活退休记录。生产授权在同一 authority 边界读取完整 execution，
+取消、终态、缺失或身份不匹配均拒绝 issue/authorize/renew；拒绝保留时钟推进，
+不落盘提前修改的命令租约。停止回执仍可独立收敛。
+
+API schema 11、execution record_format 2 要求重建旧数据，无兼容读取。该步骤
+尚为可恢复的两步提交；后续必须补原子取消、已发授权撤销、宿主签名停止/结果、
+持久回报恢复和 P9 故障验收，不能视为 P3/P4/P6 完成。
+
+### 2026-10-10：取消 compound commit 与授权撤销
+
+用共享取消状态转换替代 service 中先 CAS 再 enqueue 的路径。SQLite/Postgres
+在 authority→guest→command 的事务边界提交意图、取消命令与已发授权撤销。
+文件后端把意图和 outbox seed 放进同一任务记录，保留原始 dispatch seed；再写
+authority，崩溃后重放任务记录修复撤销。终态和投递退休不妨碍该恢复。
+raw Create/CAS 不能绕过取消事务；已提交后的通知只是唤醒提示。
+
+execution record_format 3 / API schema 12 显式拒绝旧格式。这里关闭的是
+取消受理和授权账本撤销，不能把 revoked 当作 host stopped。宿主签名执行结果、
+跨进程停止与持久回报、删除工作流及完整 P9 验收仍在主线范围内。
+
+### 2026-10-10：宿主结果回执与重启补报
+
+移除 worker execution completion，宿主在远端确认终止后读取有界 durable output，
+用独立 GuestTaskResult 签名结果与退出状态知识，保存后再报告。未知退出结果明确
+失败收尾，不冒充 exit 0。API在保留排他后校验 dispatch/代际/digest并提交结果，
+再接受停止；两次提交之间的失败可精确重试，不丢结果或释放未完成任务的授权。
+派生 Run task 不生成独立 execution。旧 API schema12、execution3、host task1
+明确拒绝重建。当前为 repository/API/supervisor 层证据，仍需完整 P9 双 VM
+故障验收及未启动任务无副作用终态路径，不代表所有 P_n 已完成。
+
+### 2026-10-10：已取消、从未获权任务的终态证明
+
+取消扫描先退休原命令，再用现有 authority 事务检查原始 admission 和完整授权
+历史。Grants 和 Stops 都没有命令历史，才允许 cancelled/not_started；否则仍
+等待宿主签名结果。源退休、终态提交、取消投递退休之间均能中断重放，状态判断
+与 CAS 语义仍在共享 persistence 层。此证明要求完整保存权威账本；损坏或未知
+版本拒绝处理，缺失或错误 admission seed 不产生 not_started。整个账本被外部
+删除的灾难恢复不在这些测试的证明范围内。
+未取消的派发失败路径、删除工作流和 P9 故障矩阵仍未关闭。
+
+### 2026-10-10：派发失败后的自动判定
+
+未请求取消的guest任务，若源投递已failed/denied/cancelled，supervisor会退休源命令，
+并在原复合事务内核验原始admission及完整授权历史。无历史时failed/not_started；
+已有历史时仅撤销未停止授权，继续等待宿主签名。它不把worker失败报告当作远端
+停止证据。三后端复用GuestExecutionTransform与同一物理事务，原取消路径同步迁入，
+没有新增兼容层。共享收尾逻辑以创建时间为因果下界，避免API切换时钟差造成永久
+未解决的终态。派发前失败路径已接通，持久删除及完整P9矩阵仍须继续实施与验收。
+
+### 2026-10-10：guest侧只停止凭证与禁止迟到启动
+
+授权已发但宿主记录缺失时，单靠查询不存在不够。先提供guest侧基础：独立
+SignedExecutionCancellation只证明停止权限，不可重新解释成执行授权；在共同
+scope/task锁内排除现有cgroup后持久封闭任务ID，保留epoch与session的防重放边界。
+
+正常已有任务保持本地离线取消；新缺失记录必须有签名停止凭证。guest record升为2，
+旧格式拒绝，RPC与scope版本不变，嵌入helper同步重建。独立guest任务的API发现、
+host无记录收敛已在后续检查点0f1cc41接通；Run子任务扩展如下。
+
+### Run子任务撤销发现：后续实现设计与步骤
+
+目标是关闭已发child grant但host task缺失的恢复窗口，继续沿用已批准的P2–P4
+停止证据协议。API负责核验父授权及其原始Run命令；host负责canonical资源定位；
+guest负责停止及封闭迟到Start。cyberfield不参与这些内部协议。
+
+选择在现有只取消签名中绑定RunID和Topology，复用guest-task-stops分页与宿主
+Dispatcher。仅扩大ParentEpoch过滤会遗漏Run来源证明；另建完整恢复服务则重复
+现有调度、回执和存储路径。父授权缺失、摘要不符或canonical candidate不可用时
+返回issue/unknown，不猜测节点、不重放Start。
+
+- [x] controlplane：SignRunExecutionCancellation绑定子grant、RunID和Topology；
+  对RunID/Topology篡改验证失败，普通签名不允许无父授权的Run来源。
+  先跑`go test ./pkg/controlplane -run TestRunExecutionCancellation -count=1`确认失败，
+  再实现签名字段校验并转绿。
+- [x] API：读取同一authority快照中的父grant，核对epoch、session、command、attempt、
+  topology；从保留的run_assigned命令重建RunRequest.Digest并匹配父grant。
+  retired命令仍可发现；wrong digest输出issue，不签证明。与独立任务共用固定上界。
+  使用三后端`TestRunTaskStopDiscovery`覆盖退休源与错误父来源。
+- [x] host：增加FindRunTaskRef回调，按签名RunID、Topology、scope定位逻辑节点；
+  stop-only记录持久RunID，load重验签名路由，再用ResolveRun核验真实provider。
+  `TestRunTaskStopRecovery`覆盖缺失任务、冷重启、错误Run候选及迟到Start拒绝。
+- [x] 接通生产回调，重建两架构helper；运行受影响包race、真实Postgres和Docker
+  host验收，复审并更新接口/进度/验收记录。此子任务不关闭父Run未知intent、删除
+  工作流或完整P9矩阵。
+
+验证记录：2026-10-10全仓race在独立Postgres16启用下通过，真实Docker child发现/
+封闭迟到Start通过，canonical未完成candidate与错误Run拒绝回归通过。另修复父
+Revoke未持久撤销children，以及父checkpoint停止证明误把active→revoked视作
+身份变化的问题。两者均先有失败测试再修复；完整不变身份仍含epoch与parent epoch。
+
+### 已提交guest结果的授权释放：实现步骤
+
+SQL将guest终态和authority stopped合并为一次GuestExecutionMutation；文件后端
+先写包含原grant与回执摘要的host_completion证据，再发布authority。API supervisor
+从未停止的独立guest grant发现中断发布，持共同锁重验已提交证据，只释放原epoch。
+不重新连接guest，不依赖host journal，不重建过期输出。无证据、损坏证据或身份
+不符拒绝；精确重试不能影响successor。共享状态转换继续位于persistence层。
+
+- [x] 先修改SQL双写失败回归，要求结果与授权全部回滚；加入文件中断后冷恢复、
+  脱敏后恢复及后继epoch不变测试，确认旧实现失败。
+- [x] execution format5保存host_completion={grant,receipt}，只由已认证host完成
+  路径写入；CAS保留证据，API schema14拒绝旧写者，无旧格式读取。
+- [x] CompleteGuestExecutionFromHost复用三后端GuestExecutionMutation适配，新增
+  PrepareGuestExecutionHostCompletion/PrepareGuestExecutionStopRecovery共享转换。
+  原HTTP三步完成逻辑删除，保留签名认证；独立API恢复扫描接通。
+- [x] 真实Postgres事务故障、文件实际发布故障、冷启动恢复、race和真实Docker
+  验收通过后更新接口清单与验收记录。文件安装/Run等其他操作另行审计，不把本次
+  guest execution修复扩大成全部operation完成声明。
+
+### 持久删除清理阶段：最新进度
+
+- [x] 在 authority-aware state reset 前写入 durable `delete.intent`（topology UID、
+  serial、时间）；workspace publish 发现 intent 时拒绝新版本。
+- [x] Delete 和 supervisor 冷启动扫描复用同一 cleanup routine，按 intent 继续
+  state/workspace/placement/health 清理，只在全部本地步骤成功后移除 intent。
+- [ ] 将 command/guest/node/adoption/GC registry 的全部原始 writer 纳入同一
+  deletion barrier，并补真实双宿主中途 kill/磁盘满恢复验收。

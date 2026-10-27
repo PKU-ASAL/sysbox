@@ -7,12 +7,14 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/errdefs"
 	"github.com/docker/go-connections/nat"
 
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/oslab/sysbox/pkg/util"
 )
@@ -32,18 +34,28 @@ func (s *Substrate) CreateNode(ctx context.Context, spec substrate.NodeSpec) (su
 }
 
 func (s *Substrate) createNode(ctx context.Context, spec substrate.NodeSpec, strictName bool) (substrate.NodeHandle, error) {
-	// If a container with this name exists (leftover from a partial previous
-	// apply), force-remove it. Reusing a partially-wired container would
-	// cause interface rename collisions on the next attach attempt.
+	identity, managed := substrate.OperationIdentityFromContext(ctx)
+	if !managed || identity.Validate() != nil {
+		return substrate.NodeHandle{}, driver.Wrap(driver.ErrorInvalidState, "docker", "create requires durable operation identity", nil)
+	}
+	labels, err := expectedLabels(ctx, spec.Labels, true)
+	if err != nil {
+		return substrate.NodeHandle{}, err
+	}
 	if existing, err := s.cli.ContainerInspect(ctx, spec.Name); err == nil {
-		if strictName {
-			return substrate.NodeHandle{}, fmt.Errorf("container name %q appeared during reset; refusing destructive replacement", spec.Name)
+		if strictName || !managed || existing.Config == nil {
+			return substrate.NodeHandle{}, driver.Wrap(driver.ErrorInvalidState, "docker", fmt.Sprintf("container name %q already exists; refusing replacement", spec.Name), nil)
 		}
-		if existing.Config == nil || existing.Config.Labels["sysbox.managed"] != "true" {
-			return substrate.NodeHandle{}, fmt.Errorf("container name %q is already used by an unmanaged container", spec.Name)
+		actual, verifyErr := s.managedOwnershipLabels(ctx, existing)
+		if verifyErr != nil {
+			return substrate.NodeHandle{}, verifyErr
 		}
-		fmt.Printf("[docker] warning: force-removing stale container %q\n", spec.Name)
-		_ = s.cli.ContainerRemove(ctx, spec.Name, container.RemoveOptions{Force: true})
+		if err := verifyLabels(actual, operationLabels(identity)); err != nil {
+			return substrate.NodeHandle{}, err
+		}
+		return managedHandle(existing, identity.Generation)
+	} else if !errdefs.IsNotFound(err) {
+		return substrate.NodeHandle{}, driver.Wrap(driver.ErrorUnavailable, "docker", "container name inspection unavailable", err)
 	}
 
 	envs := util.EnvToSlice(spec.Env)
@@ -118,11 +130,19 @@ func (s *Substrate) createNode(ctx context.Context, spec substrate.NodeSpec, str
 	}
 
 	launch, direct := launchConfig(imageEntrypoint, imageCmd, pc)
+	hs := &HandleState{ContainerName: spec.Name, ImageCmd: imageCmd, ImageEntrypoint: imageEntrypoint, RemoveDefaultBridge: removeDefaultBridge, DirectLaunch: direct}
+	if managed {
+		raw, err := json.Marshal(hs)
+		if err != nil {
+			return substrate.NodeHandle{}, err
+		}
+		labels["sysbox.node_state"] = string(raw)
+	}
 	resp, err := s.cli.ContainerCreate(ctx,
 		&container.Config{
 			Image:        spec.Image.ID,
 			Env:          envs,
-			Labels:       spec.Labels,
+			Labels:       labels,
 			ExposedPorts: exposedPorts,
 			// Explicitly override ENTRYPOINT so images with their own default
 			// (e.g. aquasec/tracee) stay alive for provisioner exec calls.
@@ -139,17 +159,13 @@ func (s *Substrate) createNode(ctx context.Context, spec substrate.NodeSpec, str
 	}
 
 	return substrate.NodeHandle{
-		ID: resp.ID,
-		Provider: &HandleState{
-			ContainerName:       spec.Name,
-			ImageCmd:            imageCmd,
-			ImageEntrypoint:     imageEntrypoint,
-			RemoveDefaultBridge: removeDefaultBridge,
-			DirectLaunch:        direct,
-		},
+		ID:         resp.ID,
+		Generation: identity.Generation,
+		Provider:   hs,
 		Conn: substrate.ConnInfo{
 			Kind:     substrate.ConnKindDocker,
 			Endpoint: resp.ID,
+			User:     "root",
 		},
 	}, nil
 }
@@ -247,28 +263,90 @@ func (s *Substrate) UnmarshalProviderState(data json.RawMessage) (any, error) {
 }
 
 func (s *Substrate) StartNode(ctx context.Context, h substrate.NodeHandle) error {
+	if err := s.validateManagedHandle(ctx, &h); err != nil {
+		return err
+	}
 	return s.cli.ContainerStart(ctx, h.ID, container.StartOptions{})
 }
 
 func (s *Substrate) StopNode(ctx context.Context, h substrate.NodeHandle) error {
+	if err := s.validateManagedHandle(ctx, &h); err != nil {
+		return err
+	}
 	timeoutSec := 10
 	return s.cli.ContainerStop(ctx, h.ID, container.StopOptions{Timeout: &timeoutSec})
 }
 
 func (s *Substrate) DestroyNode(ctx context.Context, h substrate.NodeHandle) error {
+	if err := s.validateManagedHandle(ctx, &h); err != nil {
+		if errdefs.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
 	err := s.cli.ContainerRemove(ctx, h.ID, container.RemoveOptions{Force: true})
 	if errdefs.IsNotFound(err) {
 		return nil
+	}
+	if err != nil {
+		// A lost response is not permission to replay removal. Inspect the
+		// immutable ID selected before the call under a bounded read-only
+		// context. Presence/unavailability preserves the original uncertainty.
+		observe, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+		defer cancel()
+		if _, observedErr := s.cli.ContainerInspect(observe, h.ID); errdefs.IsNotFound(observedErr) {
+			return nil
+		}
 	}
 	return err
 }
 
 func (s *Substrate) Pause(ctx context.Context, h substrate.NodeHandle) error {
+	if err := s.validateManagedHandle(ctx, &h); err != nil {
+		return err
+	}
 	return s.cli.ContainerPause(ctx, h.ID)
 }
 
 func (s *Substrate) Resume(ctx context.Context, h substrate.NodeHandle) error {
+	if err := s.validateManagedHandle(ctx, &h); err != nil {
+		return err
+	}
 	return s.cli.ContainerUnpause(ctx, h.ID)
+}
+
+func (s *Substrate) validateManagedHandle(ctx context.Context, h *substrate.NodeHandle) error {
+	identity, hasIdentity := substrate.OperationIdentityFromContext(ctx)
+	if h.Generation == 0 && !hasIdentity {
+		return driver.Wrap(driver.ErrorInvalidState, "docker", "managed generation or operation identity required", nil)
+	}
+	ins, err := s.cli.ContainerInspect(ctx, h.ID)
+	if err != nil {
+		return err
+	}
+	labels, err := s.managedOwnershipLabels(ctx, ins)
+	if err != nil {
+		return err
+	}
+	if hasIdentity {
+		if err := identity.Validate(); err != nil {
+			return err
+		}
+		if err := verifyLabels(labels, operationLabels(identity)); err != nil {
+			return err
+		}
+		if h.Generation != 0 && identity.Generation != h.Generation {
+			return fmt.Errorf("docker generation conflict")
+		}
+	}
+	if raw := labels["sysbox.generation"]; h.Generation != 0 && raw != strconv.FormatInt(h.Generation, 10) {
+		return fmt.Errorf("docker generation conflict")
+	}
+	if ins.ID == "" {
+		return fmt.Errorf("docker inspection missing immutable ID")
+	}
+	h.ID = ins.ID
+	return nil
 }
 
 // ReadNode inspects an existing Docker container by name or ID and returns
@@ -325,7 +403,11 @@ func (s *Substrate) ExecImageEntry(ctx context.Context, handle substrate.NodeHan
 	}
 
 	// Run as background process so it doesn't block the executor.
-	_, err = c.ExecBackground(ctx, commandRequest(cmd))
+	background, ok := c.(substrate.ConnectionStarter)
+	if !ok {
+		return substrate.ErrNotSupported
+	}
+	_, err = background.Start(ctx, commandRequest(cmd))
 	return err
 }
 

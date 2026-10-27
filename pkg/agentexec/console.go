@@ -151,30 +151,54 @@ func drainConsoleOutput(ctx context.Context, outputDone <-chan error, outputs in
 }
 
 func runConsoleFallback(ctx context.Context, conn substrate.Connection, req substrate.ConsoleRequest, ws *websocket.Conn) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	pr, pw := io.Pipe()
+	defer pr.Close()
+	defer pw.Close()
 	errCh := make(chan error, 1)
 	go func() {
 		result, execErr := conn.Exec(ctx, substrate.ExecRequest{Program: consoleShell(req), Shell: substrate.ShellLinux}, pw, pw)
 		err := execErr
+		if err == nil && !result.ExitCodeKnown {
+			err = fmt.Errorf("console command exit status unknown")
+		}
 		if err == nil && result.ExitCode != 0 {
 			err = fmt.Errorf("console command exited %d", result.ExitCode)
 		}
 		_ = pw.Close()
 		errCh <- err
 	}()
-	done := make(chan error, 2)
-	go copyConsoleOutput(ctx, ws, "stdout", pr, done)
-	go func() {
-		err := <-errCh
-		code := 0
-		if err != nil {
-			code = 1
-			_ = writeConsoleFrame(ctx, ws, consoleFrame{Type: "error", Error: err.Error()})
+	outputDone := make(chan error, 1)
+	go copyConsoleOutput(ctx, ws, "stdout", pr, outputDone)
+	var resultErr error
+	// EOF only proves that output was drained, not that execution succeeded.
+	// Wait for both before sending completion or allowing the caller to close ws.
+	for errCh != nil || outputDone != nil {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case err := <-errCh:
+			resultErr = err
+			errCh = nil
+		case err := <-outputDone:
+			if err != nil {
+				return err
+			}
+			outputDone = nil
 		}
-		_ = writeConsoleFrame(ctx, ws, consoleFrame{Type: "exit", Code: code})
-		done <- err
-	}()
-	return <-done
+	}
+	code := 0
+	if resultErr != nil {
+		code = 1
+		if err := writeConsoleFrame(ctx, ws, consoleFrame{Type: "error", Error: resultErr.Error()}); err != nil {
+			return err
+		}
+	}
+	if err := writeConsoleFrame(ctx, ws, consoleFrame{Type: "exit", Code: code}); err != nil {
+		return err
+	}
+	return resultErr
 }
 
 func consoleShell(req substrate.ConsoleRequest) string {

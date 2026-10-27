@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 const guestFileMaxSize = 16 << 20
@@ -32,6 +34,8 @@ func (s *Server) handlePutGuestFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	topology, node, dst := r.PathValue("topology"), r.PathValue("node"), r.URL.Query().Get("path")
+	unlock := s.jobs.lockTopology(topology)
+	defer unlock()
 	if !filepath.IsAbs(dst) || strings.Contains(dst, "\x00") || filepath.Clean(dst) != dst {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid guest path"))
 		return
@@ -42,7 +46,11 @@ func (s *Server) handlePutGuestFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	agentID, err := s.guestExecutionOwner(r.Context(), topology)
-	if err != nil || !s.guestExecutionNodeExists(topology, node) {
+	if err != nil {
+		writeError(w, guestOperationErrorStatus(err), err)
+		return
+	}
+	if !s.guestExecutionNodeExists(topology, node) {
 		writeError(w, http.StatusNotFound, fmt.Errorf("target not found"))
 		return
 	}
@@ -72,7 +80,12 @@ func (s *Server) handlePutGuestFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("content digest mismatch"))
 		return
 	}
-	put := controlplane.GuestFilePut{ID: id, Topology: topology, Node: node, Path: dst, Mode: uint32(mode64), Size: n, SHA256: digest, FetchRef: "/v1/agents/" + agentID + "/guest-files/" + id}
+	put := controlplane.GuestFilePut{RebootScope: r.URL.Query().Get("reboot_scope"), ID: id, Topology: topology, Node: node, Path: dst, Mode: uint32(mode64), Size: n, SHA256: digest, FetchRef: "/v1/agents/" + agentID + "/guest-files/" + id}
+	if err := (substrate.FileInstallRequest{RebootScope: put.RebootScope, ID: id, Path: dst, Mode: put.Mode, Size: n, SHA256: digest}).Validate(); err != nil {
+		_ = os.Remove(tmp.Name())
+		writeError(w, 400, err)
+		return
+	}
 	if err := os.Rename(tmp.Name(), filepath.Join(dir, id)); err != nil {
 		_ = os.Remove(tmp.Name())
 		writeError(w, 500, err)
@@ -90,22 +103,27 @@ func (s *Server) handlePutGuestFile(w http.ResponseWriter, r *http.Request) {
 	}
 	commandID := uuid.NewString()
 	op := controlplane.GuestFileOperation{ID: id, Version: 1, AgentID: agentID, CommandID: commandID, Topology: topology, Node: node, Status: controlplane.GuestExecutionQueued, CreatedAt: time.Now().UTC()}
-	if err := s.apiStore.SaveGuestFileOperation(r.Context(), op); err != nil {
+	command := controlplane.AgentCommand{ID: commandID, AgentID: agentID, Type: "guest_file_put", Status: controlplane.AgentCommandStatusQueued, Protocol: controlplane.AgentProtocolVersion, FilePut: &put}
+	identity, err := s.guestTargetIdentity(topology, node)
+	if err != nil {
+		cleanup()
+		writeError(w, guestOperationErrorStatus(err), err)
+		return
+	}
+	command.ActionID = id
+	command.ResourceUID = identity.ResourceUID
+	command.TopologyUID = identity.TopologyUID
+	command.Generation = identity.Generation
+	command.LeaseEpoch = 1
+	if err := s.apiStore.CreateGuestFileDispatch(r.Context(), op, command); err != nil {
 		cleanup()
 		writeError(w, 500, err)
 		return
 	}
-	_, err = s.agentService().PublishCommand(r.Context(), agentID, controlplane.AgentCommand{ID: commandID, Type: "guest_file_put", FilePut: &put})
-	if err != nil {
-		op.Status, op.Error, op.EndedAt = controlplane.GuestExecutionFailed, "dispatch failed", time.Now().UTC()
-		if ok, saveErr := s.apiStore.CompareAndSwapGuestFileOperation(r.Context(), op, op.Version); saveErr != nil || !ok {
-			cleanup()
-			writeError(w, 500, fmt.Errorf("record file operation dispatch failure"))
-			return
-		}
-		cleanup()
-		writeError(w, 500, err)
-		return
+	// The committed command is polled durably; notification must not delete
+	// its payload or perform another storage write.
+	if s.agents != nil {
+		_ = s.agents.PublishCommand(agentID, command)
 	}
 	writeJSON(w, http.StatusAccepted, publicGuestFileOperation(op))
 }
@@ -122,7 +140,7 @@ func (s *Server) handleGetGuestFileOperation(w http.ResponseWriter, r *http.Requ
 	}
 	op, err := s.apiStore.GetGuestFileOperation(r.Context(), r.PathValue("operation"))
 	if err != nil {
-		writeError(w, http.StatusNotFound, fmt.Errorf("file operation not found"))
+		writeError(w, guestOperationErrorStatus(err), err)
 		return
 	}
 	writeJSON(w, http.StatusOK, publicGuestFileOperation(*op))
@@ -150,25 +168,20 @@ func (s *Server) handleCancelGuestFileOperation(w http.ResponseWriter, r *http.R
 		writeJSON(w, http.StatusAccepted, publicGuestFileOperation(op))
 		return
 	}
-	if op.CommandID != "" {
-		var dispatchErr error
-		if op.StartedAt.IsZero() {
-			_, dispatchErr = s.agentService().PublishCommand(r.Context(), op.AgentID, controlplane.AgentCommand{ID: op.CommandID, Status: controlplane.AgentCommandStatusCancelled})
-		} else {
-			_, dispatchErr = s.agentService().PublishCommand(r.Context(), op.AgentID, controlplane.AgentCommand{Type: "cancel_command", Operation: controlplane.NodeOperation{ExternalID: op.ID}})
-		}
-		if dispatchErr != nil {
-			writeError(w, http.StatusInternalServerError, fmt.Errorf("dispatch file operation cancellation"))
-			return
-		}
-	}
-	op, err = svc.Cancel(r.Context(), op.ID)
+	noEffect, err := s.cancelFileDispatch(r.Context(), op)
 	if err != nil {
-		writeError(w, http.StatusConflict, err)
+		writeError(w, guestOperationErrorStatus(err), err)
 		return
 	}
-	_ = os.Remove(filepath.Join(s.runsDir, "_guest-files", op.ID))
-	_ = os.Remove(filepath.Join(s.runsDir, "_guest-files", op.ID+".json"))
+	if noEffect {
+		op, err = svc.Cancel(r.Context(), op.ID)
+	} else {
+		_, err = s.agentService().PublishCommand(r.Context(), op.AgentID, controlplane.AgentCommand{Type: "cancel_command", Operation: controlplane.NodeOperation{ExternalID: op.ID}})
+	}
+	if err != nil {
+		writeError(w, guestOperationErrorStatus(err), err)
+		return
+	}
 	writeJSON(w, http.StatusAccepted, publicGuestFileOperation(op))
 }
 
@@ -180,7 +193,7 @@ func (s *Server) handleStartGuestFileOperation(w http.ResponseWriter, r *http.Re
 	}
 	op, err := s.apiStore.GetGuestFileOperation(r.Context(), r.PathValue("operation"))
 	if err != nil {
-		writeError(w, http.StatusNotFound, fmt.Errorf("file operation not found"))
+		writeError(w, guestOperationErrorStatus(err), err)
 		return
 	}
 	if op.AgentID != agentID {
@@ -189,7 +202,7 @@ func (s *Server) handleStartGuestFileOperation(w http.ResponseWriter, r *http.Re
 	}
 	updated, err := newGuestFileOperationService(s.apiStore).MarkRunning(r.Context(), op.ID)
 	if err != nil {
-		writeError(w, http.StatusConflict, err)
+		writeError(w, guestOperationErrorStatus(err), err)
 		return
 	}
 	writeJSON(w, http.StatusOK, publicGuestFileOperation(updated))
@@ -203,7 +216,7 @@ func (s *Server) handleCompleteGuestFileOperation(w http.ResponseWriter, r *http
 	}
 	op, err := s.apiStore.GetGuestFileOperation(r.Context(), r.PathValue("operation"))
 	if err != nil {
-		writeError(w, http.StatusNotFound, fmt.Errorf("file operation not found"))
+		writeError(w, guestOperationErrorStatus(err), err)
 		return
 	}
 	if op.AgentID != agentID {
@@ -215,9 +228,9 @@ func (s *Server) handleCompleteGuestFileOperation(w http.ResponseWriter, r *http
 		writeError(w, http.StatusBadRequest, fmt.Errorf("decode completion"))
 		return
 	}
-	updated, err := newGuestFileOperationService(s.apiStore).Complete(r.Context(), op.ID, completion.Error)
+	updated, err := s.apiStore.CompleteGuestFileOperation(r.Context(), agentID, op.ID, completion)
 	if err != nil {
-		writeError(w, http.StatusConflict, err)
+		writeError(w, guestOperationErrorStatus(err), err)
 		return
 	}
 	_ = os.Remove(filepath.Join(s.runsDir, "_guest-files", op.ID))
@@ -231,12 +244,29 @@ func (s *Server) gcGuestFilePayloads(now time.Time) {
 	for _, entry := range entries {
 		var meta guestFilePayload
 		raw, err := os.ReadFile(entry)
-		if err != nil || json.Unmarshal(raw, &meta) != nil || !now.Before(meta.ExpiresAt) {
+		if err == nil && json.Unmarshal(raw, &meta) == nil && !now.Before(meta.ExpiresAt) && s.filePayloadCanExpire(context.Background(), strings.TrimSuffix(filepath.Base(entry), ".json")) {
 			base := strings.TrimSuffix(entry, ".json")
 			_ = os.Remove(base)
 			_ = os.Remove(entry)
 		}
 	}
+}
+
+func (s *Server) filePayloadCanExpire(ctx context.Context, id string) bool {
+	op, err := s.apiStore.GetGuestFileOperation(ctx, id)
+	if err != nil || !guestExecutionTerminal(op.Status) {
+		return false
+	}
+	activities, err := s.apiStore.ListGuestActivity(ctx, op.Topology)
+	if err != nil {
+		return false
+	}
+	for _, a := range activities {
+		if a.ID == id && a.Active() {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) handleFetchGuestFile(w http.ResponseWriter, r *http.Request) {
@@ -247,9 +277,7 @@ func (s *Server) handleFetchGuestFile(w http.ResponseWriter, r *http.Request) {
 	path := filepath.Join(s.runsDir, "_guest-files", filepath.Base(r.PathValue("file")))
 	var meta guestFilePayload
 	raw, err := os.ReadFile(path + ".json")
-	if err != nil || json.Unmarshal(raw, &meta) != nil || meta.AgentID != r.PathValue("agent") || time.Now().UTC().After(meta.ExpiresAt) {
-		_ = os.Remove(path)
-		_ = os.Remove(path + ".json")
+	if err != nil || json.Unmarshal(raw, &meta) != nil || meta.AgentID != r.PathValue("agent") || (time.Now().UTC().After(meta.ExpiresAt) && s.filePayloadCanExpire(r.Context(), r.PathValue("file"))) {
 		writeError(w, http.StatusNotFound, fmt.Errorf("file payload not found"))
 		return
 	}

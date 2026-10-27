@@ -16,7 +16,9 @@ import (
 	"github.com/oslab/sysbox/pkg/diag"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
+	"github.com/oslab/sysbox/pkg/state"
 )
 
 // safeSegment matches allowed path values for topology / node / id URL segments.
@@ -97,9 +99,9 @@ func (s *Server) handleGetStateLock(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	info, err := s.workspaceService().LockInfo(r.Context(), topology)
+	info, err := s.inspectTopologyAuthority(r.Context(), topology)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
+		writeError(w, stateOperationErrorStatus(err), err)
 		return
 	}
 	writeJSON(w, http.StatusOK, info)
@@ -111,8 +113,21 @@ func (s *Server) handleForceUnlockState(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	if key := r.Header.Get("Idempotency-Key"); key != "" {
+		result, err := s.forceUnlockAuthority(r.Context(), topology, key)
+		if err != nil {
+			writeError(w, stateOperationErrorStatus(err), err)
+			return
+		}
+		status := http.StatusAccepted
+		if result.Status == "unlocked" {
+			status = http.StatusOK
+		}
+		writeJSON(w, status, result)
+		return
+	}
 	if err := s.workspaceService().ForceUnlock(r.Context(), topology); err != nil {
-		writeError(w, http.StatusInternalServerError, err)
+		writeError(w, stateOperationErrorStatus(err), err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "unlocked"})
@@ -126,7 +141,7 @@ func (s *Server) handleListStateSnapshots(w http.ResponseWriter, r *http.Request
 	}
 	items, err := s.workspaceService().StateSnapshots(r.Context(), topology)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
+		writeError(w, stateOperationErrorStatus(err), err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"snapshots": items})
@@ -143,11 +158,36 @@ func (s *Server) handleRestoreStateSnapshot(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if err := s.workspaceService().RestoreStateSnapshot(r.Context(), topology, snapshot); err != nil {
-		writeError(w, http.StatusInternalServerError, err)
+	var request persistence.SnapshotRestoreRequest
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16384))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil || request.SnapshotID != snapshot {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("matching snapshot restore plan required"))
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "restored", "snapshot": snapshot})
+	result, err := s.restoreSnapshotWorkflow(r.Context(), topology, request)
+	if err != nil {
+		writeError(w, stateOperationErrorStatus(err), err)
+		return
+	}
+	status := http.StatusAccepted
+	if result.Status == "restored" {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, result)
+}
+
+func stateOperationErrorStatus(err error) int {
+	if errors.Is(err, persistence.ErrConflict) {
+		return http.StatusConflict
+	}
+	if errors.Is(err, persistence.ErrNotFound) {
+		return http.StatusNotFound
+	}
+	if errors.Is(err, state.ErrUnsupported) {
+		return http.StatusNotImplemented
+	}
+	return http.StatusInternalServerError
 }
 
 func (s *Server) handleGetOutputs(w http.ResponseWriter, r *http.Request) {
@@ -247,7 +287,8 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	run, err := s.runs().StartApply(r.Context(), topology, RunStartRequest{
-		Revision: req.Revision, AgentID: req.AgentID, AllowUnsafeState: req.AllowUnsafeState, Inputs: req.Inputs, DeadlineAt: req.DeadlineAt, OperationKey: r.Header.Get("Idempotency-Key"),
+		OperationKey: r.Header.Get("Idempotency-Key"),
+		Revision:     req.Revision, AgentID: req.AgentID, AllowUnsafeState: req.AllowUnsafeState, Inputs: req.Inputs, DeadlineAt: req.DeadlineAt,
 	})
 	if err != nil {
 		writeError(w, runServiceStatus(err), err)
@@ -422,18 +463,18 @@ func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	run, err := s.apiStore.GetRun(r.Context(), id)
-	if errors.Is(err, errRunNotFound) {
-		writeError(w, http.StatusNotFound, err)
-		return
-	}
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, errors.New("run store unavailable"))
+		status := http.StatusServiceUnavailable
+		if errors.Is(err, persistence.ErrNotFound) {
+			status = http.StatusNotFound
+		}
+		writeError(w, status, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, struct {
 		*controlplane.Run
 		InputsRequired bool `json:"inputs_required"`
-	}{run, s.jobs.inputsRequired(run)})
+	}{Run: run, InputsRequired: s.jobs.inputsRequired(run)})
 }
 
 func (s *Server) handleResumeRun(w http.ResponseWriter, r *http.Request) {
@@ -451,23 +492,11 @@ func (s *Server) handleResumeRun(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) reconcileParentJournal(parent, run *controlplane.Run) error {
-	checkCtx, checkCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer checkCancel()
-	checkpoint, err := s.apiStore.LoadCheckpoint(checkCtx, parent.Topology, parent.ID)
-	if err != nil {
-		return err
-	}
-	if checkpoint == nil {
-		return fmt.Errorf("resume blocked: parent checkpoint missing")
-	}
-	if err := runtime.CheckpointResumeSafety(*checkpoint); err != nil {
-		return err
-	}
 	mgr, err := s.stateManager(parent.Topology)
 	if err != nil {
 		return err
 	}
-	report, err := reconcileCheckpointJournal(checkCtx, s.apiStore, parent.Topology, parent.ID, mgr, run.LeaseOwner)
+	report, err := s.reconcileCanonicalActions(context.Background(), parent.Topology, parent.ID, mgr)
 	if err != nil {
 		return err
 	}
@@ -484,11 +513,6 @@ func (s *Server) reconcileParentJournal(parent, run *controlplane.Run) error {
 	}
 	for _, action := range report.Skipped {
 		_, _ = logs.Write([]byte(fmt.Sprintf("[resume] skipped %s: %s\n", action.Resource, action.Status)))
-	}
-	for _, action := range report.Skipped {
-		if action.Status != "already_in_state" {
-			return fmt.Errorf("resume blocked: %s %s", action.Resource, action.Status)
-		}
 	}
 	return nil
 }
@@ -508,7 +532,7 @@ func (s *Server) handleCleanupRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, fmt.Errorf("run %s is still running", id))
 		return
 	}
-	report, err := cleanupCheckpoint(r.Context(), s.apiStore, run.Topology, run.ID)
+	report, err := s.cleanupCanonicalActions(r.Context(), run.Topology, run.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -536,8 +560,7 @@ func (s *Server) handleRecoverRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	owner := fmt.Sprintf("sysbox-api:recover:%s", run.ID)
-	report, err := reconcileCheckpointJournal(r.Context(), s.apiStore, run.Topology, run.ID, mgr, owner)
+	report, err := s.reconcileCanonicalActions(r.Context(), run.Topology, run.ID, mgr)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return

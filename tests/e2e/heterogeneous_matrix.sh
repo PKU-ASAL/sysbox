@@ -2,23 +2,32 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+if [ -e /tmp/sysbox-e2e/heterogeneous-matrix ]; then
+  echo 'Previous matrix evidence exists at /tmp/sysbox-e2e/heterogeneous-matrix; recover and verify its resources before starting another run.' >&2
+  exit 1
+fi
 cache_root="${SYSBOX_CACHE:-${XDG_CACHE_HOME:-${HOME}/.cache}/sysbox}"
 image_host="$(${root}/scripts/prepare-libvirt-cloud-image.sh)"
 kernel_host="${SYSBOX_KERNEL:-$(find "${cache_root}/artifacts" -type f -name 'vmlinux-*' | sort | head -1)}"
 rootfs_host="${SYSBOX_ROOTFS:-${cache_root}/rootfs/ubuntu-24.04.ext4}"
 modcache="$(go env GOPATH)/pkg/mod"
-firecracker_bin="${SYSBOX_FIRECRACKER_BIN:-$(command -v firecracker)}"
+firecracker_bin="${SYSBOX_FIRECRACKER_BIN:-$(command -v firecracker || true)}"
+if [ -z "${firecracker_bin}" ]; then
+  firecracker_bin="${cache_root}/tools/firecracker"
+fi
 key_dir="$(mktemp -d /tmp/sysbox-matrix-key.XXXXXX)"
 image_runtime="$(mktemp /tmp/sysbox-ubuntu-cloud.XXXXXX.img)"
 
 cleanup() {
+  status=$?
+  if [ "${status}" -ne 0 ]; then
+    echo "Matrix failed: preserving state at /tmp/sysbox-e2e/heterogeneous-matrix, key at ${key_dir}, image at ${image_runtime}." >&2
+    return
+  fi
   rm -rf "${key_dir}"
   docker run --rm -v /tmp:/cleanup alpine:latest rm -f "/cleanup/$(basename "${image_runtime}")" >/dev/null 2>&1 || true
-  docker run --rm -v /tmp/sysbox-e2e:/cleanup alpine:latest rm -rf /cleanup/heterogeneous-matrix >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
-
-docker run --rm -v /tmp/sysbox-e2e:/cleanup alpine:latest rm -rf /cleanup/heterogeneous-matrix
 
 test -f "${kernel_host}"
 test -f "${rootfs_host}"

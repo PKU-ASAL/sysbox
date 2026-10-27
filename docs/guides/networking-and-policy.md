@@ -4,6 +4,8 @@
 
 `sysbox_network` 声明 CIDR 和 NAT。Node `link` 与 router `interface` 声明 logical attachment、IP prefix、gateway、MAC 和 aliases。
 
+`nat = true` 是 Docker 管理的网络，目前只支持 Docker 节点直接接入。Firecracker/libvirt 使用隔离网络（省略 `nat` 或设为 `false`），不再通过猜测 Docker bridge 名称接入 NAT 网络。需要出口时可通过已声明的路由器连接隔离网络与上游。
+
 ```hcl
 resource "sysbox_network" "dmz" {
   cidr = "10.50.0.0/24"

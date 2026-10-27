@@ -8,7 +8,8 @@
 //	sysbox-netns <netns-path> <nft-args...>
 //
 // The netns path is either a named namespace (/var/run/netns/<name>) or a
-// process namespace (/proc/<pid>/ns/net). An `nft` script can be piped via stdin
+// process namespace (/proc/<pid>/ns/net), or an inherited FD (/proc/self/fd/3).
+// The helper pins it before forwarding the FD to nsenter. An `nft` script can be piped via stdin
 // for `-f -`:
 //
 //	echo 'add table ip t' | sysbox-netns /proc/123/ns/net -f -
@@ -33,7 +34,14 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	netnsPath := args[0]
 	nftArgs := args[1:]
 
-	cmd := nsenterCommand(netnsPath, nftArgs)
+	ns, err := os.Open(netnsPath)
+	if err != nil {
+		_, _ = io.WriteString(stderr, "open namespace: "+err.Error()+"\n")
+		return 1
+	}
+	defer ns.Close()
+	cmd := nsenterCommand("/proc/self/fd/3", nftArgs)
+	cmd.ExtraFiles = []*os.File{ns}
 	cmd.Stdin = stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr

@@ -2,7 +2,7 @@ package api
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"sync"
 	"time"
 
@@ -10,13 +10,17 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/persistence"
 )
 
 type consoleSessionHub struct {
 	mu       sync.RWMutex
 	sessions map[string]*consoleSessionState
 	store    apiStore
+	initErr  error
 }
+
+var errConsoleSessionNotFound = errors.New("session not found")
 
 type consoleSessionState struct {
 	session controlplane.ConsoleSession
@@ -32,24 +36,65 @@ type wsPeer struct {
 }
 
 func newConsoleSessionHub(store apiStore) *consoleSessionHub {
+	return newConsoleSessionHubWithRecovery(store, true)
+}
+
+func newConsoleSessionHubWithRecovery(store apiStore, recoverInterrupted bool) *consoleSessionHub {
 	h := &consoleSessionHub{sessions: map[string]*consoleSessionState{}, store: store}
 	if store != nil {
-		if items, err := store.ListConsoleSessions(context.Background(), ""); err == nil {
-			for _, sess := range items {
-				if sess.Status == controlplane.ConsoleSessionStatusQueued || sess.Status == controlplane.ConsoleSessionStatusRunning {
-					sess.Status = controlplane.ConsoleSessionStatusLost
-					sess.Err = "api restarted before console session completion"
-					sess.EndedAt = time.Now().UTC()
-					_ = store.SaveConsoleSession(context.Background(), sess)
-				}
-				h.sessions[sess.ID] = newConsoleSessionState(sess, controlplane.ConsoleRequest{})
-			}
+		items, err := store.ListConsoleSessions(context.Background(), "")
+		if err != nil {
+			h.initErr = err
+			return h
 		}
+		loaded := map[string]*consoleSessionState{}
+		for _, sess := range items {
+			if recoverInterrupted {
+				sess, err = recoverConsoleObservation(store, sess)
+				if err != nil {
+					h.initErr = err
+					return h
+				}
+			}
+			loaded[sess.ID] = newConsoleSessionState(sess, controlplane.ConsoleRequest{})
+		}
+		h.sessions = loaded
 	}
 	return h
 }
 
-func (h *consoleSessionHub) Create(topology, node, agentID string, req controlplane.ConsoleRequest) controlplane.ConsoleSession {
+func recoverConsoleObservation(store consoleStore, sess controlplane.ConsoleSession) (controlplane.ConsoleSession, error) {
+	for attempt := 0; attempt < 3; attempt++ {
+		if sess.Status != controlplane.ConsoleSessionStatusQueued && sess.Status != controlplane.ConsoleSessionStatusRunning {
+			return sess, nil
+		}
+		next := cloneConsoleSession(sess)
+		next.Status = controlplane.ConsoleSessionStatusLost
+		next.Err = "api restarted before console session completion"
+		next.EndedAt = time.Now().UTC()
+		err := store.CompareAndSwapConsoleSession(context.Background(), sess, next)
+		if err == nil {
+			return next, nil
+		}
+		if !errors.Is(err, persistence.ErrConflict) {
+			return controlplane.ConsoleSession{}, err
+		}
+		current, readErr := store.GetConsoleSession(context.Background(), sess.ID)
+		if readErr != nil {
+			return controlplane.ConsoleSession{}, errors.Join(err, readErr)
+		}
+		if current == nil || persistence.ValidateConsoleSessionCAS(sess, *current) != nil {
+			return controlplane.ConsoleSession{}, err
+		}
+		sess = cloneConsoleSession(*current)
+		if sess.Status != controlplane.ConsoleSessionStatusQueued && sess.Status != controlplane.ConsoleSessionStatusRunning {
+			return sess, nil
+		}
+	}
+	return controlplane.ConsoleSession{}, persistence.ErrConflict
+}
+
+func newConsoleSession(topology, node, agentID string, req controlplane.ConsoleRequest) controlplane.ConsoleSession {
 	now := time.Now().UTC()
 	actor := req.RequestedBy
 	if actor == "" {
@@ -80,76 +125,160 @@ func (h *consoleSessionHub) Create(topology, node, agentID string, req controlpl
 		}},
 		CreatedAt: now,
 	}
-	h.mu.Lock()
-	h.sessions[sess.ID] = newConsoleSessionState(sess, req)
-	h.mu.Unlock()
-	h.persist(sess)
 	return sess
 }
 
+func (h *consoleSessionHub) persistSession(ctx context.Context, sess controlplane.ConsoleSession, req controlplane.ConsoleRequest, dispatch *controlplane.AgentCommand) (controlplane.ConsoleSession, error) {
+	if h.initErr != nil {
+		return controlplane.ConsoleSession{}, h.initErr
+	}
+	if h.store == nil {
+		return controlplane.ConsoleSession{}, errors.New("console persistence unavailable")
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return controlplane.ConsoleSession{}, err
+	}
+	var err error
+	if dispatch != nil {
+		err = h.store.CreateConsoleDispatch(ctx, sess, *dispatch)
+	} else {
+		err = h.store.SaveConsoleSession(ctx, sess)
+	}
+	if err != nil {
+		return controlplane.ConsoleSession{}, err
+	}
+	h.sessions[sess.ID] = newConsoleSessionState(sess, req)
+	return sess, nil
+}
+
 func (h *consoleSessionHub) Get(id string) (*consoleSessionState, error) {
+	if h.initErr != nil {
+		return nil, h.initErr
+	}
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	st := h.sessions[id]
 	if st == nil {
-		return nil, fmt.Errorf("session not found")
+		return nil, errConsoleSessionNotFound
 	}
 	return st, nil
 }
 
 func (h *consoleSessionHub) Snapshot(id string) (controlplane.ConsoleSession, error) {
-	st, err := h.Get(id)
-	if err != nil {
-		return controlplane.ConsoleSession{}, err
+	if h.initErr != nil {
+		return controlplane.ConsoleSession{}, h.initErr
 	}
-	return st.session, nil
-}
-
-func (h *consoleSessionHub) Update(id string, fn func(*controlplane.ConsoleSession)) {
-	var sess controlplane.ConsoleSession
-	h.mu.Lock()
-	if st := h.sessions[id]; st != nil {
-		fn(&st.session)
-		sess = st.session
-	}
-	h.mu.Unlock()
-	if sess.ID != "" {
-		h.persist(sess)
-	}
-}
-
-func (h *consoleSessionHub) Cancel(id, reason, actor string) error {
-	h.mu.Lock()
+	h.mu.RLock()
+	defer h.mu.RUnlock()
 	st := h.sessions[id]
 	if st == nil {
-		h.mu.Unlock()
-		return fmt.Errorf("session not found")
+		return controlplane.ConsoleSession{}, errConsoleSessionNotFound
 	}
-	if st.session.Status != controlplane.ConsoleSessionStatusClosed && st.session.Status != controlplane.ConsoleSessionStatusFailed && st.session.Status != controlplane.ConsoleSessionStatusCancelled {
-		st.session.Status = controlplane.ConsoleSessionStatusCancelled
-		st.session.Err = reason
-		st.session.EndedAt = time.Now().UTC()
-		st.session.Audit = append(st.session.Audit, controlplane.Event{
+	return cloneConsoleSession(st.session), nil
+}
+
+func cloneConsoleSession(sess controlplane.ConsoleSession) controlplane.ConsoleSession {
+	sess.Roles = append([]string(nil), sess.Roles...)
+	sess.Audit = append([]controlplane.Event(nil), sess.Audit...)
+	for i := range sess.Audit {
+		sess.Audit[i].Roles = append([]string(nil), sess.Audit[i].Roles...)
+	}
+	if sess.ExitCode != nil {
+		code := *sess.ExitCode
+		sess.ExitCode = &code
+	}
+	return sess
+}
+
+func (h *consoleSessionHub) Update(id string, fn func(*controlplane.ConsoleSession)) error {
+	if h.initErr != nil {
+		return h.initErr
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	st := h.sessions[id]
+	if st == nil {
+		return errConsoleSessionNotFound
+	}
+	if h.store == nil {
+		return errors.New("console persistence unavailable")
+	}
+	sess := cloneConsoleSession(st.session)
+	fn(&sess)
+	if err := h.store.CompareAndSwapConsoleSession(context.Background(), st.session, sess); err != nil {
+		return h.refreshAfterConflict(st, err)
+	}
+	st.session = cloneConsoleSession(sess)
+	return nil
+}
+
+func (h *consoleSessionHub) Cancel(ctx context.Context, id, reason string, subj requestSubject) error {
+	if h.initErr != nil {
+		return h.initErr
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	st := h.sessions[id]
+	if st == nil {
+		return errConsoleSessionNotFound
+	}
+	sess := st.session
+	if sess.Status != controlplane.ConsoleSessionStatusClosed && sess.Status != controlplane.ConsoleSessionStatusFailed && sess.Status != controlplane.ConsoleSessionStatusCancelled && sess.Status != controlplane.ConsoleSessionStatusDenied && sess.Status != controlplane.ConsoleSessionStatusCancelling {
+		sess.Status = controlplane.ConsoleSessionStatusCancelling
+		sess.Err = reason
+		sess.EndedAt = time.Time{}
+		sess.Audit = append(append([]controlplane.Event(nil), sess.Audit...), controlplane.Event{
 			ProjectID: st.session.ProjectID,
 			Workspace: st.session.Workspace,
 			Resource:  "sysbox_node." + st.session.Node,
 			Action:    "cancel",
-			Status:    controlplane.ConsoleSessionStatusCancelled,
-			Actor:     actor,
-			Roles:     append([]string{}, st.session.Roles...),
-			Message:   reason + " by " + actor,
+			Status:    controlplane.ConsoleSessionStatusCancelling,
+			Actor:     subj.User,
+			Roles:     append([]string{}, subj.Roles...),
+			Message:   reason + " by " + subj.User,
 			CreatedAt: time.Now().UTC(),
 		})
 	}
+	if h.store == nil {
+		return errors.New("console persistence unavailable")
+	}
+	var err error
+	if sess.Status == controlplane.ConsoleSessionStatusCancelling {
+		err = h.store.CancelConsoleSession(ctx, st.session, sess)
+	} else {
+		err = h.store.CompareAndSwapConsoleSession(ctx, st.session, sess)
+	}
+	if err != nil {
+		return h.refreshAfterConflict(st, err)
+	}
+	st.session = sess
 	select {
 	case <-st.cancel:
 	default:
 		close(st.cancel)
 	}
-	sess := st.session
-	h.mu.Unlock()
-	h.persist(sess)
 	return nil
+}
+
+// Called with h.mu held. Refresh an obsolete observation so a later operation
+// can make progress, but never replay a callback against a different state.
+func (h *consoleSessionHub) refreshAfterConflict(st *consoleSessionState, err error) error {
+	if !errors.Is(err, persistence.ErrConflict) {
+		return err
+	}
+	current, readErr := h.store.GetConsoleSession(context.Background(), st.session.ID)
+	if readErr != nil {
+		return errors.Join(err, readErr)
+	}
+	if current == nil || persistence.ValidateConsoleSessionCAS(st.session, *current) != nil {
+		return err
+	}
+	st.session = cloneConsoleSession(*current)
+	// Refresh is not a successful cancellation transaction. Only Cancel may
+	// signal the local relay after the durable session/outbox pair is accepted.
+	return err
 }
 
 func newConsoleSessionState(sess controlplane.ConsoleSession, req controlplane.ConsoleRequest) *consoleSessionState {
@@ -160,11 +289,5 @@ func newConsoleSessionState(sess controlplane.ConsoleSession, req controlplane.C
 		agent:   make(chan *wsPeer, 1),
 		cancel:  make(chan struct{}),
 		done:    make(chan struct{}),
-	}
-}
-
-func (h *consoleSessionHub) persist(sess controlplane.ConsoleSession) {
-	if h.store != nil {
-		_ = h.store.SaveConsoleSession(context.Background(), sess)
 	}
 }

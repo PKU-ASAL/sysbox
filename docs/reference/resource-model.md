@@ -230,3 +230,9 @@ driver.DefaultRegistry.Require(name, capability)   // 支持才给，不支持�
 | provider block | 节点内嵌的引擎私有参数块 |
 | capability | 引擎声明自己「能做某事」的能力单元 |
 | handler | 资源类型的所有者（schema/解码/规划/生命周期） |
+
+Deletion is a resumable local workflow. After the owning-agent cleanup receipt
+passes, sysbox persists a `delete.intent` with the topology identity and state
+serial before clearing canonical state. Controller restart resumes workspace,
+placement and health cleanup from that marker. Publication is fenced until the
+marker is removed; the marker never substitutes for provider teardown evidence.

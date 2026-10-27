@@ -14,6 +14,7 @@ type PlanActionType string
 const (
 	PlanActionNoop    PlanActionType = "no-op"
 	PlanActionCreate  PlanActionType = "create"
+	PlanActionAdopt   PlanActionType = "adopt"
 	PlanActionReplace PlanActionType = "replace"
 	PlanActionDelete  PlanActionType = "delete"
 	PlanActionRead    PlanActionType = "read"

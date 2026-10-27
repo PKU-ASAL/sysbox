@@ -2,8 +2,11 @@ package docker
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/google/uuid"
+	"strings"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/errdefs"
@@ -11,28 +14,44 @@ import (
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
-const dockerResetHandleVersion = 1
+const dockerResetHandleVersion = 2
 
 type resetHandleState struct {
-	Version             int               `json:"version"`
-	OldContainerID      string            `json:"old_container_id"`
-	ContainerName       string            `json:"container_name"`
-	BaselineDigest      string            `json:"baseline_digest"`
-	Ownership           map[string]string `json:"ownership"`
-	ImageCmd            []string          `json:"image_cmd,omitempty"`
-	ImageEntrypoint     []string          `json:"image_entrypoint,omitempty"`
-	DirectLaunch        bool              `json:"direct_launch,omitempty"`
-	RemoveDefaultBridge bool              `json:"remove_default_bridge,omitempty"`
+	Identity            substrate.OperationIdentity `json:"identity"`
+	OldGeneration       int64                       `json:"old_generation"`
+	ResetToken          string                      `json:"reset_token"`
+	NewContainerID      string                      `json:"new_container_id,omitempty"`
+	Version             int                         `json:"version"`
+	OldContainerID      string                      `json:"old_container_id"`
+	ContainerName       string                      `json:"container_name"`
+	LocalImageID        string                      `json:"local_image_id,omitempty"`
+	BaselineDigest      string                      `json:"baseline_digest"`
+	Ownership           map[string]string           `json:"ownership"`
+	ImageCmd            []string                    `json:"image_cmd,omitempty"`
+	ImageEntrypoint     []string                    `json:"image_entrypoint,omitempty"`
+	DirectLaunch        bool                        `json:"direct_launch,omitempty"`
+	RemoveDefaultBridge bool                        `json:"remove_default_bridge,omitempty"`
 }
 
 func (s *Substrate) PrepareReset(ctx context.Context, request substrate.ResetRequest) (substrate.ResetHandle, error) {
 	if err := validateDockerResetRequest(request); err != nil {
 		return substrate.ResetHandle{}, err
 	}
+	identity, ok := substrate.OperationIdentityFromContext(ctx)
+	if !ok || identity.Validate() != nil || request.Current.Generation < 1 || identity.Generation <= request.Current.Generation {
+		return substrate.ResetHandle{}, fmt.Errorf("docker reset requires durable old and target generation identities")
+	}
+	oldIdentity := identity
+	oldIdentity.Generation = request.Current.Generation
+	ownership := copyResetLabels(request.Node.Labels)
+	for k, v := range operationLabels(oldIdentity) {
+		ownership[k] = v
+	}
 	state := &resetHandleState{
+		Identity: identity, OldGeneration: request.Current.Generation, ResetToken: uuid.NewString(),
 		Version: dockerResetHandleVersion, OldContainerID: request.Current.ID,
-		ContainerName: request.Node.Name, BaselineDigest: request.Baseline.Digest,
-		Ownership: copyResetLabels(request.Node.Labels),
+		ContainerName: request.Node.Name, BaselineDigest: request.Baseline.Digest, LocalImageID: request.Node.Image.ID,
+		Ownership: ownership,
 	}
 	_, portBindings, err := dockerPortConfig(request.Node.Ports)
 	if err != nil {
@@ -54,13 +73,23 @@ func (s *Substrate) DestroyReset(ctx context.Context, handle substrate.ResetHand
 	if err != nil {
 		return err
 	}
+	if err := validateResetIdentity(ctx, state); err != nil {
+		return err
+	}
 	if state.OldContainerID != "" {
 		inspected, err := s.cli.ContainerInspect(ctx, state.OldContainerID)
 		if err != nil && !errdefs.IsNotFound(err) {
 			return fmt.Errorf("docker reset inspect old container: %w", err)
 		}
 		if err == nil {
-			if err := requireResetOwnership(inspected.Config.Labels, state.Ownership); err != nil {
+			if inspected.ID != state.OldContainerID || inspected.Config == nil {
+				return fmt.Errorf("docker reset old container exact identity mismatch")
+			}
+			actual, e := s.managedOwnershipLabels(ctx, inspected)
+			if e != nil {
+				return e
+			}
+			if err := requireResetOwnership(actual, resetOldLabels(state)); err != nil {
 				return err
 			}
 			if err := s.cli.ContainerRemove(ctx, state.OldContainerID, container.RemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
@@ -76,26 +105,45 @@ func (s *Substrate) ApplyReset(ctx context.Context, handle substrate.ResetHandle
 	if err != nil {
 		return substrate.NodeHandle{}, err
 	}
+	if err := validateResetIdentity(ctx, state); err != nil {
+		return substrate.NodeHandle{}, err
+	}
 	if inspected, inspectErr := s.cli.ContainerInspect(ctx, state.ContainerName); inspectErr == nil {
-		if err := requireResetOwnership(inspected.Config.Labels, state.Ownership); err != nil {
+		if inspected.Config == nil {
+			return substrate.NodeHandle{}, fmt.Errorf("docker reset replacement metadata missing")
+		}
+		if err := requireResetOwnership(inspected.Config.Labels, resetReplacementLabels(state)); err != nil {
 			return substrate.NodeHandle{}, err
+		}
+		if state.NewContainerID != "" && state.NewContainerID != inspected.ID {
+			return substrate.NodeHandle{}, fmt.Errorf("docker reset replacement exact ID mismatch")
 		}
 		if inspected.ID == state.OldContainerID {
 			return substrate.NodeHandle{}, fmt.Errorf("docker reset old container %s still occupies %q", state.OldContainerID, state.ContainerName)
 		}
-		if normalizeDigest(inspected.Image) != normalizeDigest(state.BaselineDigest) {
-			return substrate.NodeHandle{}, fmt.Errorf("docker reset container %s uses image %s, want %s", inspected.ID, inspected.Image, state.BaselineDigest)
+		if normalizeDigest(inspected.Image) != normalizeDigest(state.LocalImageID) {
+			return substrate.NodeHandle{}, fmt.Errorf("docker reset container %s uses image %s, want %s", inspected.ID, inspected.Image, state.LocalImageID)
 		}
-		return dockerHandleFromResetState(inspected.ID, state), nil
+		state.NewContainerID = inspected.ID
+		return managedHandle(inspected, state.Identity.Generation)
 	} else if !errdefs.IsNotFound(inspectErr) {
 		return substrate.NodeHandle{}, fmt.Errorf("docker reset inspect replacement: %w", inspectErr)
 	}
-	return s.createNode(ctx, request.Node, true)
+	request.Node.Labels = copyLabels(request.Node.Labels)
+	request.Node.Labels["sysbox.reset_token"] = state.ResetToken
+	created, err := s.createNode(ctx, request.Node, true)
+	if err == nil {
+		state.NewContainerID = created.ID
+	}
+	return created, err
 }
 
 func (s *Substrate) ObserveReset(ctx context.Context, handle substrate.ResetHandle) (substrate.ResetObservation, error) {
 	state, _, err := dockerResetState(handle)
 	if err != nil {
+		return substrate.ResetObservation{}, err
+	}
+	if err := validateResetIdentity(ctx, state); err != nil {
 		return substrate.ResetObservation{}, err
 	}
 	observation := substrate.ResetObservation{Phase: substrate.ResetPhaseApplying, OldExternalID: state.OldContainerID, BaselineDigest: state.BaselineDigest}
@@ -114,12 +162,33 @@ func (s *Substrate) ObserveReset(ctx context.Context, handle substrate.ResetHand
 		}
 		return observation, err
 	}
-	if err := requireResetOwnership(replacement.Config.Labels, state.Ownership); err != nil {
+	if replacement.Config == nil {
+		return observation, fmt.Errorf("docker reset replacement metadata missing")
+	}
+	if replacement.ID == state.OldContainerID {
+		if state.NewContainerID != "" {
+			return observation, fmt.Errorf("docker reset old container reappeared after replacement")
+		}
+		actual, e := s.managedOwnershipLabels(ctx, replacement)
+		if e != nil {
+			return observation, e
+		}
+		if err := requireResetOwnership(actual, resetOldLabels(state)); err != nil {
+			return observation, err
+		}
+		observation.Phase = substrate.ResetPhasePrepared
+		observation.Reason = "original container still present; replacement not created"
+		return observation, nil
+	}
+	if err := requireResetOwnership(replacement.Config.Labels, resetReplacementLabels(state)); err != nil {
 		return observation, err
 	}
+	if state.NewContainerID != "" && replacement.ID != state.NewContainerID {
+		return observation, fmt.Errorf("docker reset replacement exact ID mismatch")
+	}
 	observation.NewExternalID = replacement.ID
-	if normalizeDigest(replacement.Image) != normalizeDigest(state.BaselineDigest) {
-		observation.Reason = fmt.Sprintf("replacement image %s does not match baseline %s", replacement.Image, state.BaselineDigest)
+	if normalizeDigest(replacement.Image) != normalizeDigest(state.LocalImageID) {
+		observation.Reason = fmt.Sprintf("replacement image %s does not match baseline %s", replacement.Image, state.LocalImageID)
 		return observation, nil
 	}
 	if len(observation.Residue) == 0 {
@@ -134,6 +203,9 @@ func (s *Substrate) CleanupReset(ctx context.Context, handle substrate.ResetHand
 	if err != nil {
 		return err
 	}
+	if err := validateResetIdentity(ctx, state); err != nil {
+		return err
+	}
 	if state.OldContainerID == "" {
 		return nil
 	}
@@ -144,7 +216,14 @@ func (s *Substrate) CleanupReset(ctx context.Context, handle substrate.ResetHand
 		}
 		return err
 	}
-	if err := requireResetOwnership(old.Config.Labels, state.Ownership); err != nil {
+	if old.ID != state.OldContainerID || old.Config == nil {
+		return fmt.Errorf("docker reset old container exact identity mismatch")
+	}
+	actual, e := s.managedOwnershipLabels(ctx, old)
+	if e != nil {
+		return e
+	}
+	if err := requireResetOwnership(actual, resetOldLabels(state)); err != nil {
 		return err
 	}
 	return s.cli.ContainerRemove(ctx, state.OldContainerID, container.RemoveOptions{Force: true})
@@ -177,10 +256,55 @@ func dockerResetState(handle substrate.ResetHandle) (*resetHandleState, substrat
 	if state.Version != dockerResetHandleVersion {
 		return nil, substrate.ResetRequest{}, fmt.Errorf("docker reset handle version %d is unsupported", state.Version)
 	}
+	if state.Identity.Validate() != nil || state.OldGeneration < 1 || state.OldGeneration >= state.Identity.Generation || state.ResetToken == "" {
+		return nil, substrate.ResetRequest{}, fmt.Errorf("docker reset handle lacks durable generation identity")
+	}
 	if handle.Request.Node.Name == "" {
 		return nil, substrate.ResetRequest{}, fmt.Errorf("docker reset request was not injected by runtime")
 	}
+	if err := validateDockerResetRequest(handle.Request); err != nil {
+		return nil, substrate.ResetRequest{}, err
+	}
+	// Older version-2 handles only supported image ID == baseline digest.
+	// Preserve that exact binding; never infer a different ID from a new request.
+	if state.LocalImageID == "" {
+		state.LocalImageID = state.BaselineDigest
+	}
+	if handle.Request.Node.Name != state.ContainerName || normalizeDigest(handle.Request.Node.Image.ID) != normalizeDigest(state.LocalImageID) || normalizeDigest(handle.Request.Baseline.Digest) != normalizeDigest(state.BaselineDigest) {
+		return nil, substrate.ResetRequest{}, fmt.Errorf("docker reset request changed prepared image binding")
+	}
 	return state, handle.Request, nil
+}
+
+func validateResetIdentity(ctx context.Context, state *resetHandleState) error {
+	id, ok := substrate.OperationIdentityFromContext(ctx)
+	if !ok || id != state.Identity {
+		return fmt.Errorf("docker reset operation identity mismatch")
+	}
+	return nil
+}
+func resetReplacementLabels(state *resetHandleState) map[string]string {
+	labels := operationLabels(state.Identity)
+	labels["sysbox.action_id"] = state.Identity.ActionID
+	labels["sysbox.reset_token"] = state.ResetToken
+	return labels
+}
+
+func resetOldLabels(state *resetHandleState) map[string]string {
+	labels := copyLabels(state.Ownership)
+	identity := state.Identity
+	identity.Generation = state.OldGeneration
+	for key, value := range operationLabels(identity) {
+		labels[key] = value
+	}
+	return labels
+}
+func copyLabels(labels map[string]string) map[string]string {
+	out := make(map[string]string, len(labels))
+	for k, v := range labels {
+		out[k] = v
+	}
+	return out
 }
 
 func validateDockerResetRequest(request substrate.ResetRequest) error {
@@ -190,7 +314,12 @@ func validateDockerResetRequest(request substrate.ResetRequest) error {
 	if request.Node.Name == "" || request.Node.Image.ID == "" {
 		return fmt.Errorf("docker reset requires node name and immutable image ID")
 	}
-	if normalizeDigest(request.Node.Image.Identity.Digest) != normalizeDigest(request.Baseline.Digest) || normalizeDigest(request.Node.Image.ID) != normalizeDigest(request.Baseline.Digest) {
+	rawID := strings.TrimPrefix(request.Node.Image.ID, "sha256:")
+	decoded, err := hex.DecodeString(rawID)
+	if err != nil || len(decoded) != 32 || request.Node.Image.ID != "sha256:"+hex.EncodeToString(decoded) {
+		return fmt.Errorf("docker reset requires a canonical immutable image ID")
+	}
+	if normalizeDigest(request.Node.Image.Identity.Digest) != normalizeDigest(request.Baseline.Digest) {
 		return fmt.Errorf("docker reset node image does not match pinned baseline %s", request.Baseline.Digest)
 	}
 	return requireResetOwnership(request.Node.Labels, request.Node.Labels)
@@ -223,5 +352,5 @@ func dockerHandleFromResetState(id string, state *resetHandleState) substrate.No
 		ContainerName: state.ContainerName, ImageCmd: append([]string(nil), state.ImageCmd...),
 		ImageEntrypoint: append([]string(nil), state.ImageEntrypoint...), RemoveDefaultBridge: state.RemoveDefaultBridge,
 		DirectLaunch: state.DirectLaunch,
-	}, Conn: substrate.ConnInfo{Kind: substrate.ConnKindDocker, Endpoint: id}}
+	}, Conn: substrate.ConnInfo{Kind: substrate.ConnKindDocker, Endpoint: id, User: "root"}}
 }

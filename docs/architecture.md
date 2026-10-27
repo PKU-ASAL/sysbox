@@ -2,6 +2,8 @@
 
 本文是 Sysbox 系统边界和持久契约的规范性说明。操作步骤位于 guides/operations，字段和 endpoint 位于 reference。
 
+> 观察驱动重构分支正在迁移实现。生命周期已改用 action/state 原子 repository；API metadata 等部分仍在迁移中。以[实施状态与验证边界](design/2026-09-28-runtime-refactor-implementation-status.md)区分已落地机制和目标契约。
+
 ## 系统上下文
 
 Sysbox 接收 HCL topology intent，解析为 typed resource graph，结合 durable state 与外部 observation 生成 plan，再通过 capability driver 修改宿主机资源。
@@ -61,7 +63,7 @@ Planner 将实际 digest 纳入 stored-plan fingerprint。Apply/reset 在 destru
 
 Handler 定义“资源意味着什么”；driver 定义“如何操作外部系统”。Driver descriptor 只声明实现的 capability，consumer 通过 registry 请求能力。Planning 在 mutation 前验证所需 capability 是否存在。
 
-关键 capability 包括 artifact、managed network、node lifecycle、NIC、node state、guest execution、policy、reset 和 import。Runtime 不导入 Docker、Firecracker、libvirt 或 nftables 的具体实现。
+关键 capability 包括 artifact、managed network、node lifecycle、NIC、node state、guest execution、policy、reset 和 import。对于 provider 请求已经发出但没有返回的现场，还需要 substrate 提供 `OperationQuiescer`：它必须用持久 daemon/host anchor 证明同一个 operation identity 已经停止。lease 超时、控制器重启、资源存在或资源缺失都不是该证明。没有此 SPI 时恢复保持 `ErrActionUncertain`，绝不根据 observation 猜测结果。Runtime 不导入 Docker、Firecracker、libvirt 或 nftables 的具体实现。
 
 `pkg/substrate` 只承载中立 wire/execution data types，不负责 registry 或 driver selection。
 
@@ -169,6 +171,8 @@ sequenceDiagram
 3. 通过 handler/driver 观察外部对象。
 4. 根据观察结果采用已完成对象、继续剩余步骤或清理残留。
 5. CAS 保存 state，再完成旧 generation cleanup。
+
+如果 action journal 的 provider operation 状态仍为 `unknown`，恢复在第 3 步之前必须取得并校验 quiescence proof。proof 绑定 action ID、owner/resource UID、generation 和 provider evidence digest；历史只有 intent 的旧记录没有自动补证路径，只能审计或显式人工处置。
 
 Repeated recovery 必须幂等。Unavailable 或 invalid observation 停止恢复；missing attachment 可被记录为 drift，以受控 replacement 收敛。
 

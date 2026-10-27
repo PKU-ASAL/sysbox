@@ -13,7 +13,12 @@ import (
 )
 
 type Plan struct {
-	Actions []controlplane.PlannedChange `json:"actions"`
+	Actions     []controlplane.PlannedChange `json:"actions"`
+	bindings    map[string]planBinding
+	excluded    map[string]bool
+	stateSerial int64
+	topologyUID string
+	bound       bool
 }
 
 func (p Plan) Validate() error {
@@ -37,6 +42,7 @@ func (p Plan) Validate() error {
 }
 
 func ComputePlan(g *graph.Graph, s *state.State) (*Plan, error) {
+	inferManagedBridgeExposure(g, s)
 	for _, resource := range s.Resources {
 		if _, ok := GetResourceHandler(resource.Address.Type); !ok {
 			return nil, fmt.Errorf("unsupported state resource type %q", resource.Address.Type)
@@ -92,6 +98,9 @@ func ComputePlan(g *graph.Graph, s *state.State) (*Plan, error) {
 	}
 	sort.Slice(deletes, func(i, j int) bool { return deletes[j].Address.Less(deletes[i].Address) })
 	plan.Actions = append(plan.Actions, deletes...)
+	if err := plan.bind(g, s); err != nil {
+		return nil, err
+	}
 	return plan, plan.Validate()
 }
 
@@ -146,9 +155,12 @@ func planDiffByDesiredHash(desired *graph.Node, current *state.Resource) (contro
 }
 
 func FilterPlanByTarget(plan *Plan, typ, name string) *Plan {
-	filtered := &Plan{Actions: make([]controlplane.PlannedChange, 0, len(plan.Actions))}
+	filtered := plan.clone()
+	filtered.Actions = make([]controlplane.PlannedChange, 0, len(plan.Actions))
+	filtered.excluded = map[string]bool{}
 	for _, change := range plan.Actions {
 		if change.Address.Type != typ || change.Address.Name != name {
+			filtered.excluded[change.Address.String()] = true
 			if change.Action != controlplane.PlanActionDelete {
 				change.Action = controlplane.PlanActionNoop
 				change.Reason = ""

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -15,27 +16,64 @@ import (
 
 const DefaultConfigPath = "/etc/sysbox/sysbox.yaml"
 
+type RevisionRemoteConfig struct {
+	URL       string `yaml:"url" json:"url"`
+	Consumer  string `yaml:"consumer" json:"consumer"`
+	TokenFile string `yaml:"token_file" json:"token_file"`
+}
+
+type RevisionSQLConsumer struct {
+	URL       string `yaml:"url" json:"url"`
+	TokenFile string `yaml:"token_file" json:"token_file"`
+}
 type ServiceConfig struct {
-	Version    int              `yaml:"version" json:"version"`
-	API        APIConfig        `yaml:"api" json:"api"`
-	Agent      AgentConfig      `yaml:"agent" json:"agent,omitempty"`
-	Run        RunConfig        `yaml:"run" json:"run,omitempty"`
-	Paths      PathsConfig      `yaml:"paths" json:"paths"`
-	State      StateConfig      `yaml:"state" json:"state"`
-	Supervisor SupervisorConfig `yaml:"supervisor" json:"supervisor"`
-	Providers  ProvidersConfig  `yaml:"providers" json:"providers"`
-	Artifacts  ArtifactsConfig  `yaml:"artifacts" json:"artifacts"`
+	RevisionRegistryID   string                         `yaml:"revision_registry_id" json:"revision_registry_id,omitempty"`
+	RevisionUpstreams    map[string]string              `yaml:"revision_upstreams" json:"revision_upstreams,omitempty"`
+	RevisionSQLConsumers map[string]RevisionSQLConsumer `yaml:"revision_sql_consumers" json:"revision_sql_consumers,omitempty"`
+	RevisionRemote       *RevisionRemoteConfig          `yaml:"revision_remote" json:"revision_remote,omitempty"`
+	RevisionConsumers    map[string]string              `yaml:"revision_consumers" json:"revision_consumers,omitempty"`
+
+	RevisionRegistry    string               `yaml:"revision_registry" json:"revision_registry,omitempty"`
+	GCPublicationSource string               `yaml:"gc_publication_source" json:"gc_publication_source,omitempty"`
+	HostSupervisor      HostSupervisorConfig `yaml:"host_supervisor" json:"host_supervisor,omitempty"`
+	Version             int                  `yaml:"version" json:"version"`
+	API                 APIConfig            `yaml:"api" json:"api"`
+	Agent               AgentConfig          `yaml:"agent" json:"agent,omitempty"`
+	Run                 RunConfig            `yaml:"run" json:"run,omitempty"`
+	Paths               PathsConfig          `yaml:"paths" json:"paths"`
+	State               StateConfig          `yaml:"state" json:"state"`
+	Supervisor          SupervisorConfig     `yaml:"supervisor" json:"supervisor"`
+	Providers           ProvidersConfig      `yaml:"providers" json:"providers"`
+	Artifacts           ArtifactsConfig      `yaml:"artifacts" json:"artifacts"`
+}
+
+type HostSupervisorConfig struct {
+	Socket         string `yaml:"socket" json:"socket"`
+	Root           string `yaml:"root" json:"root"`
+	SigningKeyFile string `yaml:"signing_key_file" json:"signing_key_file"`
+	WorkerGroupID  int    `yaml:"worker_group_id" json:"worker_group_id"`
 }
 
 type APIConfig struct {
-	Listen         string              `yaml:"listen" json:"listen"`
-	Token          string              `yaml:"token" json:"token,omitempty"`
-	AllowedOrigins []string            `yaml:"allowed_origins" json:"allowed_origins,omitempty"`
-	Console        APIConsoleConfig    `yaml:"console" json:"console,omitempty"`
-	RBAC           APIRBACConfig       `yaml:"rbac" json:"rbac,omitempty"`
-	Audit          APIAuditConfig      `yaml:"audit" json:"audit,omitempty"`
-	Headers        APIHeadersConfig    `yaml:"headers" json:"headers,omitempty"`
-	Evaluation     APIEvaluationConfig `yaml:"evaluation" json:"evaluation,omitempty"`
+	ExecutionGrant APIExecutionGrantConfig `yaml:"execution_grant" json:"execution_grant,omitempty"`
+	Listen         string                  `yaml:"listen" json:"listen"`
+	Token          string                  `yaml:"token" json:"token,omitempty"`
+	AllowedOrigins []string                `yaml:"allowed_origins" json:"allowed_origins,omitempty"`
+	Console        APIConsoleConfig        `yaml:"console" json:"console,omitempty"`
+	RBAC           APIRBACConfig           `yaml:"rbac" json:"rbac,omitempty"`
+	Audit          APIAuditConfig          `yaml:"audit" json:"audit,omitempty"`
+	Headers        APIHeadersConfig        `yaml:"headers" json:"headers,omitempty"`
+	Evaluation     APIEvaluationConfig     `yaml:"evaluation" json:"evaluation,omitempty"`
+}
+
+type DisposableFenceTarget struct {
+	LabID                   string `yaml:"lab_id" json:"lab_id"`
+	ControllerPublicKeyFile string `yaml:"controller_public_key_file" json:"controller_public_key_file"`
+}
+type APIExecutionGrantConfig struct {
+	DisposableFenceTargets map[string]DisposableFenceTarget `yaml:"disposable_fence_targets" json:"disposable_fence_targets,omitempty"`
+	SigningKeyFile         string                           `yaml:"signing_key_file" json:"signing_key_file,omitempty"`
+	HostPublicKeyFiles     map[string]string                `yaml:"host_public_key_files" json:"host_public_key_files,omitempty"`
 }
 
 type APIEvaluationConfig struct {
@@ -62,8 +100,11 @@ type APIHeadersConfig struct {
 }
 
 type AgentConfig struct {
-	Policy AgentPolicyConfig `yaml:"policy" json:"policy,omitempty"`
-	Lease  AgentLeaseConfig  `yaml:"lease" json:"lease,omitempty"`
+	HostSupervisorSocket        string            `yaml:"host_supervisor_socket" json:"host_supervisor_socket,omitempty"`
+	ExecutionSessionFile        string            `yaml:"execution_session_file" json:"execution_session_file,omitempty"`
+	ExecutionGrantPublicKeyFile string            `yaml:"execution_grant_public_key_file" json:"execution_grant_public_key_file,omitempty"`
+	Policy                      AgentPolicyConfig `yaml:"policy" json:"policy,omitempty"`
+	Lease                       AgentLeaseConfig  `yaml:"lease" json:"lease,omitempty"`
 }
 
 type AgentPolicyConfig struct {
@@ -181,7 +222,7 @@ func DefaultServiceConfig() ServiceConfig {
 				CommandTTL:   "30s",
 			},
 			Policy: AgentPolicyConfig{
-				AllowedCommands: []string{"run_assigned", "session_open", "node_operation", "cancel_command", "guest_execution", "guest_file_put"},
+				AllowedCommands: []string{"run_assigned", "run_recovery", "session_open", "node_operation", "cancel_command", "guest_execution", "guest_file_put"},
 				AllowConsole:    &allow,
 				AllowImport:     &allow,
 			},
@@ -399,7 +440,7 @@ func applyDerivedDefaults(c *ServiceConfig) {
 		c.API.Headers.Roles = "X-Sysbox-Roles"
 	}
 	if len(c.Agent.Policy.AllowedCommands) == 0 {
-		c.Agent.Policy.AllowedCommands = []string{"run_assigned", "session_open", "node_operation", "cancel_command", "guest_execution", "guest_file_put"}
+		c.Agent.Policy.AllowedCommands = []string{"run_assigned", "run_recovery", "session_open", "node_operation", "cancel_command", "guest_execution", "guest_file_put"}
 	}
 	if c.Agent.Policy.AllowConsole == nil {
 		v := true
@@ -429,6 +470,9 @@ func applyDerivedDefaults(c *ServiceConfig) {
 }
 
 func (c ServiceConfig) Validate() error {
+	if c.GCPublicationSource != "" && !regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`).MatchString(c.GCPublicationSource) {
+		return fmt.Errorf("gc_publication_source must be a stable 1-64 character identifier")
+	}
 	if c.Version != 1 {
 		return fmt.Errorf("unsupported sysbox config version %d", c.Version)
 	}
@@ -505,7 +549,7 @@ func (c ServiceConfig) Validate() error {
 	}
 	for _, command := range c.Agent.Policy.AllowedCommands {
 		switch command {
-		case "run_assigned", "session_open", "node_operation", "cancel_command", "guest_execution", "guest_file_put":
+		case "run_assigned", "run_recovery", "session_open", "node_operation", "cancel_command", "guest_execution", "guest_file_put":
 		default:
 			return fmt.Errorf("agent.policy.allowed_commands contains unsupported command %q", command)
 		}

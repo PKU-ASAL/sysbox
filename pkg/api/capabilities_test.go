@@ -2,50 +2,46 @@ package api
 
 import (
 	"encoding/json"
-	"github.com/oslab/sysbox/pkg/config"
-	"github.com/stretchr/testify/require"
 	"net/http/httptest"
-	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
-func TestRuntimeCapabilitiesRequireAuthenticatedSupportedBackend(t *testing.T) {
-	for _, backend := range []string{"local", "sqlite"} {
-		t.Run(backend, func(t *testing.T) {
-			dir := t.TempDir()
-			cfg := config.MustLoadServiceConfig("")
-			cfg.Paths.RunsDir = filepath.Join(dir, "runs")
-			cfg.Paths.WorkspacesDir = filepath.Join(dir, "workspaces")
-			cfg.State.Backend = ""
-			cfg.API.Token = "fixture-token"
-			if backend == "sqlite" {
-				cfg.State.Backend = "sqlite://" + filepath.Join(dir, "api.db")
-			}
-			s := NewServerWithConfig(cfg)
-			w := httptest.NewRecorder()
-			q := httptest.NewRequest("GET", "/v1/capabilities", nil)
-			authMiddleware(s).ServeHTTP(w, q)
-			require.Equal(t, 401, w.Code)
-			q = httptest.NewRequest("GET", "/v1/capabilities", nil)
-			q.Header.Set("Authorization", "Bearer fixture-token")
-			w = httptest.NewRecorder()
-			authMiddleware(s).ServeHTTP(w, q)
-			require.Equal(t, 200, w.Code)
-			var cap struct {
-				Protocol    string `json:"protocol"`
-				Apply       bool   `json:"durable_apply"`
-				Destroy     bool   `json:"keyed_destroy"`
-				Cleanup     bool   `json:"cleanup_inspection"`
-				ClaimReplay bool   `json:"claim_replay"`
-				Single      bool   `json:"single_api_execution"`
-			}
-			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &cap))
-			require.Equal(t, "cyberfield-runtime-v1", cap.Protocol)
-			require.Equal(t, backend == "sqlite", cap.Apply)
-			require.Equal(t, cap.Apply, cap.Destroy)
-			require.Equal(t, cap.Apply, cap.ClaimReplay)
-			require.True(t, cap.Cleanup)
-			require.True(t, cap.Single)
-		})
-	}
+func TestCapabilitiesDescribeSysboxEvidenceBoundaries(t *testing.T) {
+	s := NewServer(t.TempDir(), t.TempDir())
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, httptest.NewRequest("GET", "/v1/capabilities", nil))
+	require.Equal(t, 200, rec.Code)
+	var out map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	require.Equal(t, "sysbox-runtime-v1", out["protocol"])
+	require.Equal(t, true, out["cleanup_inspection"])
+	require.Equal(t, true, out["durable_apply"])
+	require.Equal(t, true, out["keyed_destroy"])
+	require.Equal(t, false, out["external_absence_inspection"])
+	require.Equal(t, false, out["resource_lease_revocation"])
+	require.NotContains(t, rec.Body.String(), "cyberfield")
+	require.Contains(t, out, "checks")
+}
+
+func TestCapabilitiesDistinguishSharedAuthorityFromLocalStores(t *testing.T) {
+	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+		server := stateDeleteTestServer(t, store)
+		response := httptest.NewRecorder()
+		server.ServeHTTP(response, httptest.NewRequest("GET", "/v1/capabilities", nil))
+		require.Equal(t, 200, response.Code)
+		var fields map[string]any
+		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &fields))
+		_, shared := store.(*postgresAPIStore)
+		require.Equal(t, shared, fields["multi_api_execution"])
+		if shared {
+			require.Equal(t, "shared-postgres", fields["execution_store_scope"])
+		} else {
+			require.Equal(t, "host-local", fields["execution_store_scope"])
+		}
+		require.Equal(t, float64(1), fields["recovery_inputs_protocol"])
+		require.Equal(t, false, fields["external_absence_inspection"])
+		require.Equal(t, false, fields["resource_lease_revocation"])
+	})
 }

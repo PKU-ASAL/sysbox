@@ -6,33 +6,42 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/oslab/sysbox/pkg/controlplane"
+	"strings"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/persistence"
 )
 
-var errApplyInputsRequired = errors.New("keyed apply inputs must be resubmitted to this API before claiming")
+var errActiveOperation = fmt.Errorf("%w: topology has an active operation", persistence.ErrConflict)
+var errApplyInputsRequired = errors.New("apply inputs unavailable; resubmit the original request to this API")
 
 func (s *RunService) startKeyedApply(ctx context.Context, topology string, req RunStartRequest) (*controlplane.Run, error) {
 	if err := validateOperationKey(req.OperationKey); err != nil {
 		return nil, runError(runServiceBadRequest, err)
 	}
 	if !globalRevisionPattern.MatchString(req.Revision) {
-		return nil, runError(runServiceBadRequest, errors.New("keyed apply requires immutable global revision"))
+		return nil, runError(runServiceBadRequest, errors.New("keyed apply requires an immutable global revision"))
 	}
 	unlock := s.jobs.lockTopology(topology)
 	defer unlock()
+	var deadline time.Time
+	if req.DeadlineAt != nil {
+		deadline = req.DeadlineAt.UTC()
+	}
+	if len(req.Inputs) == 0 {
+		req.Inputs = nil
+	}
 	raw, _ := json.Marshal(struct {
 		Topology, Revision, Agent string
 		Unsafe                    bool
 		Inputs                    map[string]string
-		Deadline                  *time.Time
-	}{topology, req.Revision, req.AgentID, req.AllowUnsafeState, req.Inputs, req.DeadlineAt})
-	fingerprint := fmtHash(raw)
-	opts := runStartOptions{Revision: req.Revision, AgentID: req.AgentID, UnsafeState: req.AllowUnsafeState, OperationKey: req.OperationKey}
-	if req.DeadlineAt != nil {
-		opts.DeadlineAt = req.DeadlineAt.UTC()
-	}
-	run := newRun(topology, "apply", opts)
+		Deadline                  time.Time
+	}{topology, req.Revision, req.AgentID, req.AllowUnsafeState, req.Inputs, deadline})
+	fingerprint := fmt.Sprintf("apply-request:%x", sha256.Sum256(raw))
+	run := newRun(topology, "apply", runStartOptions{Revision: req.Revision, AgentID: req.AgentID, UnsafeState: req.AllowUnsafeState, OperationKey: req.OperationKey, DeadlineAt: deadline})
+	// Explicit request keys cannot alias restartable, content-derived run IDs.
+	run.ID = fmt.Sprintf("request-%x", sha256.Sum256([]byte(topology+"\x00apply\x00"+req.OperationKey)))
 	run.RequestFingerprint = fingerprint
 	existing, found, err := s.jobs.store.GetRunDispatch(ctx, run.ID, fingerprint)
 	if err != nil {
@@ -41,19 +50,17 @@ func (s *RunService) startKeyedApply(ctx context.Context, topology string, req R
 	if found {
 		return s.hydrateApply(existing, req.Inputs), nil
 	}
-	if err := s.rejectActive(ctx, topology, run.ID); err != nil {
-		replay, found, lookupErr := s.jobs.store.GetRunDispatch(ctx, run.ID, fingerprint)
-		if lookupErr != nil {
-			return nil, dispatchError(lookupErr)
-		}
-		if found {
-			return s.hydrateApply(replay, req.Inputs), nil
-		}
-		return nil, err
-	}
-	snapshot, err := s.snapshotForRevision(ctx, topology, req.Revision)
+	revision, err := s.revisions.GetGlobalRevision(ctx, req.Revision)
 	if err != nil {
-		return nil, err
+		if errors.Is(err, errGlobalRevisionNotFound) {
+			return nil, runError(runServiceNotFound, err)
+		}
+		return nil, runError(runServiceInternal, err)
+	}
+	// Admission pins an immutable tree; it never rewrites the workspace pointer.
+	snapshot, err := s.workspaces.MaterializeRevision(topology, req.Revision, revision.Files)
+	if err != nil {
+		return nil, runError(runServiceInternal, err)
 	}
 	run.SnapshotPath = snapshot
 	required, err := s.requiredForTopo(snapshot)
@@ -65,86 +72,87 @@ func (s *RunService) startKeyedApply(ctx context.Context, topology string, req R
 		return nil, runError(runServiceConflict, err)
 	}
 	run.MarkAssigned(agent.ID, time.Now().UTC())
-	command := controlplaneRunAssignedCommand(run)
-	command.ID = "run-" + run.ID
-	command.AgentID = agent.ID
-	command.Status = controlplane.AgentCommandStatusQueued
-	command.Protocol = controlplane.AgentProtocolVersion
-	command.CreatedAt = time.Now().UTC()
+	command, err := s.workspaces.runAssignedCommand(ctx, run)
+	if err != nil {
+		return nil, runError(runServiceInternal, err)
+	}
 	stored, created, err := s.jobs.store.CreateRunDispatch(ctx, RunDispatchRequest{Run: *run, Command: command, Fingerprint: fingerprint})
 	if err != nil {
 		return nil, dispatchError(err)
 	}
-	s.hydrateApply(stored, req.Inputs)
+	hydrated := s.hydrateApply(stored, req.Inputs)
 	if created && s.scheduler.agents.registry != nil {
 		_ = s.scheduler.agents.registry.PublishCommand(command.AgentID, command)
 	}
-	return stored, nil
+	return hydrated, nil
 }
-func fmtHash(raw []byte) string { sum := sha256.Sum256(raw); return fmt.Sprintf("%x", sum[:]) }
+
 func dispatchError(err error) error {
-	if errors.Is(err, errIdempotencyConflict) || errors.Is(err, errActiveOperation) {
+	if errors.Is(err, errIdempotencyConflict) || errors.Is(err, persistence.ErrConflict) {
 		return runError(runServiceConflict, err)
 	}
 	return runError(runServiceInternal, err)
 }
+
+// Hydration uses the same incarnation-bound cache as every other run path.
+// Only the already fingerprint-validated caller may supply these inputs.
 func (s *RunService) hydrateApply(run *controlplane.Run, inputs map[string]string) *controlplane.Run {
 	s.jobs.mu.Lock()
 	snapshot := runRecord(*run)
 	if current := s.jobs.runs[run.ID]; current != nil && preferRun(current, &snapshot) {
 		snapshot = runRecord(*current)
 	}
-	s.jobs.runs[run.ID] = &snapshot
-	if snapshot.Status.IsTerminal() {
-		delete(s.jobs.applyInputs, run.ID)
-	} else {
-		copy := cloneInputs(inputs)
-		if copy == nil {
-			copy = map[string]string{}
+	snapshot.Inputs = nil
+	if !snapshot.Status.IsTerminal() || (snapshot.Status == controlplane.RunFailed && snapshot.Recoverable) {
+		snapshot.Inputs = cloneInputs(inputs)
+		if snapshot.Inputs == nil {
+			snapshot.Inputs = map[string]string{}
 		}
-		s.jobs.applyInputs[run.ID] = copy
 	}
+	s.jobs.runs[run.ID] = &snapshot
+	result := snapshot
+	result.Inputs = cloneInputs(snapshot.Inputs)
 	s.jobs.mu.Unlock()
 	s.jobs.logs.Ensure(run.ID, snapshot.Status.IsTerminal())
-	return &snapshot
+	return &result
 }
 
-func (s *RunService) rejectActive(ctx context.Context, topology string, except ...string) error {
-	runs, err := s.jobs.store.LoadRuns(ctx)
-	if err != nil {
-		return runError(runServiceInternal, err)
-	}
-	for _, r := range latestRunsByID(runs) {
-		if len(except) > 0 && r.ID == except[0] {
-			continue
-		}
-		if r.Topology == topology && r.Status.IsActive() {
-			return runError(runServiceConflict, errors.New("topology has an active operation"))
-		}
-	}
-	return nil
-}
 func (j *Jobs) inputsRequired(run *controlplane.Run) bool {
-	if run.Op != "apply" || run.RequestFingerprint == "" || run.Status.IsTerminal() {
-		return false
-	}
 	j.mu.RLock()
 	defer j.mu.RUnlock()
-	_, ok := j.applyInputs[run.ID]
-	return !ok
+	if run == nil {
+		return false
+	}
+	return keyedInputsRequired(run, inputsForRecovery(j.runs[run.ID], run))
 }
 
-// Legacy requests may keep their coalescing semantics, but must not bypass an
-// already admitted durable operation on the same workspace.
-func (s *RunService) rejectActiveKeyed(ctx context.Context, topology string) error {
-	runs, err := s.jobs.store.LoadRuns(ctx)
-	if err != nil {
-		return runError(runServiceInternal, err)
+func keyedInputsRequired(run *controlplane.Run, inputs map[string]string) bool {
+	return run != nil && (run.Status.IsActive() || (run.Status == controlplane.RunFailed && run.Recoverable)) && strings.HasPrefix(run.RequestFingerprint, "apply-request:") && inputs == nil
+}
+
+func validateTopologyAdmission(runs []controlplane.Run, next controlplane.Run) error {
+	if !next.Status.IsActive() {
+		return nil
 	}
 	for _, run := range latestRunsByID(runs) {
-		if run.Topology == topology && run.RequestFingerprint != "" && run.Status.IsActive() {
-			return runError(runServiceConflict, errActiveOperation)
+		if run.Topology == next.Topology && run.ID != next.ID && run.Status.IsActive() {
+			return errActiveOperation
 		}
 	}
 	return nil
+}
+
+// Failed recoverable Runs may receive an explicit, fingerprint-checked
+// resubmission. Ordinary claims still use inputsForRun and reject terminal Runs.
+func inputsForRecovery(cached, current *controlplane.Run) map[string]string {
+	if current == nil {
+		return nil
+	}
+	if current.Status != controlplane.RunFailed || !current.Recoverable {
+		return inputsForRun(cached, current)
+	}
+	if cached == nil || !persistence.SameRunIncarnation(*cached, *current) {
+		return nil
+	}
+	return cloneInputs(cached.Inputs)
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 type FirewallResourceHandler struct{}
@@ -30,12 +31,12 @@ func (FirewallResourceHandler) Read(ctx context.Context, current state.Resource)
 	}
 	target, owner, err := policyState(current)
 	if err != nil {
-		return ResourceReadResult{Status: state.ResourceDrifted, Resource: current, Reason: err.Error()}, nil
+		return ResourceReadResult{Status: state.ResourceUnknown, Resource: current, Reason: err.Error()}, err
 	}
 	observation, err := policy.ObserveRuleset(ctx, target, owner)
 	if err != nil {
-		if driver.IsCategory(err, driver.ErrorNotFound) || driver.IsCategory(err, driver.ErrorInvalidState) {
-			return ResourceReadResult{Status: state.ResourceDrifted, Resource: current, Reason: err.Error()}, nil
+		if driver.IsCategory(err, driver.ErrorNotFound) {
+			return ResourceReadResult{Status: state.ResourceAbsent, Resource: current, Reason: err.Error()}, nil
 		}
 		return ResourceReadResult{Status: state.ResourceUnknown, Resource: current, Reason: err.Error()}, err
 	}
@@ -85,6 +86,21 @@ func (FirewallResourceHandler) DecodeResource(r config.ResourceBlock, _ string, 
 }
 
 func (e *Executor) createFirewallResource(ctx context.Context, n *graph.Node) (state.Resource, error) {
+	return e.resolveFirewallResource(ctx, n, false)
+}
+
+func (FirewallResourceHandler) Discover(ctx context.Context, pc *ProviderContext, n *graph.Node) (ResourceReadResult, error) {
+	r, err := pc.exec.resolveFirewallResource(ctx, n, true)
+	if driver.IsCategory(err, driver.ErrorNotFound) {
+		return ResourceReadResult{Status: state.ResourceAbsent}, nil
+	}
+	if err != nil {
+		return ResourceReadResult{Status: state.ResourceUnknown, Reason: err.Error()}, err
+	}
+	return resourceReadOK(r), nil
+}
+
+func (e *Executor) resolveFirewallResource(ctx context.Context, n *graph.Node, discover bool) (state.Resource, error) {
 	cfg, ok := n.Data.(*config.FirewallConfig)
 	if !ok {
 		return state.Resource{}, fmt.Errorf("firewall %s: wrong data type", n.Address)
@@ -103,6 +119,10 @@ func (e *Executor) createFirewallResource(ctx context.Context, n *graph.Node) (s
 		bindings[attachment.Name] = attachment.Observation.GuestDevice
 		attachmentIPs[attachment.Name] = append([]string(nil), attachment.IPPrefixes...)
 	}
+	targetIdentity := substrate.OperationIdentity{ActionID: "policy-target", OwnerUID: targetResource.OwnerUID, TopologyUID: targetResource.OwnerUID, ResourceUID: targetResource.ResourceUID, Generation: targetResource.Generation}
+	if err := targetIdentity.Validate(); err != nil {
+		return state.Resource{}, fmt.Errorf("firewall target lacks durable identity: %w", err)
+	}
 	targetRaw, err := json.Marshal(map[string]any{"container_id": targetResource.ContainerID(), "bindings": bindings, "attachment_ips": attachmentIPs})
 	if err != nil {
 		return state.Resource{}, err
@@ -116,8 +136,25 @@ func (e *Executor) createFirewallResource(ctx context.Context, n *graph.Node) (s
 	if err != nil {
 		return state.Resource{}, err
 	}
-	target := driver.PolicyTarget{Resource: targetAddr.String(), State: targetRaw}
-	observation, err := policy.ApplyRuleset(ctx, target, spec)
+	policyIdentity, ok := substrate.OperationIdentityFromContext(ctx)
+	if !ok || policyIdentity.Validate() != nil {
+		return state.Resource{}, fmt.Errorf("firewall requires durable policy identity")
+	}
+	target := driver.PolicyTarget{Resource: targetAddr.String(), Identity: targetIdentity, Policy: policyIdentity, State: targetRaw}
+	persistedTarget, err := driver.EncodePolicyTarget(target)
+	if err != nil {
+		return state.Resource{}, err
+	}
+	var observation driver.RulesetObservation
+	if discover {
+		observer, ok := policy.(driver.PolicyDiscovery)
+		if !ok {
+			return state.Resource{}, fmt.Errorf("%w: provider %s has no policy discovery", ErrConvergenceUnsupported, targetResource.Driver)
+		}
+		observation, err = observer.DiscoverRuleset(ctx, target, spec)
+	} else {
+		observation, err = policy.ApplyRuleset(ctx, target, spec)
+	}
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("firewall %s: %w", n.Address.Name, err)
 	}
@@ -128,73 +165,12 @@ func (e *Executor) createFirewallResource(ctx context.Context, n *graph.Node) (s
 	inst := map[string]any{
 		"attach_to": targetAddr.String(), "family": string(driver.FamilyIPv4), "owner": owner,
 		"table": observation.Table, "desired_digest": observation.Digest, "observed_digest": observation.Digest,
-		"policy_target_state": string(targetRaw), "policy_spec": string(specRaw), "rules": len(spec.Rules),
+		"policy_target_state": string(persistedTarget), "policy_spec": string(specRaw), "rules": len(spec.Rules),
 	}
 	if err := setDesiredHash(n, inst); err != nil {
 		return state.Resource{}, err
 	}
-	return state.Resource{Address: n.Address, Driver: targetResource.Driver, Attributes: state.MustAttributes(inst)}, nil
-}
-
-func (FirewallResourceHandler) RecoverCheckpointResource(ctx context.Context, st *state.State, step OperationStep) (CheckpointRecoverResult, error) {
-	action := CheckpointRecoverResult{Resource: step.Resource, ExternalID: step.ExternalID}
-	if step.StateResource == nil {
-		action.Status = "missing_state_resource"
-		return action, nil
-	}
-	res := StateResourceFromLog(*step.StateResource)
-	if st.FindResource(res.Address) != nil {
-		action.Status = "already_in_state"
-		return action, nil
-	}
-	target, _, err := policyState(res)
-	if err != nil {
-		action.Status, action.Error = "invalid_state", err.Error()
-		return action, nil
-	}
-	policy, err := driver.DefaultRegistry.RequirePolicy(res.Driver)
-	if err != nil {
-		return action, err
-	}
-	// Always re-apply rather than reading the ruleset back to decide whether it
-	// survived; apply is idempotent (it always rebuilds the table).
-	var spec driver.RulesetSpec
-	if err := json.Unmarshal([]byte(res.Str("policy_spec")), &spec); err != nil {
-		return action, fmt.Errorf("recover firewall policy spec: %w", err)
-	}
-	observation, err := policy.ApplyRuleset(ctx, target, spec)
-	if err != nil {
-		return action, err
-	}
-	_ = res.SetAttribute("desired_digest", observation.Digest)
-	_ = res.SetAttribute("observed_digest", observation.Digest)
-	_ = res.SetAttribute("table", observation.Table)
-	st.AddResource(res)
-	action.Status = "recovered"
-	return action, nil
-}
-
-func (FirewallResourceHandler) CleanupCheckpointResource(ctx context.Context, step OperationStep) (CheckpointCleanupResult, error) {
-	action := CheckpointCleanupResult{Resource: step.Resource, ExternalID: step.ExternalID, Class: CheckpointCleanupNetwork}
-	if step.StateResource == nil {
-		action.Status = "missing_state_resource"
-		return action, nil
-	}
-	res := StateResourceFromLog(*step.StateResource)
-	target, owner, err := policyState(res)
-	if err != nil {
-		action.Status, action.Error = "invalid_state", err.Error()
-		return action, nil
-	}
-	policy, err := driver.DefaultRegistry.RequirePolicy(res.Driver)
-	if err != nil {
-		return action, err
-	}
-	if err := policy.DeleteRuleset(ctx, target, owner); err != nil {
-		return action, err
-	}
-	action.Status = "removed"
-	return action, nil
+	return state.Resource{Address: n.Address, Driver: targetResource.Driver, ExternalID: observation.Table, OwnerUID: policyIdentity.OwnerUID, ResourceUID: policyIdentity.ResourceUID, Generation: policyIdentity.Generation, Attributes: state.MustAttributes(inst)}, nil
 }
 
 func firewallRuleset(owner string, cfg *config.FirewallConfig) (driver.RulesetSpec, error) {
@@ -259,5 +235,9 @@ func policyState(current state.Resource) (driver.PolicyTarget, string, error) {
 	if raw == "" || owner == "" {
 		return driver.PolicyTarget{}, "", fmt.Errorf("firewall state missing policy identity")
 	}
-	return driver.PolicyTarget{Resource: current.Str("attach_to"), State: json.RawMessage(raw)}, owner, nil
+	target, err := driver.DecodePolicyTarget(json.RawMessage(raw))
+	if err == nil && target.Resource != current.Str("attach_to") {
+		err = fmt.Errorf("firewall target address mismatch")
+	}
+	return target, owner, err
 }

@@ -22,6 +22,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
@@ -91,9 +92,6 @@ func (evaluationTestDriver) NetworkHealthy(context.Context, driver.IsolatedNetwo
 	return true, ""
 }
 func (evaluationTestDriver) LinkHealthy(context.Context, string, string) bool { return true }
-func (evaluationTestDriver) DeleteAttachment(context.Context, string, string, string) error {
-	return nil
-}
 
 func registerEvaluationTestDriver(t *testing.T) {
 	t.Helper()
@@ -533,8 +531,10 @@ func TestEvaluationHandlerIsStrictAndHasNoDurableWrites(t *testing.T) {
 		Protocol: controlplane.AgentProtocolVersion, Capabilities: capabilities, LastHeartbeat: time.Now().UTC(),
 		AuthSecret: "PRIVATE_AGENT_SECRET",
 	}))
+	session, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: server.apiStore}).OpenSession(context.Background(), "host-a", "evaluation-process", "")
+	require.NoError(t, err)
 	require.NoError(t, server.apiStore.SaveAgentInventory(context.Background(), controlplane.AgentInventory{
-		AgentID: "host-a", Capabilities: capabilities, Status: "fresh", ObservedAt: time.Now().UTC(),
+		AgentID: "host-a", SessionID: session.ID, Sequence: 1, Capabilities: capabilities, Status: "fresh", ObservedAt: time.Now().UTC(),
 		Artifacts: []controlplane.InventoryItem{{Path: "/private/artifact", Available: true}},
 	}))
 	before := evaluationFileSnapshot(t, runsDir, workspacesDir)
@@ -552,7 +552,8 @@ func TestEvaluationHandlerIsStrictAndHasNoDurableWrites(t *testing.T) {
 	require.Equal(t, &EvaluationSelectedAgent{ID: "host-a", Protocol: controlplane.AgentProtocolVersion}, response.SelectedAgent)
 	require.NotContains(t, recorder.Body.String(), "PRIVATE_AGENT_SECRET")
 	require.NotContains(t, recorder.Body.String(), "/private/artifact")
-	require.Equal(t, before, evaluationFileSnapshot(t, runsDir, workspacesDir))
+	after := evaluationFileSnapshot(t, runsDir, workspacesDir)
+	require.Equal(t, before, after)
 
 	recorder = httptest.NewRecorder()
 	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/evaluations", strings.NewReader(`{"schema_version":1,"unknown":true}`)))

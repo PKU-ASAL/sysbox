@@ -4,24 +4,32 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"sort"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/persistence"
 )
 
 type AgentService struct {
-	recoveryMu      sync.Mutex
-	recoveryCursor  string
 	store           apiStore
 	registry        *agentRegistry
 	jobs            *Jobs
+	workspaces      *WorkspaceService
 	consoles        *consoleSessionHub
 	commandTTL      func() time.Duration
 	agentOfflineTTL func() time.Duration
+	dispatchMu      sync.Mutex
+	dispatchRetry   map[string]dispatchRetryState
+	wakeup          func(string, controlplane.AgentCommand) error
+}
+
+type dispatchRetryState struct {
+	failures  int
+	next      time.Time
+	lastError string
 }
 
 func newAgentService(server *Server) *AgentService {
@@ -29,73 +37,88 @@ func newAgentService(server *Server) *AgentService {
 		store:           server.apiStore,
 		registry:        server.agents,
 		jobs:            server.jobs,
+		workspaces:      server.workspaceService(),
 		consoles:        server.consoles,
 		commandTTL:      server.cfg.AgentCommandTTL,
 		agentOfflineTTL: server.cfg.AgentOfflineAfter,
+		dispatchRetry:   map[string]dispatchRetryState{},
+		wakeup:          server.agents.PublishCommand,
 	}
 }
 
 func (s *AgentService) Save(ctx context.Context, agent controlplane.Agent) error {
-	if agent.Protocol == "" {
-		agent.Protocol = controlplane.AgentProtocolVersion
+	if s.store == nil {
+		return fmt.Errorf("agent store not configured")
 	}
-	if s.store != nil {
-		if err := s.store.SaveAgent(ctx, agent); err != nil {
+	if err := s.store.SaveAgent(ctx, agent); err != nil {
+		return err
+	}
+	// Cache only the normalized, persisted snapshot, never the submitted copy.
+	_, err := s.Get(ctx, agent.ID)
+	return err
+}
+func (s *AgentService) cacheAgent(agent *controlplane.Agent, err error) (*controlplane.Agent, error) {
+	if err != nil {
+		return nil, err
+	}
+	if agent == nil {
+		return nil, persistence.ErrCorruptRecord
+	}
+	if s.registry != nil {
+		s.registry.Save(*agent)
+	}
+	return agent, nil
+}
+func (s *AgentService) Get(ctx context.Context, id string) (*controlplane.Agent, error) {
+	if s.store == nil {
+		return nil, fmt.Errorf("agent store not configured")
+	}
+	return s.cacheAgent(s.store.GetAgent(ctx, id))
+}
+func (s *AgentService) List(ctx context.Context) ([]controlplane.Agent, error) {
+	if s.store == nil {
+		return nil, fmt.Errorf("agent store not configured")
+	}
+	return s.store.ListAgents(ctx)
+}
+func (s *AgentService) Register(ctx context.Context, report controlplane.Agent) (*controlplane.Agent, error) {
+	if s.store == nil {
+		return nil, fmt.Errorf("agent store not configured")
+	}
+	return s.cacheAgent(s.store.RegisterAgent(ctx, report))
+}
+
+func (s *AgentService) Heartbeat(ctx context.Context, report controlplane.Agent) (*controlplane.Agent, error) {
+	if s.store == nil {
+		return nil, fmt.Errorf("agent store not configured")
+	}
+	return s.cacheAgent(s.store.HeartbeatAgent(ctx, report))
+}
+func (s *AgentService) UpdatePolicy(ctx context.Context, id string, patch persistence.AgentPolicy) (*controlplane.Agent, error) {
+	if s.store == nil {
+		return nil, fmt.Errorf("agent store not configured")
+	}
+	return s.cacheAgent(s.store.UpdateAgentPolicy(ctx, id, patch))
+}
+func (s *AgentService) MarkStaleOffline(ctx context.Context, now time.Time) error {
+	agents, err := s.List(ctx)
+	if err != nil {
+		return err
+	}
+	ttl := s.agentOfflineAfter()
+	if ttl <= 0 {
+		return nil
+	}
+	for _, agent := range agents {
+		current, err := s.store.ExpireAgentHeartbeat(ctx, agent.ID, now, ttl)
+		if err != nil {
+			return err
+		}
+		if _, err := s.cacheAgent(current, nil); err != nil {
 			return err
 		}
 	}
-	if s.registry != nil {
-		s.registry.Save(agent)
-	}
 	return nil
-}
-
-func (s *AgentService) Get(ctx context.Context, id string) (*controlplane.Agent, error) {
-	if s.store != nil {
-		if agent, err := s.store.GetAgent(ctx, id); err == nil {
-			if s.registry != nil {
-				s.registry.Save(*agent)
-			}
-			return agent, nil
-		}
-	}
-	if s.registry != nil {
-		return s.registry.Get(id)
-	}
-	return nil, fmt.Errorf("agent not found")
-}
-
-func (s *AgentService) List(ctx context.Context) []controlplane.Agent {
-	agents := []controlplane.Agent{}
-	if s.store != nil {
-		if stored, err := s.store.ListAgents(ctx); err == nil {
-			agents = append(agents, stored...)
-		}
-	}
-	if len(agents) == 0 && s.registry != nil {
-		agents = append(agents, s.registry.List()...)
-	}
-	sort.Slice(agents, func(i, j int) bool { return agents[i].ID < agents[j].ID })
-	return agents
-}
-
-func (s *AgentService) MarkStaleOffline(ctx context.Context, now time.Time) {
-	if s.store == nil {
-		return
-	}
-	offlineAfter := s.agentOfflineAfter()
-	for _, agent := range s.List(ctx) {
-		if agent.Disabled || agent.Quarantined || agent.LastHeartbeat.IsZero() {
-			continue
-		}
-		if agent.Status == controlplane.AgentStatusOffline || !agent.LastHeartbeat.Before(now.Add(-offlineAfter)) {
-			continue
-		}
-		agent.Status = controlplane.AgentStatusOffline
-		agent.Reason = "heartbeat stale"
-		agent.UpdatedAt = now
-		_ = s.Save(ctx, agent)
-	}
 }
 
 func (s *AgentService) agentOfflineAfter() time.Duration {
@@ -106,75 +129,34 @@ func (s *AgentService) agentOfflineAfter() time.Duration {
 }
 
 func (s *AgentService) CompleteRun(agentID, runID string, completion controlplane.RunCompletion) (controlplane.RunCompletion, error) {
-	if completion.Run.ID == "" {
-		completion.Run.ID = runID
+	if s.store == nil {
+		return completion, fmt.Errorf("run store not configured")
 	}
-	if completion.Run.ID != runID {
-		return completion, fmt.Errorf("completion run id mismatch")
-	}
-	if completion.Run.AgentID == "" {
-		completion.Run.AgentID = agentID
-	}
-	if completion.Run.AgentID != agentID {
-		return completion, fmt.Errorf("completion agent id mismatch")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	current, err := s.store.GetRun(ctx, runID)
+	stored, _, err := s.store.CompleteRun(context.Background(), agentID, runID, completion)
 	if err != nil {
 		return completion, err
 	}
-	if current.AgentID != agentID || current.LeaseOwner == "" || current.LeaseOwner != completion.Run.LeaseOwner || current.Attempt != completion.Run.Attempt {
-		return completion, fmt.Errorf("completion lease ownership mismatch")
+	completion.Run = *stored
+	if s.jobs != nil {
+		s.jobs.remember(stored)
+		s.jobs.logs.Close(stored.ID)
 	}
-	if (completion.Projection.AgentID != "" && completion.Projection.AgentID != agentID) || (completion.Projection.Topology != "" && completion.Projection.Topology != current.Topology) || (completion.Projection.Workspace != "" && completion.Projection.Workspace != current.Workspace) {
-		return completion, fmt.Errorf("completion projection ownership mismatch")
+	// The committed receipt is authoritative even after response loss/restart.
+	// Old terminal records have no projection proof; never invent one on replay.
+	completion.Projection = controlplane.Projection{}
+	if stored.CompletionProjection != nil {
+		completion.Projection = *stored.CompletionProjection
+		if s.registry != nil {
+			s.registry.RestoreCompletionProjection(completion.Projection)
+		}
 	}
-	if !completion.Run.Status.IsTerminal() {
-		return completion, fmt.Errorf("completion requires terminal status")
-	}
-	if current.Status.IsTerminal() {
-		if current.Status != completion.Run.Status || current.Err != completion.Run.Err {
-			return completion, fmt.Errorf("conflicting terminal completion")
-		}
-		if current.CompletionProjection == nil {
-			return completion, fmt.Errorf("terminal run has no agent completion receipt")
-		}
-		completion.Run = *current
-		completion.Projection = *current.CompletionProjection
-	} else {
-		if !current.CanRenewLease(agentID, completion.Run.LeaseOwner, time.Now().UTC()) {
-			return completion, fmt.Errorf("completion lease expired or inactive")
-		}
-		next := *current
-		next.Status = completion.Run.Status
-		next.Err = completion.Run.Err
-		next.Recoverable = completion.Run.Recoverable
-		next.Assertion = completion.Run.Assertion
-		next.EndedAt = time.Now().UTC()
-		next.Inputs = nil
-		projection := completion.Projection
-		projection.AgentID = agentID
-		projection.Topology = current.Topology
-		projection.Workspace = current.Workspace
-		projection.UpdatedAt = next.EndedAt
-		next.CompletionProjection = &projection
-		ok, err := s.store.CompareAndSwapRun(ctx, *current, next, true)
-		if err != nil {
-			return completion, err
-		}
-		if !ok {
-			return completion, fmt.Errorf("completion ownership changed")
-		}
-		completion.Run = next
-		completion.Projection = *next.CompletionProjection
-	}
-	s.jobs.cacheCommittedRun(&completion.Run)
-	s.registry.SaveProjection(completion.Projection)
 	return completion, nil
 }
 
 func (s *AgentService) PublishCommand(ctx context.Context, agentID string, cmd controlplane.AgentCommand) (controlplane.AgentCommand, error) {
+	if cmd.Type == "session_open" || (cmd.Type == "cancel_command" && cmd.Session != nil) {
+		return cmd, fmt.Errorf("%w: console admission requires an atomic session dispatch", persistence.ErrInvalidRecord)
+	}
 	if cmd.ID == "" {
 		cmd.ID = uuid.New().String()
 	}
@@ -191,7 +173,13 @@ func (s *AgentService) PublishCommand(ctx context.Context, agentID string, cmd c
 		cmd.CreatedAt = time.Now().UTC()
 	}
 	if s.store != nil {
-		if err := s.store.SaveAgentCommand(ctx, cmd); err != nil {
+		if cmd.Type == "cancel_command" && cmd.Operation.Operation == persistence.GuestExecutionCancelOperation {
+			current, err := committedGuestExecutionCancellation(ctx, s.store, cmd)
+			if err != nil {
+				return cmd, err
+			}
+			cmd = *current
+		} else if err := s.store.SaveAgentCommand(ctx, cmd); err != nil {
 			return cmd, err
 		}
 	}
@@ -199,6 +187,118 @@ func (s *AgentService) PublishCommand(ctx context.Context, agentID string, cmd c
 		return cmd, s.registry.PublishCommand(agentID, cmd)
 	}
 	return cmd, nil
+}
+
+// WakeCommand is only a delivery hint for an already committed outbox record.
+func (s *AgentService) WakeCommand(agentID string, cmd controlplane.AgentCommand) error {
+	if s.registry == nil {
+		return nil
+	}
+	return s.registry.PublishCommand(agentID, cmd)
+}
+
+// RepublishPendingCommands rebuilds the in-memory wake-up hints from durable
+// commands. The store remains authoritative; this only helps already connected
+// streams notice work after a controller restart.
+func (s *AgentService) RepublishPendingCommands(ctx context.Context) error {
+	if s.store == nil || s.registry == nil {
+		return nil
+	}
+	commands, err := s.store.ListAgentCommands(ctx, "")
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	for _, cmd := range commands {
+		if cmd.IsTerminal() || !cmd.Leasable(now) {
+			continue
+		}
+		s.dispatchMu.Lock()
+		retry := s.dispatchRetry[cmd.ID]
+		s.dispatchMu.Unlock()
+		if retry.failures == 0 && s.store != nil {
+			if persisted, err := s.store.LoadDispatchRetry(ctx, cmd.ID); err == nil {
+				retry = dispatchRetryState{failures: persisted.Failures, next: persisted.Next, lastError: persisted.LastError}
+				s.dispatchMu.Lock()
+				s.dispatchRetry[cmd.ID] = retry
+				s.dispatchMu.Unlock()
+			}
+		}
+		blocked := now.Before(retry.next)
+		if blocked {
+			continue
+		}
+		wake := s.wakeup
+		if wake == nil {
+			wake = s.registry.PublishCommand
+		}
+		if err := wake(cmd.AgentID, cmd); err != nil {
+			s.dispatchMu.Lock()
+			retry.failures++
+			if retry.failures > 6 {
+				retry.failures = 6
+			}
+			retry.next = now.Add(time.Duration(1<<retry.failures) * time.Second)
+			retry.lastError = err.Error()
+			s.dispatchRetry[cmd.ID] = retry
+			s.dispatchMu.Unlock()
+			if s.store != nil {
+				_ = s.store.SaveDispatchRetry(ctx, DispatchRetryRecord{CommandID: cmd.ID, Failures: retry.failures, Next: retry.next, LastError: retry.lastError})
+			}
+			continue
+		}
+		s.dispatchMu.Lock()
+		delete(s.dispatchRetry, cmd.ID)
+		s.dispatchMu.Unlock()
+		if s.store != nil {
+			_ = s.store.ClearDispatchRetry(ctx, cmd.ID)
+		}
+	}
+	return nil
+}
+
+// RepublishAssignedRuns repairs a durable assignment whose command seed was
+// lost before a controller restart. Running runs are left untouched: absence
+// of a local process is not proof that a remote action stopped.
+func (s *AgentService) RepublishAssignedRuns(ctx context.Context) error {
+	if s.store == nil {
+		return nil
+	}
+	runs, err := s.store.LoadRuns(ctx)
+	if err != nil {
+		return err
+	}
+	commands, err := s.store.ListAgentCommands(ctx, "")
+	if err != nil {
+		return err
+	}
+	present := map[string]bool{}
+	for _, cmd := range commands {
+		if cmd.Run != nil {
+			present[runCommandID(*cmd.Run)] = true
+		}
+	}
+	for _, run := range latestRunsByID(runs) {
+		if run.Status != controlplane.RunAssigned || run.AgentID == "" || present[runCommandID(run)] {
+			continue
+		}
+		cmd, err := s.workspaces.runAssignedCommand(ctx, &run)
+		if err != nil {
+			return err
+		}
+		fingerprint := runAssignmentFingerprint(run)
+		if _, _, err := s.store.CreateRunDispatch(ctx, RunDispatchRequest{Run: run, Command: cmd, Fingerprint: fingerprint}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *AgentService) DispatchRetryState(commandID string) (failures int, next time.Time, lastError string) {
+	s.dispatchMu.Lock()
+	defer s.dispatchMu.Unlock()
+	state := s.dispatchRetry[commandID]
+	return state.failures, state.next, state.lastError
 }
 
 func (s *AgentService) AcquireCommandLease(ctx context.Context, agentID string, cmd controlplane.AgentCommand) (controlplane.AgentCommand, bool) {
@@ -215,8 +315,7 @@ func (s *AgentService) AcquireCommandLease(ctx context.Context, agentID string, 
 		}
 		return *leased, true
 	}
-	cmd.MarkLeased(owner, ttl, now)
-	return cmd, true
+	return cmd, false
 }
 
 func (s *AgentService) agentCommandTTL() time.Duration {
@@ -230,11 +329,16 @@ func (s *AgentService) FindCommand(ctx context.Context, agentID, commandID strin
 	if s.store == nil {
 		return controlplane.AgentCommand{}, fmt.Errorf("agent command store not configured")
 	}
-	cmd, err := s.store.GetAgentCommand(ctx, agentID, commandID)
+	commands, err := s.store.ListAgentCommands(ctx, agentID)
 	if err != nil {
 		return controlplane.AgentCommand{}, err
 	}
-	return *cmd, nil
+	for _, cmd := range commands {
+		if cmd.ID == commandID {
+			return cmd, nil
+		}
+	}
+	return controlplane.AgentCommand{}, fmt.Errorf("agent command not found")
 }
 
 // ReconcileCommandState prevents a stale delivery record from replaying work
@@ -247,35 +351,39 @@ func (s *AgentService) ReconcileCommandState(ctx context.Context, cmd controlpla
 	if !ok {
 		return cmd, false
 	}
-	expected := cmd
+	original := cmd
 	cmd.Status = status
 	cmd.EndedAt = endedAt
 	if cmd.EndedAt.IsZero() {
 		cmd.EndedAt = time.Now().UTC()
 	}
-	ok, err := s.store.CompareAndSwapAgentCommand(ctx, expected, cmd)
-	return cmd, err == nil && ok
+	if err := s.store.SaveAgentCommand(ctx, cmd); err != nil {
+		return original, false
+	}
+	// Save can preserve an already-terminal concurrent winner. Return its
+	// canonical status rather than the stale status we tried to publish.
+	stored, err := s.FindCommand(ctx, cmd.AgentID, cmd.ID)
+	if err != nil {
+		return original, false
+	}
+	return stored, stored.IsTerminal()
 }
 
 func (s *AgentService) guestCommandTerminalState(ctx context.Context, cmd controlplane.AgentCommand) (string, time.Time, bool) {
 	switch cmd.Type {
-	case "run_assigned":
-		if cmd.Run == nil {
+	case "node_operation":
+		op, err := s.store.GetNodeOperation(ctx, cmd.Operation.ID)
+		if err != nil || !nodeCommandMatchesOperation(cmd, op) {
 			return "", time.Time{}, false
 		}
-		run, err := s.store.GetRun(ctx, cmd.Run.ID)
-		if err != nil {
+		switch op.Status {
+		case controlplane.NodeOperationStatusDone:
+			return controlplane.AgentCommandStatusCompleted, op.EndedAt, true
+		case controlplane.NodeOperationStatusFailed:
+			return controlplane.AgentCommandStatusFailed, op.EndedAt, true
+		default:
 			return "", time.Time{}, false
 		}
-		switch run.Status {
-		case controlplane.RunDone:
-			return controlplane.AgentCommandStatusCompleted, run.EndedAt, true
-		case controlplane.RunFailed:
-			return controlplane.AgentCommandStatusFailed, run.EndedAt, true
-		case controlplane.RunCancelled:
-			return controlplane.AgentCommandStatusCancelled, run.EndedAt, true
-		}
-		return "", time.Time{}, false
 	case "guest_execution":
 		if cmd.Execution == nil || cmd.Execution.ID == "" {
 			return "", time.Time{}, false
@@ -294,6 +402,25 @@ func (s *AgentService) guestCommandTerminalState(ctx context.Context, cmd contro
 			return "", time.Time{}, false
 		}
 		return commandStatusFromGuestStatus(op.Status, op.EndedAt)
+	case "run_assigned":
+		if cmd.Run == nil {
+			return "", time.Time{}, false
+		}
+		run, err := s.store.GetRun(ctx, cmd.Run.ID)
+		if err != nil || run == nil {
+			return "", time.Time{}, false
+		}
+		if !persistence.SameRunIncarnation(*run, *cmd.Run) {
+			return controlplane.AgentCommandStatusCancelled, time.Now().UTC(), true
+		}
+		if run.Status.IsTerminal() {
+			status := controlplane.AgentCommandStatusCompleted
+			if run.Status != controlplane.RunDone {
+				status = controlplane.AgentCommandStatusFailed
+			}
+			return status, run.EndedAt, true
+		}
+		return "", time.Time{}, false
 	default:
 		return "", time.Time{}, false
 	}
@@ -316,85 +443,60 @@ func (s *AgentService) RecordCommandEvent(ctx context.Context, event controlplan
 	if event.CreatedAt.IsZero() {
 		event.CreatedAt = time.Now().UTC()
 	}
-	s.updateCommandFromEvent(ctx, event)
+	if err := s.updateCommandFromEvent(ctx, event); err != nil {
+		slog.Warn("command event rejected", "command_id", event.CommandID, "error", err)
+		return
+	}
 	if s.registry != nil {
 		s.registry.SaveCommandEvent(event)
 	}
 	slog.Info("agent command event", "agent_id", event.AgentID, "command_id", event.CommandID, "type", event.Type, "status", event.Status)
 }
 
-func (s *AgentService) updateCommandFromEvent(ctx context.Context, event controlplane.AgentCommandEvent) {
-	if s.store == nil || event.CommandID == "" || event.AgentID == "" {
-		return
+func (s *AgentService) updateCommandFromEvent(ctx context.Context, event controlplane.AgentCommandEvent) error {
+	if s.store == nil {
+		return fmt.Errorf("agent command store not configured")
 	}
-	cmd, err := s.FindCommand(ctx, event.AgentID, event.CommandID)
+	cmd, err := s.store.ApplyAgentCommandEvent(ctx, event)
 	if err != nil {
-		return
+		return err
 	}
-	if cmd.LeaseOwner != "" && event.LeaseOwner != cmd.LeaseOwner {
-		return
+	if cmd.Type == "session_open" && cmd.IsTerminal() && cmd.Session != nil {
+		return s.reconcileConsoleCompletion(ctx, cmd.Session.ID)
 	}
-	if cmd.Type == "run_assigned" && (controlplane.AgentCommand{Status: event.Status}).IsTerminal() {
-		if cmd.Run != nil {
-			run, err := s.store.GetRun(ctx, cmd.Run.ID)
-			if err != nil {
-				return
-			}
-			if run.Status.IsTerminal() {
-				s.ReconcileCommandState(ctx, cmd)
-				return
-			}
-			if run.Status == controlplane.RunRunning {
-				return
-			}
-		}
+	if err := s.updateConsoleSessionFromCommandEvent(*cmd, event); err != nil {
+		return err
 	}
-	if cmd.IsTerminal() {
-		return
+	if cmd.Type == "node_operation" && failedDelivery(cmd.Status) {
+		return reconcileUnissuedSSHFailure(ctx, s.store, *cmd)
 	}
-	expected := cmd
-	now := event.CreatedAt
-	if now.IsZero() {
-		now = time.Now().UTC()
+	if cmd.Type == "guest_file_put" && cmd.FilePut != nil && (cmd.Status == controlplane.AgentCommandStatusFailed || cmd.Status == controlplane.AgentCommandStatusDenied || cmd.Status == controlplane.AgentCommandStatusCancelled) {
+		return newGuestFileOperationService(s.store).ReconcileCommandFailure(ctx, cmd.FilePut.ID, cmd.Status)
 	}
-	switch event.Status {
-	case "ack":
-		cmd.Status = controlplane.AgentCommandStatusAcknowledged
-		cmd.AckedAt = now
-	case "started":
-		cmd.Status = controlplane.AgentCommandStatusRunning
-	case controlplane.AgentCommandStatusCompleted:
-		cmd.Status = controlplane.AgentCommandStatusCompleted
-		cmd.EndedAt = now
-	case controlplane.AgentCommandStatusFailed, controlplane.AgentCommandStatusDenied, controlplane.AgentCommandStatusCancelled:
-		cmd.Status = event.Status
-		cmd.Err = event.Error
-		cmd.EndedAt = now
-
-	}
-	ok, err := s.store.CompareAndSwapAgentCommand(ctx, expected, cmd)
-	if err != nil || !ok {
-		return
-	}
-	s.updateConsoleSessionFromCommandEvent(cmd, event)
-	if (event.Status == controlplane.AgentCommandStatusFailed || event.Status == controlplane.AgentCommandStatusDenied || event.Status == controlplane.AgentCommandStatusCancelled) && cmd.Type == "guest_file_put" && cmd.FilePut != nil {
-		_ = newGuestFileOperationService(s.store).ReconcileCommandFailure(ctx, cmd.FilePut.ID, event.Status)
-	}
-
+	return nil
 }
 
-func (s *AgentService) updateConsoleSessionFromCommandEvent(cmd controlplane.AgentCommand, event controlplane.AgentCommandEvent) {
+func (s *AgentService) updateConsoleSessionFromCommandEvent(cmd controlplane.AgentCommand, event controlplane.AgentCommandEvent) error {
 	if cmd.Type != "session_open" || cmd.Session == nil || cmd.Session.ID == "" {
-		return
+		return nil
+	}
+	if cmd.IsTerminal() && !cmd.EndedAt.IsZero() {
+		// Replayed completion uses the original accepted command outcome,
+		// not retry timestamps or unpersisted message text.
+		event.Status, event.Error, event.Message, event.CreatedAt = cmd.Status, cmd.Err, "", cmd.EndedAt
 	}
 	now := event.CreatedAt
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
 	if s.consoles == nil {
-		return
+		return fmt.Errorf("console session registry unavailable")
 	}
-	s.consoles.Update(cmd.Session.ID, func(sess *controlplane.ConsoleSession) {
+	return s.consoles.Update(cmd.Session.ID, func(sess *controlplane.ConsoleSession) {
+		if cmd.IsTerminal() && !cmd.EndedAt.IsZero() {
+			sess.EndedAt = cmd.EndedAt
+			sess.Err = cmd.Err
+		}
 		switch event.Status {
 		case "started":
 			if sess.Status == controlplane.ConsoleSessionStatusQueued {
@@ -428,19 +530,4 @@ func deliverAgentCommand(cmd controlplane.AgentCommand) controlplane.AgentComman
 
 func commandTerminal(status string) bool {
 	return controlplane.AgentCommand{Status: status}.IsTerminal()
-}
-
-// Projections are recoverable views of atomic completion receipts. Rebuilding
-// them never trusts a retry caller's body or overwrites a newer receipt.
-func (s *AgentService) restoreCompletionProjections(ctx context.Context) error {
-	runs, err := s.store.LoadRuns(ctx)
-	if err != nil {
-		return err
-	}
-	for _, run := range latestRunsByID(runs) {
-		if run.Status.IsTerminal() && run.CompletionProjection != nil {
-			s.registry.SaveProjection(*run.CompletionProjection)
-		}
-	}
-	return nil
 }

@@ -17,6 +17,18 @@ import (
 	"github.com/oslab/sysbox/pkg/controlplane"
 )
 
+func TestSchedulerDispatchPersistsCommandBeforeNotification(t *testing.T) {
+	s := NewServer(t.TempDir(), t.TempDir())
+	ctx := context.Background()
+	require.NoError(t, s.agentService().Save(ctx, controlplane.Agent{ID: "agent", Status: controlplane.AgentStatusOnline, Capabilities: []string{"docker"}}))
+	run := s.jobs.startWithOptions("lab", "apply", runStartOptions{})
+	require.NoError(t, s.scheduler.DispatchRun(ctx, run, []string{"docker"}))
+	commands, err := s.apiStore.ListAgentCommands(ctx, "agent")
+	require.NoError(t, err)
+	require.Len(t, commands, 1)
+	require.Equal(t, runCommandID(*run), commands[0].ID)
+}
+
 func TestPlacementConcurrentBindHasSingleWinner(t *testing.T) {
 	runs := t.TempDir()
 	a := newWorkspaceService(runs, t.TempDir(), "", nil, nil)
@@ -56,6 +68,7 @@ func TestPlacementBindsTopologyToFirstAgent(t *testing.T) {
 	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{ID: "host-b", Status: controlplane.AgentStatusOnline, Capabilities: []string{"docker"}}))
 	run := s.jobs.startWithOptions("placement-test", "apply", runStartOptions{AgentID: "host-b"})
 	require.NoError(t, s.scheduler.DispatchRun(context.Background(), run, []string{"docker"}))
+	require.NoError(t, s.jobs.finish(run, nil))
 	next := s.jobs.startWithOptions("placement-test", "apply", runStartOptions{})
 	require.NoError(t, s.scheduler.DispatchRun(context.Background(), next, []string{"docker"}))
 	require.Equal(t, "host-b", next.AgentID)
@@ -260,6 +273,7 @@ func TestAgentRenewRunLeaseEndpointUsesConfiguredDefaultTTL(t *testing.T) {
 	cfg.Paths.RunsDir = t.TempDir()
 	cfg.Paths.WorkspacesDir = t.TempDir()
 	cfg.Run.Lease.RenewTTL = "90s"
+	cfg.Run.Lease.ClaimTTL = "30s"
 	s := NewServerWithConfig(cfg)
 	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{
 		ID:           "host-a",

@@ -3,10 +3,12 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 
 	"github.com/hashicorp/hcl/v2"
 
 	"github.com/oslab/sysbox/pkg/address"
+	"github.com/oslab/sysbox/pkg/artifact"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
@@ -55,6 +57,12 @@ func (ImageResourceHandler) Create(ctx context.Context, pc *ProviderContext, n *
 	resolvedSource, err := secret.ResolveString(ctx, pc.exec.resolver(), cfg.Source)
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("image %s source: %w", n.Address.Name, err)
+	}
+	if substrate.ArtifactKind(cfg.Kind) != substrate.ArtifactOCI {
+		resolvedSource, err = artifact.ResolveSource(ctx, resolvedSource, cfg.SHA256, pc.exec.workspaceDir)
+		if err != nil {
+			return state.Resource{}, err
+		}
 	}
 	handle, err := artifactDriver.ResolveImage(ctx, substrate.ArtifactSource{
 		Kind: substrate.ArtifactKind(cfg.Kind), Source: cfg.Source, ResolvedSource: resolvedSource,
@@ -136,7 +144,7 @@ func (ImageResourceHandler) PreflightResource(r config.ResourceBlock, ctx *hcl.E
 	}
 	var checks []substrate.PreflightCheck
 	if substrate.ArtifactKind(cfg.Kind) != substrate.ArtifactOCI {
-		if check := ArtifactPreflightCheck("image:"+r.Name+":"+cfg.Kind, cfg.Source, cfg.SHA256); check != nil {
+		if check := ArtifactPreflightCheck("image:"+r.Name+":"+cfg.Kind, cfg.Source, cfg.SHA256, filepath.Dir(r.Remain.MissingItemRange().Filename)); check != nil {
 			checks = append(checks, *check)
 		}
 	}
@@ -153,12 +161,4 @@ func (DataImageResourceHandler) DecodeData(d config.DataBlock, ctx *hcl.EvalCont
 		deps = append(deps, address.Address{Type: "substrate", Name: ref})
 	}
 	return cfg, deps, nil
-}
-
-// Create resolves a content-addressed artifact identity; Delete removes only
-// the state entry. Re-running Create against the same immutable digest is
-// idempotent, and no external object is owned that could be orphaned, so there
-// is nothing for checkpoint recovery to adopt or clean up.
-func (ImageResourceHandler) RecoveryNotRequired() string {
-	return "artifact identity resolution on an immutable digest is idempotent; owns no external object and Delete is state-only"
 }

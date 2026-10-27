@@ -15,6 +15,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/state"
 )
 
@@ -72,7 +73,7 @@ func TestSupervisorScanUsesAgentProjectionForNodeHealth(t *testing.T) {
 
 	s := NewServer(runs, workspaces)
 	proj := controlplane.ResourceProjection{
-		AgentID:    "agent-1",
+		AgentID: "agent-1", SessionID: "supervisor-session", Sequence: 1,
 		Workspace:  "web",
 		Topology:   "web",
 		ObservedAt: time.Now().UTC(),
@@ -84,6 +85,10 @@ func TestSupervisorScanUsesAgentProjectionForNodeHealth(t *testing.T) {
 			Status:   controlplane.ResourceHealthHealthy,
 		}},
 	}
+	session, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).OpenSession(context.Background(), "agent-1", "supervisor-process", "")
+	require.NoError(t, err)
+	proj.SessionID = session.ID
+	proj.Sequence = 1
 	require.NoError(t, s.apiStore.SaveResourceProjection(context.Background(), proj))
 
 	supervisor := newSupervisor(s, time.Minute)
@@ -122,7 +127,7 @@ func TestGetTopologyHealthCached(t *testing.T) {
 	require.Equal(t, controlplane.ResourceHealthHealthy, body.Health.Status)
 }
 
-func TestSupervisorRestartOnCrashStartsApplyForDriftedTopology(t *testing.T) {
+func TestSupervisorRestartOnCrashRequiresApprovedActionPlan(t *testing.T) {
 	dir := t.TempDir()
 	runs := filepath.Join(dir, "runs")
 	workspaces := filepath.Join(dir, "workspaces")
@@ -153,13 +158,10 @@ func TestSupervisorRestartOnCrashStartsApplyForDriftedTopology(t *testing.T) {
 	snap, err := s.loadHealthSnapshot("mixed")
 	require.NoError(t, err)
 	require.Equal(t, SupervisorPolicyRestartOnCrash, snap.Policy)
-	require.Equal(t, "restart_apply_started", snap.Action)
-	require.NotEmpty(t, snap.RunID)
-	run, ok := s.jobs.get(snap.RunID)
-	require.True(t, ok)
-	require.Empty(t, run.ParentID, "fresh drift repair has no execution parent")
-	require.Equal(t, "apply", run.Op)
-	require.Equal(t, controlplane.RunAssigned, run.Status)
+	require.Equal(t, "approval_required", snap.Action)
+	require.Empty(t, snap.RunID)
+	require.False(t, snap.AutoHeal)
+	require.Empty(t, s.jobs.list("mixed"))
 }
 
 func TestSupervisorRestartOnCrashSkipsWhenRunActive(t *testing.T) {
@@ -205,12 +207,9 @@ func TestSupervisorMarksStaleAgentOfflineAndExpiredRunFailed(t *testing.T) {
 		Capabilities:  []string{"docker"},
 		LastHeartbeat: time.Now().UTC().Add(-10 * time.Minute),
 	}))
-	run := s.jobs.start("mixed", "apply")
-	run.AgentID = "host-a"
-	run.Status = controlplane.RunRunning
-	run.LeaseOwner = "host-a:run"
-	run.LeaseUntil = time.Now().UTC().Add(-time.Minute)
-	s.jobs.replace(run)
+	run := &controlplane.Run{ID: "expired-run", Topology: "mixed", Op: "apply", AgentID: "host-a", Status: controlplane.RunRunning, LeaseOwner: "host-a:run", LeaseUntil: time.Now().UTC().Add(-time.Minute)}
+	require.NoError(t, s.apiStore.SaveRun(ctx, *run))
+	s.jobs.remember(run)
 
 	supervisor := newSupervisor(s, time.Minute)
 	supervisor.server.agentService().MarkStaleOffline(ctx, time.Now().UTC())

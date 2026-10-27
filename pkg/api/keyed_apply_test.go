@@ -8,9 +8,10 @@ import (
 	"fmt"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
-	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -19,81 +20,124 @@ import (
 
 func keyedApply(t *testing.T, s *Server, rev, key, value string) *httptest.ResponseRecorder {
 	t.Helper()
-	b, _ := json.Marshal(map[string]any{"revision": rev, "inputs": map[string]string{"flag": value}})
-	q := httptest.NewRequest("POST", "/v1/topologies/keyed/apply", bytes.NewReader(b))
-	q.Header.Set("Idempotency-Key", key)
+	body, _ := json.Marshal(map[string]any{"revision": rev, "inputs": map[string]string{"flag": value}})
+	req := httptest.NewRequest("POST", "/v1/topologies/keyed/apply", bytes.NewReader(body))
+	req.Header.Set("Idempotency-Key", key)
 	w := httptest.NewRecorder()
-	s.ServeHTTP(w, q)
+	s.ServeHTTP(w, req)
 	return w
 }
-func TestKeyedApplyTerminalReplayAndConflict(t *testing.T) {
-	s := NewServer(t.TempDir(), t.TempDir())
-	registerDockerAgent(t, s)
-	rev := publishRevision(t, s, upsertApplyHCL)
-	w := keyedApply(t, s, rev, "apply-1", "private-canary")
-	require.Equal(t, 202, w.Code, w.Body.String())
-	var out map[string]any
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
-	id := out["run_id"].(string)
-	run, _ := s.jobs.get(id)
-	s.jobs.finish(run, nil)
-	w = keyedApply(t, s, rev, "apply-1", "private-canary")
-	require.Equal(t, 202, w.Code, w.Body.String())
-	got, _ := s.jobs.get(id)
-	require.Equal(t, controlplane.RunDone, got.Status)
-	require.Equal(t, http.StatusConflict, keyedApply(t, s, rev, "apply-1", "changed").Code)
-	commands, err := s.apiStore.ListAgentCommands(context.Background(), "host-a")
-	require.NoError(t, err)
-	require.Len(t, commands, 1)
+
+func TestKeyedApplyDispatchCarriesCanonicalIdentity(t *testing.T) {
+	for _, existing := range []bool{false, true} {
+		t.Run(fmt.Sprintf("existing_state_%t", existing), func(t *testing.T) {
+			s := NewServer(t.TempDir(), t.TempDir())
+			registerDockerAgent(t, s)
+			ctx := context.Background()
+			manager, err := s.stateManager("keyed")
+			require.NoError(t, err)
+			canonical, err := manager.LoadWithContext(ctx)
+			require.NoError(t, err)
+			if existing {
+				require.NoError(t, manager.SaveWithContext(ctx, canonical))
+				canonical, err = manager.LoadWithContext(ctx)
+				require.NoError(t, err)
+			}
+			require.NotEmpty(t, canonical.TopologyUID)
+			rev := publishRevision(t, s, upsertApplyHCL)
+			response := keyedApply(t, s, rev, "identity", "private-canary")
+			require.Equal(t, 202, response.Code, response.Body.String())
+			commands, err := s.apiStore.ListAgentCommands(ctx, "host-a")
+			require.NoError(t, err)
+			require.Len(t, commands, 1)
+			command := commands[0]
+			require.Equal(t, canonical.TopologyUID, command.TopologyUID)
+			require.Equal(t, command.Run.ID, command.ActionID)
+			require.Equal(t, canonical.Meta.Serial, command.ExpectedSerial)
+			require.Empty(t, command.Run.Inputs)
+		})
+	}
 }
-func TestKeyedApplyRestartRequiresHydrationAndPreservesReceipt(t *testing.T) {
+
+func TestRunAdmissionAndOldSQLiteSnapshot(t *testing.T) {
+	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+		ctx := context.Background()
+		first := controlplane.Run{ID: "first", Topology: "admission", Op: "apply", Status: controlplane.RunAssigned, QueuedAt: time.Now().UTC()}
+		require.NoError(t, s.SaveRun(ctx, first))
+		second := first
+		second.ID = "second"
+		require.ErrorIs(t, s.SaveRun(ctx, second), errActiveOperation)
+	})
+	s := &sqliteAPIStore{dbPath: filepath.Join(t.TempDir(), "test.db"), runsDir: t.TempDir()}
+	ctx := context.Background()
+	require.NoError(t, s.SaveRun(ctx, controlplane.Run{ID: "old", Topology: "old", Status: controlplane.RunDone}))
+	db, err := s.open()
+	require.NoError(t, err)
+	defer db.Close()
+	_, err = db.Exec(`UPDATE sysbox_runs SET record_json=x'' WHERE id='old'`)
+	require.NoError(t, err)
+	_, err = s.GetRun(ctx, "old")
+	require.Error(t, err, "old rows must explicitly require rebuilding")
+}
+
+func TestKeyedApplyImmutableReplayAndHydration(t *testing.T) {
 	work, runs := t.TempDir(), t.TempDir()
 	s := NewServer(work, runs)
 	registerDockerAgent(t, s)
 	rev := publishRevision(t, s, upsertApplyHCL)
-	w := keyedApply(t, s, rev, "apply-restart", "private-canary")
-	require.Equal(t, 202, w.Code)
-	var out map[string]any
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
-	id := out["run_id"].(string)
-	restart := NewServer(work, runs)
-	_, err := restart.jobs.claim(id, "host-a")
-	require.ErrorIs(t, err, errApplyInputsRequired)
-	w = keyedApply(t, restart, rev, "apply-restart", "private-canary")
+	w := keyedApply(t, s, rev, "request-1", "private-canary")
 	require.Equal(t, 202, w.Code, w.Body.String())
-	claimed, err := restart.jobs.claim(id, "host-a")
+	var out struct {
+		RunID string `json:"run_id"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	restart := NewServer(work, runs)
+	query := httptest.NewRecorder()
+	restart.ServeHTTP(query, httptest.NewRequest("GET", "/v1/runs/"+out.RunID, nil))
+	require.Equal(t, 200, query.Code)
+	require.Contains(t, query.Body.String(), `"inputs_required":true`)
+	_, err := restart.jobs.claim(out.RunID, "host-a")
+	require.Error(t, err, "claim after restart must await original inputs")
+	require.Equal(t, 409, keyedApply(t, restart, rev, "request-1", "changed").Code)
+	require.Equal(t, 202, keyedApply(t, restart, rev, "request-1", "private-canary").Code)
+	claimed, err := restart.jobs.claim(out.RunID, "host-a")
 	require.NoError(t, err)
 	require.Equal(t, "private-canary", claimed.Inputs["flag"])
-	durable, err := restart.apiStore.GetRun(context.Background(), id)
+	require.NoError(t, restart.jobs.finish(claimed, nil))
+	require.Equal(t, 202, keyedApply(t, restart, rev, "request-1", "private-canary").Code)
+	stored, err := restart.apiStore.GetRun(context.Background(), out.RunID)
 	require.NoError(t, err)
-	raw, _ := json.Marshal(durable)
+	require.Equal(t, controlplane.RunDone, stored.Status)
+	terminalRestart := NewServer(work, runs)
+	require.Equal(t, 202, keyedApply(t, terminalRestart, rev, "request-1", "private-canary").Code)
+	terminal, ok := terminalRestart.jobs.get(out.RunID)
+	require.True(t, ok)
+	require.Equal(t, controlplane.RunDone, terminal.Status)
+	require.Empty(t, terminal.Inputs)
+	raw, _ := json.Marshal(stored)
 	require.NotContains(t, string(raw), "private-canary")
 	commands, err := restart.apiStore.ListAgentCommands(context.Background(), "host-a")
 	require.NoError(t, err)
 	require.Len(t, commands, 1)
+	require.Equal(t, runCommandID(*stored), commands[0].ID)
 	raw, _ = json.Marshal(commands)
 	require.NotContains(t, string(raw), "private-canary")
 }
-func TestKeyedDestroyAbsentTopologyHasDurableReceipt(t *testing.T) {
+
+func TestKeyedApplyExcludesAnotherAdmission(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
-	req := httptest.NewRequest("POST", "/v1/topologies/never-created/destroy", nil)
-	req.Header.Set("Idempotency-Key", "absent-1")
-	w := httptest.NewRecorder()
-	s.ServeHTTP(w, req)
-	require.Equal(t, 202, w.Code, w.Body.String())
-	var out map[string]any
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
-	run, err := s.apiStore.GetRun(context.Background(), out["run_id"].(string))
-	require.NoError(t, err)
-	require.Equal(t, controlplane.RunDone, run.Status)
+	registerDockerAgent(t, s)
+	rev := publishRevision(t, s, upsertApplyHCL)
+	require.Equal(t, 202, keyedApply(t, s, rev, "first", "secret").Code)
+	w := keyedApply(t, s, rev, "second", "secret")
+	require.Equal(t, 409, w.Code, w.Body.String())
 }
-func TestKeyedApplyAtomicAcrossPostgresServers(t *testing.T) {
-	dsn := isolatedPostgresTestDSN(t)
-	dir := t.TempDir()
+
+func TestKeyedApplyConcurrentPostgresServers(t *testing.T) {
 	cfg := config.MustLoadServiceConfig("")
-	cfg.Paths.RunsDir = filepath.Join(dir, "runs")
-	cfg.Paths.WorkspacesDir = filepath.Join(dir, "workspaces")
-	cfg.State.Backend = dsn
+	cfg.Paths.RunsDir = t.TempDir()
+	cfg.Paths.WorkspacesDir = t.TempDir()
+	cfg.State.Backend = isolatedPostgresTestDSN(t)
 	servers := []*Server{NewServerWithConfig(cfg), NewServerWithConfig(cfg)}
 	registerDockerAgent(t, servers[0])
 	rev := publishRevision(t, servers[0], upsertApplyHCL)
@@ -103,250 +147,177 @@ func TestKeyedApplyAtomicAcrossPostgresServers(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			responses <- keyedApply(t, servers[i%2], rev, "pg-key", "private-canary")
+			responses <- keyedApply(t, servers[i%2], rev, "shared", "private-canary")
 		}(i)
 	}
 	wg.Wait()
 	close(responses)
-	id := ""
+	var id string
 	for w := range responses {
 		require.Equal(t, 202, w.Code, w.Body.String())
-		var out map[string]any
+		var out struct {
+			RunID string `json:"run_id"`
+		}
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
 		if id == "" {
-			id = out["run_id"].(string)
+			id = out.RunID
 		}
-		require.Equal(t, id, out["run_id"])
+		require.Equal(t, id, out.RunID)
 	}
 	runs, err := servers[0].apiStore.LoadRuns(context.Background())
 	require.NoError(t, err)
-	require.Len(t, runs, 1)
+	require.Len(t, latestRunsByID(runs), 1)
 	commands, err := servers[0].apiStore.ListAgentCommands(context.Background(), "host-a")
 	require.NoError(t, err)
 	require.Len(t, commands, 1)
-	raw, _ := json.Marshal(runs)
-	require.NotContains(t, string(raw), "private-canary")
-	raw, _ = json.Marshal(commands)
-	require.NotContains(t, string(raw), "private-canary")
-	restart := NewServerWithConfig(cfg)
-	_, err = restart.jobs.claim(id, "host-a")
-	require.ErrorIs(t, err, errApplyInputsRequired)
-	require.Equal(t, 202, keyedApply(t, restart, rev, "pg-key", "private-canary").Code)
-	claimed, err := restart.jobs.claim(id, "host-a")
-	require.NoError(t, err)
-	require.Equal(t, "private-canary", claimed.Inputs["flag"])
-	restart.jobs.finish(claimed, nil)
-	require.Equal(t, 202, keyedApply(t, restart, rev, "pg-key", "private-canary").Code)
-	finished, err := restart.apiStore.GetRun(context.Background(), id)
-	require.NoError(t, err)
-	require.Equal(t, controlplane.RunDone, finished.Status)
 }
-func TestAbsentDestroyInspectionDeleteAndArchiveReceipt(t *testing.T) {
-	s := NewServer(t.TempDir(), t.TempDir())
-	for _, key := range []string{"suspend-1", "archive-2"} {
-		q := httptest.NewRequest("POST", "/v1/topologies/never-created/destroy", nil)
-		q.Header.Set("Idempotency-Key", key)
-		w := httptest.NewRecorder()
-		s.ServeHTTP(w, q)
-		require.Equal(t, 202, w.Code, w.Body.String())
-		w = httptest.NewRecorder()
-		s.ServeHTTP(w, httptest.NewRequest("GET", "/v1/topologies/never-created/cleanup-inspection", nil))
-		require.Equal(t, 200, w.Code, w.Body.String())
-		var evidence struct {
-			Resources       []any `json:"resources"`
-			Active          []any `json:"active_operations"`
-			State, Metadata bool
+
+func TestRunAdmissionSerializesConcurrentDifferentKeys(t *testing.T) {
+	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+		ctx := context.Background()
+		start := make(chan struct{})
+		results := make(chan error, 2)
+		for _, id := range []string{"first", "second"} {
+			go func(id string) {
+				<-start
+				run := controlplane.Run{ID: id, Topology: "lab", Op: "apply", AgentID: "agent", Status: controlplane.RunAssigned, QueuedAt: time.Now().UTC()}
+				_, _, err := s.CreateRunDispatch(ctx, incarnationDispatch(run))
+				results <- err
+			}(id)
 		}
-		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &evidence))
-		require.Empty(t, evidence.Resources)
-		require.Empty(t, evidence.Active)
-		w = httptest.NewRecorder()
-		s.ServeHTTP(w, httptest.NewRequest("DELETE", "/v1/topologies/never-created", nil))
-		require.Equal(t, 200, w.Code, w.Body.String())
-	}
-	commands, err := s.apiStore.ListAgentCommands(context.Background(), "")
-	require.NoError(t, err)
-	require.Empty(t, commands)
+		close(start)
+		success := 0
+		for range 2 {
+			err := <-results
+			if err == nil {
+				success++
+			} else {
+				require.ErrorIs(t, err, errActiveOperation)
+			}
+		}
+		require.Equal(t, 1, success)
+		commands, err := s.ListAgentCommands(ctx, "agent")
+		require.NoError(t, err)
+		require.Len(t, commands, 1)
+	})
 }
 
-type failingRunReadStore struct{ apiStore }
+type unavailableRunStore struct{ apiStore }
 
-func (s failingRunReadStore) GetRun(context.Context, string) (*controlplane.Run, error) {
+func (s unavailableRunStore) GetRun(context.Context, string) (*controlplane.Run, error) {
 	return nil, errors.New("backend unavailable")
 }
-func TestGetRunBackendFailureIs503EvenWithCache(t *testing.T) {
+
+func TestRunQueriesAndClaimReportUnavailable(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
-	s.apiStore = failingRunReadStore{s.apiStore}
+	s.apiStore = unavailableRunStore{s.apiStore}
+	s.jobs.store = s.apiStore
 	w := httptest.NewRecorder()
-	s.ServeHTTP(w, httptest.NewRequest("GET", "/v1/runs/missing", nil))
+	s.ServeHTTP(w, httptest.NewRequest("GET", "/v1/runs/example", nil))
+	require.Equal(t, 503, w.Code)
+	w = httptest.NewRecorder()
+	s.handleClaimAgentRunByID(w, "agent", "example", controlplane.RunClaim{QueuedAt: time.Now()})
 	require.Equal(t, 503, w.Code)
 }
-func TestKeyedApplyConflictingActiveOperationRejected(t *testing.T) {
+
+func TestKeyedApplySnapshotFeedsFollowingDestroy(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
 	registerDockerAgent(t, s)
 	rev := publishRevision(t, s, upsertApplyHCL)
-	require.Equal(t, 202, keyedApply(t, s, rev, "first", "canary").Code)
-	require.Equal(t, 409, keyedApply(t, s, rev, "second", "canary").Code)
-	q := httptest.NewRequest("POST", "/v1/topologies/keyed/destroy", nil)
-	q.Header.Set("Idempotency-Key", "destroy-other")
-	w := httptest.NewRecorder()
-	s.ServeHTTP(w, q)
-	require.Equal(t, 409, w.Code)
-	w = httptest.NewRecorder()
-	s.ServeHTTP(w, httptest.NewRequest("DELETE", "/v1/topologies/keyed", nil))
-	require.Equal(t, 409, w.Code)
-}
-func TestPostgresAbsentDestroyReceiptsAndInspection(t *testing.T) {
-	cfg := config.MustLoadServiceConfig("")
-	dir := t.TempDir()
-	cfg.Paths.RunsDir = filepath.Join(dir, "runs")
-	cfg.Paths.WorkspacesDir = filepath.Join(dir, "workspaces")
-	cfg.State.Backend = isolatedPostgresTestDSN(t)
-	s := NewServerWithConfig(cfg)
-	ids := map[string]bool{}
-	for _, key := range []string{"suspend-empty", "archive-empty"} {
-		q := httptest.NewRequest("POST", "/v1/topologies/absent/destroy", nil)
-		q.Header.Set("Idempotency-Key", key)
-		w := httptest.NewRecorder()
-		s.ServeHTTP(w, q)
-		require.Equal(t, 202, w.Code, w.Body.String())
-		var out map[string]string
-		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
-		ids[out["run_id"]] = true
-		run, err := s.apiStore.GetRun(context.Background(), out["run_id"])
-		require.NoError(t, err)
-		require.Equal(t, controlplane.RunDone, run.Status)
-		w = httptest.NewRecorder()
-		s.ServeHTTP(w, httptest.NewRequest("GET", "/v1/topologies/absent/cleanup-inspection", nil))
-		require.Equal(t, 200, w.Code)
-		var proof struct {
-			Resources []any `json:"resources"`
-			Active    []any `json:"active_operations"`
-			State     bool  `json:"state_exists"`
-			Metadata  bool  `json:"metadata_exists"`
-		}
-		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &proof))
-		require.Empty(t, proof.Resources)
-		require.Empty(t, proof.Active)
-		require.False(t, proof.State)
-		require.False(t, proof.Metadata)
+	w := keyedApply(t, s, rev, "first", "secret")
+	require.Equal(t, 202, w.Code, w.Body.String())
+	var accepted struct {
+		RunID string `json:"run_id"`
 	}
-	require.Len(t, ids, 2)
-	commands, err := s.apiStore.ListAgentCommands(context.Background(), "")
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &accepted))
+	run, ok := s.jobs.get(accepted.RunID)
+	require.True(t, ok)
+	require.NoError(t, s.jobs.finish(run, nil))
+	destroy, err := s.runs().StartDestroyWithOperationKey(context.Background(), "keyed", false, "destroy")
 	require.NoError(t, err)
-	require.Empty(t, commands)
+	require.Equal(t, run.SnapshotPath, destroy.SnapshotPath)
 }
 
-type failingInspectionStore struct{ apiStore }
-
-func (s failingInspectionStore) LoadRuns(context.Context) ([]controlplane.Run, error) {
-	return nil, errors.New("unavailable")
-}
-func TestCleanupInspectionFailsClosedOnOperationStoreError(t *testing.T) {
+func TestKeyedApplyEmptyInputsCanonicalAndFingerprintImmutable(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
-	s.apiStore = failingInspectionStore{s.apiStore}
-	w := httptest.NewRecorder()
-	s.ServeHTTP(w, httptest.NewRequest("GET", "/v1/topologies/absent/cleanup-inspection", nil))
-	require.Equal(t, 503, w.Code)
+	registerDockerAgent(t, s)
+	rev := publishRevision(t, s, upsertApplyHCL)
+	first, err := s.runs().StartApply(context.Background(), "canonical", RunStartRequest{Revision: rev, OperationKey: "key"})
+	require.NoError(t, err)
+	second, err := s.runs().StartApply(context.Background(), "canonical", RunStartRequest{Revision: rev, OperationKey: "key", Inputs: map[string]string{}})
+	require.NoError(t, err)
+	require.Equal(t, first.ID, second.ID)
+	changed := *first
+	changed.RequestFingerprint = "changed"
+	require.Error(t, s.apiStore.SaveRun(context.Background(), changed))
+	require.False(t, persistence.SameRunIncarnation(*first, changed))
 }
 
-type failingClaimStore struct {
-	apiStore
-	readFailure bool
+func TestRejectedUnkeyedApplyDoesNotChangeWorkspace(t *testing.T) {
+	s := NewServer(t.TempDir(), t.TempDir())
+	registerDockerAgent(t, s)
+	first := publishRevision(t, s, upsertApplyHCL)
+	other := publishRevision(t, s, upsertApplyHCL+"\n# other\n")
+	_, err := s.runs().StartApply(context.Background(), "guard", RunStartRequest{Revision: first})
+	require.NoError(t, err)
+	_, err = s.runs().StartApply(context.Background(), "guard", RunStartRequest{Revision: other})
+	require.Error(t, err)
+	raw, err := os.ReadFile(s.workspaceService().HCLFile("guard"))
+	require.NoError(t, err)
+	require.Equal(t, upsertApplyHCL, string(raw))
 }
 
-func (s failingClaimStore) GetRun(ctx context.Context, id string) (*controlplane.Run, error) {
-	if s.readFailure {
-		return nil, errors.New("database down")
-	}
-	return s.apiStore.GetRun(ctx, id)
-}
-func (s failingClaimStore) ClaimRun(context.Context, string, string, string, time.Duration) (*controlplane.Run, bool, error) {
-	return nil, false, errors.New("database down")
-}
-func TestClaimBackendFailureIsRetryable(t *testing.T) {
-	for _, read := range []bool{true, false} {
-		t.Run(fmt.Sprint(read), func(t *testing.T) {
-			s := NewServer(t.TempDir(), t.TempDir())
-			registerDockerAgent(t, s)
-			rev := publishRevision(t, s, upsertApplyHCL)
-			id := applyUpsert(t, s, "legacy", rev)
-			store := s.jobs.store
-			s.jobs.store = failingClaimStore{store, read}
-			w := httptest.NewRecorder()
-			s.handleClaimAgentRunByID(w, "host-a", id)
-			require.Equal(t, 503, w.Code)
-			s.jobs.store = store
-			claimed, err := s.jobs.claim(id, "host-a")
-			require.NoError(t, err)
-			require.Equal(t, id, claimed.ID)
-		})
-	}
-}
-func TestApplyHydrationCannotDowngradeCompletedMemoryRun(t *testing.T) {
-	s := NewServer(t.TempDir(), t.TempDir())
-	run := newRun("keyed", "apply", runStartOptions{OperationKey: "stale"})
-	run.RequestFingerprint = "hash"
-	stale := *run
-	s.jobs.remember(run)
-	s.jobs.mu.RLock()
-	current := s.jobs.runs[run.ID]
-	s.jobs.mu.RUnlock()
-	s.jobs.finish(current, nil)
-	s.runs().hydrateApply(&stale, map[string]string{"secret": "should-not-stay"})
-	s.jobs.mu.RLock()
-	defer s.jobs.mu.RUnlock()
-	require.Equal(t, controlplane.RunDone, s.jobs.runs[run.ID].Status)
-	require.NotContains(t, s.jobs.applyInputs, run.ID)
-}
-func TestApplyReplayRacesCompletionWithoutRetainingInputs(t *testing.T) {
-	s := NewServer(t.TempDir(), t.TempDir())
-	for i := range 25 {
-		run := newRun("race", "apply", runStartOptions{OperationKey: fmt.Sprint(i)})
-		run.RequestFingerprint = "fingerprint"
-		s.jobs.remember(run)
-		stale := *run
-		s.jobs.mu.RLock()
-		current := s.jobs.runs[run.ID]
-		s.jobs.mu.RUnlock()
-		var wg sync.WaitGroup
-		wg.Add(2)
-		go func() { defer wg.Done(); s.runs().hydrateApply(&stale, map[string]string{"flag": "secret"}) }()
-		go func() { defer wg.Done(); s.jobs.finish(current, nil) }()
-		wg.Wait()
-		s.jobs.mu.RLock()
-		require.Equal(t, controlplane.RunDone, s.jobs.runs[run.ID].Status)
-		require.NotContains(t, s.jobs.applyInputs, run.ID)
-		s.jobs.mu.RUnlock()
-	}
-}
-func TestLegacyMutationEntrypointsCannotBypassKeyedApply(t *testing.T) {
-	for _, operation := range []string{"repair", "reset", "resume"} {
+func TestWorkspaceLifecyclePinsSnapshot(t *testing.T) {
+	for _, operation := range []string{"apply", "repair", "reset"} {
 		t.Run(operation, func(t *testing.T) {
 			s := NewServer(t.TempDir(), t.TempDir())
 			registerDockerAgent(t, s)
-			rev := publishRevision(t, s, upsertApplyHCL)
-			w := keyedApply(t, s, rev, "active-key", "canary")
-			require.Equal(t, 202, w.Code)
-			var accepted struct {
-				RunID string `json:"run_id"`
+			writeRunServiceTopology(t, s, "workspace", upsertApplyHCL)
+			start := s.runs().StartApply
+			if operation == "repair" {
+				start = s.runs().StartRepair
 			}
-			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &accepted))
-			path := "/v1/topologies/keyed/" + operation
-			var body *bytes.Reader
-			body = bytes.NewReader([]byte(`{}`))
-			if operation == "resume" {
-				path = "/v1/runs/" + accepted.RunID + "/resume"
+			if operation == "reset" {
+				start = s.runs().StartReset
 			}
-			w = httptest.NewRecorder()
-			s.ServeHTTP(w, httptest.NewRequest("POST", path, body))
-			require.Equal(t, 409, w.Code, w.Body.String())
-			runs, err := s.apiStore.LoadRuns(context.Background())
+			run, err := start(context.Background(), "workspace", RunStartRequest{})
 			require.NoError(t, err)
-			require.Len(t, latestRunsByID(runs), 1)
-			commands, err := s.apiStore.ListAgentCommands(context.Background(), "host-a")
-			require.NoError(t, err)
-			require.Len(t, commands, 1)
+			require.NotEmpty(t, run.SnapshotPath)
 		})
 	}
+}
+
+func TestHydrationCannotAuthorizePreviouslyCapturedMissingInputs(t *testing.T) {
+	s := NewServer(t.TempDir(), t.TempDir())
+	registerDockerAgent(t, s)
+	rev := publishRevision(t, s, upsertApplyHCL)
+	req := RunStartRequest{Revision: rev, OperationKey: "captured", Inputs: map[string]string{"secret": "value"}}
+	run, err := s.runs().StartApply(context.Background(), "captured", req)
+	require.NoError(t, err)
+	intent, err := s.apiStore.GetRun(context.Background(), run.ID)
+	require.NoError(t, err)
+	s.jobs.mu.Lock()
+	s.jobs.runs[run.ID].Inputs = nil
+	s.jobs.mu.Unlock()
+	s.jobs.mu.RLock()
+	captured := inputsForRun(s.jobs.runs[run.ID], intent)
+	s.jobs.mu.RUnlock()
+	_, err = s.runs().StartApply(context.Background(), "captured", req)
+	require.NoError(t, err)
+	require.False(t, s.jobs.inputsRequired(intent), "current cache was hydrated")
+	require.True(t, keyedInputsRequired(intent, captured), "a claim must still reject its previously captured nil inputs")
+}
+
+func TestRunRequestFingerprintCannotBeRewritten(t *testing.T) {
+	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+		ctx := context.Background()
+		run := controlplane.Run{ID: "bound", Topology: "bound", Op: "apply", Status: controlplane.RunAssigned, RequestFingerprint: "apply-request:original"}
+		require.NoError(t, s.SaveRun(ctx, run))
+		changed := run
+		changed.RequestFingerprint = ""
+		require.ErrorIs(t, s.SaveRun(ctx, changed), persistence.ErrConflict)
+		actual, err := s.GetRun(ctx, run.ID)
+		require.NoError(t, err)
+		require.Equal(t, run.RequestFingerprint, actual.RequestFingerprint)
+	})
 }

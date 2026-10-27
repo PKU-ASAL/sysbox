@@ -16,7 +16,7 @@ import (
 func TestCreateNodeUsesConfiguredHostVisibleWorkdir(t *testing.T) {
 	bin := t.TempDir()
 	logPath := filepath.Join(t.TempDir(), "qemu-img.log")
-	writeExecutable(t, filepath.Join(bin, "virsh"), "#!/bin/sh\nexit 1\n")
+	writeExecutable(t, filepath.Join(bin, "virsh"), "#!/bin/sh\nif [ \"$1\" = \"list\" ]; then exit 0; fi\nexit 1\n")
 	writeExecutable(t, filepath.Join(bin, "qemu-img"), `#!/bin/sh
 printf '%s\n' "$*" >> "$SYSBOX_TEST_QEMU_IMG_LOG"
 case "$1" in
@@ -28,7 +28,7 @@ esac
 	t.Setenv("SYSBOX_TEST_QEMU_IMG_LOG", logPath)
 
 	workdir := t.TempDir()
-	handle, err := New(workdir).CreateNode(context.Background(), substrate.NodeSpec{
+	handle, err := New(workdir).CreateNode(substrate.WithOperationIdentity(context.Background(), managedOperation()), substrate.NodeSpec{
 		Name:  "host-visible",
 		Image: substrate.ArtifactHandle{ID: "/images/base.qcow2"},
 		ProviderConfig: &Config{
@@ -56,7 +56,7 @@ func TestCreateNodeGeneratesEphemeralSSHKeyForCloudInit(t *testing.T) {
 		t.Skip("ssh-keygen is unavailable")
 	}
 	bin := t.TempDir()
-	writeExecutable(t, filepath.Join(bin, "virsh"), "#!/bin/sh\nexit 1\n")
+	writeExecutable(t, filepath.Join(bin, "virsh"), "#!/bin/sh\nif [ \"$1\" = \"list\" ]; then exit 0; fi\nexit 1\n")
 	writeExecutable(t, filepath.Join(bin, "qemu-img"), `#!/bin/sh
 case "$1" in
   convert) touch "$7" ;;
@@ -66,7 +66,7 @@ esac
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	workdir := t.TempDir()
-	handle, err := New(workdir).CreateNode(context.Background(), substrate.NodeSpec{
+	handle, err := New(workdir).CreateNode(substrate.WithOperationIdentity(context.Background(), managedOperation()), substrate.NodeSpec{
 		Name:  "cloud-init-key",
 		Image: substrate.ArtifactHandle{ID: "/images/base.qcow2"},
 		ProviderConfig: &Config{

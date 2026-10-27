@@ -122,10 +122,7 @@ type recordingConn struct {
 
 func (c *recordingConn) Exec(_ context.Context, req substrate.ExecRequest, _, _ io.Writer) (substrate.ExecResult, error) {
 	c.program = req.Program
-	return substrate.ExecResult{ExitCode: 0}, nil
-}
-func (*recordingConn) ExecBackground(context.Context, substrate.ExecRequest) (int, error) {
-	return 0, nil
+	return substrate.ExecResult{ExitCode: 0, ExitCodeKnown: true, Status: substrate.ExecStatusExited}, nil
 }
 func (c *recordingConn) CopyFile(_ context.Context, srcPath, _ string) error {
 	c.copiedSrc = srcPath

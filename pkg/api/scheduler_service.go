@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
 )
@@ -32,9 +33,28 @@ func (s *SchedulerService) DispatchRun(ctx context.Context, run *controlplane.Ru
 		s.jobs.finish(run, err)
 		return err
 	}
-	s.jobs.assign(run, agent.ID)
-	if _, err := s.publish(ctx, agent.ID, controlplaneRunAssignedCommand(run)); err != nil {
+	assigned := *run
+	transientInputs := cloneInputs(run.Inputs)
+	assigned.MarkAssigned(agent.ID, time.Now().UTC())
+	command, err := s.placement.runAssignedCommand(ctx, &assigned)
+	if err != nil {
 		return err
+	}
+	fingerprint := runAssignmentFingerprint(assigned)
+	stored, created, err := s.jobs.store.CreateRunDispatch(ctx, RunDispatchRequest{Run: assigned, Command: command, Fingerprint: fingerprint})
+	if err != nil {
+		return err
+	}
+	*run = *stored
+	run.Inputs = transientInputs
+	s.jobs.remember(stored)
+	s.jobs.mu.Lock()
+	if cached := s.jobs.runs[stored.ID]; cached != nil {
+		cached.Inputs = transientInputs
+	}
+	s.jobs.mu.Unlock()
+	if created && s.agents.registry != nil {
+		_ = s.agents.registry.PublishCommand(agent.ID, command)
 	}
 	return nil
 }
@@ -61,7 +81,10 @@ func (s *SchedulerService) SelectAgentForTopology(ctx context.Context, topology 
 }
 
 func (s *SchedulerService) SelectAgent(ctx context.Context, required []string, preferred string) (controlplane.Agent, error) {
-	agents := s.agents.List(ctx)
+	agents, err := s.agents.List(ctx)
+	if err != nil {
+		return controlplane.Agent{}, err
+	}
 	required = normalizeCapabilities(required)
 	if preferred != "" {
 		for _, agent := range agents {

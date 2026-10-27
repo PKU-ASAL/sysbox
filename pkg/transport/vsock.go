@@ -3,6 +3,7 @@ package transport
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -49,6 +50,7 @@ func abortConnOnContext(ctx context.Context, conn io.Closer) (stop func()) {
 // back "OK <host-port>\n", and from that point on the UDS is a transparent
 // pipe to the guest's vsock port.
 type VsockConnection struct {
+	executionIdentity
 	udsPath string // path to the firecracker vsock UDS
 	port    uint32 // guest port the sysbox-init agent listens on
 }
@@ -126,37 +128,39 @@ func (c *VsockConnection) dial(ctx context.Context) (net.Conn, error) {
 	return &bufferedConn{Conn: conn, br: br}, nil
 }
 
-// WaitReady polls the agent with OpPing until it answers or the deadline elapses.
+// WaitReady requires initialization evidence; an RPC pong is only liveness.
 func (c *VsockConnection) WaitReady(ctx context.Context, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	var lastErr error
-	for time.Now().Before(deadline) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	var last error
+	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("wait for guest initialization (%v): %w", last, ctx.Err())
 		default:
 		}
-		if err := c.ping(ctx); err == nil {
+		if err := c.guestReady(ctx); err == nil {
 			return nil
 		} else {
-			lastErr = err
+			last = err
 		}
-		time.Sleep(500 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("wait for guest initialization (%v): %w", last, ctx.Err())
+		case <-time.After(500 * time.Millisecond):
+		}
 	}
-	if lastErr == nil {
-		lastErr = fmt.Errorf("timed out")
-	}
-	return fmt.Errorf("vsock agent not ready after %v: %w", timeout, lastErr)
 }
 
-func (c *VsockConnection) ping(ctx context.Context) error {
+func (c *VsockConnection) guestReady(ctx context.Context) error {
 	conn, err := c.dial(ctx)
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
+	defer abortConnOnContext(ctx, conn)()
 
-	if err := json.NewEncoder(conn).Encode(vsockrpc.Request{Op: vsockrpc.OpPing}); err != nil {
+	if err := json.NewEncoder(conn).Encode(vsockrpc.Request{Op: vsockrpc.OpReady}); err != nil {
 		return err
 	}
 	dec := json.NewDecoder(conn)
@@ -167,8 +171,8 @@ func (c *VsockConnection) ping(ctx context.Context) error {
 	if f.Error != "" {
 		return fmt.Errorf("%s", f.Error)
 	}
-	if !f.Pong {
-		return fmt.Errorf("unexpected ping reply: %+v", f)
+	if !f.Done || !f.Ready {
+		return fmt.Errorf("guest initialization incomplete: %s", f.ReadinessReason)
 	}
 	return nil
 }
@@ -182,7 +186,7 @@ type frameHandler func(vsockrpc.Frame) error
 // delivered verbatim; the caller decides what to do with them. The final
 // frame (Done=true) is also delivered. Returns nil when the command exits
 // cleanly, or the first error from handler / transport.
-func (c *VsockConnection) execFrameStream(ctx context.Context, cmd []string, env map[string]string, workDir string, handler frameHandler) error {
+func (c *VsockConnection) execFrameStream(ctx context.Context, cmd []string, env map[string]string, workDir string, stdin []byte, handler frameHandler) error {
 	conn, err := c.dial(ctx)
 	if err != nil {
 		return err
@@ -192,23 +196,30 @@ func (c *VsockConnection) execFrameStream(ctx context.Context, cmd []string, env
 	// accepts the work and never reports a frame would block it forever.
 	defer abortConnOnContext(ctx, conn)()
 
-	req := vsockrpc.Request{Op: vsockrpc.OpExec, Cmd: cmd, Env: env, WorkDir: workDir}
+	req := vsockrpc.Request{Op: vsockrpc.OpExec, Cmd: cmd, Env: env, WorkDir: workDir, StdinSize: int64(len(stdin))}
 	if err := json.NewEncoder(conn).Encode(req); err != nil {
 		return fmt.Errorf("send request: %w", err)
 	}
+	if _, err := io.Copy(conn, strings.NewReader(string(stdin))); err != nil {
+		return fmt.Errorf("send stdin: %w", err)
+	}
 
-	dec := json.NewDecoder(conn)
+	scanner := bufio.NewScanner(conn)
+	scanner.Buffer(make([]byte, 4096), 64<<10)
 	for {
 		var f vsockrpc.Frame
-		if err := dec.Decode(&f); err != nil {
+		if !scanner.Scan() {
 			// Attribute to the context when it is what ended the read, so a
 			// timeout is not reported as a peer protocol failure.
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return fmt.Errorf("read frame: %w", ctxErr)
 			}
-			if err == io.EOF {
-				return fmt.Errorf("vsock connection closed before exit frame")
+			if err := scanner.Err(); err != nil {
+				return fmt.Errorf("read frame: %w", err)
 			}
+			return fmt.Errorf("vsock connection closed before exit frame")
+		}
+		if err := json.Unmarshal(scanner.Bytes(), &f); err != nil {
 			return fmt.Errorf("read frame: %w", err)
 		}
 		if err := handler(f); err != nil {
@@ -221,99 +232,80 @@ func (c *VsockConnection) execFrameStream(ctx context.Context, cmd []string, env
 			if f.Error != "" {
 				return fmt.Errorf("%s", f.Error)
 			}
-			if f.ExitCode != 0 {
-				return fmt.Errorf("exit code %d", f.ExitCode)
-			}
 			return nil
 		}
 	}
 }
 
-func (c *VsockConnection) Exec(ctx context.Context, req substrate.ExecRequest, stdout, stderr io.Writer) (substrate.ExecResult, error) {
-	if stdout == nil {
-		stdout = io.Discard
-	}
-	if stderr == nil {
-		stderr = io.Discard
-	}
+func (c *VsockConnection) Exec(ctx context.Context, req substrate.ExecRequest, stdout, stderr io.Writer) (result substrate.ExecResult, err error) {
+	ctx, cancel := req.Context(ctx)
+	defer cancel()
+	defer func() { result, err = substrate.FinishExecution(ctx, result, err) }()
 	cmd, err := CommandArgv(req)
 	if err != nil {
-		return substrate.ExecResult{}, err
+		return substrate.ExecResult{ErrorClass: substrate.ExecErrorInvalid}, err
 	}
-	result := substrate.ExecResult{}
-	err = c.execFrameStream(ctx, cmd, req.Environment, req.WorkingDir, func(f vsockrpc.Frame) error {
+	stdin, err := readVsockStdin(ctx, req.Stdin)
+	if err != nil {
+		return substrate.ExecResult{ErrorClass: substrate.ExecErrorInvalid}, err
+	}
+	if err := c.WaitReady(ctx, 30*time.Second); err != nil {
+		return result, err
+	}
+	out := substrate.NewExecCapture(req.OutputLimitBytes, stdout)
+	errOut := substrate.NewExecCapture(req.OutputLimitBytes, stderr)
+	err = c.execFrameStream(ctx, cmd, req.Environment, req.WorkingDir, stdin, func(f vsockrpc.Frame) error {
 		if len(f.Stdout) > 0 {
-			result.Stdout += string(f.Stdout)
-			if _, err := stdout.Write(f.Stdout); err != nil {
+			if _, err := out.Write(f.Stdout); err != nil {
 				return fmt.Errorf("write stdout: %w", err)
 			}
 		}
 		if len(f.Stderr) > 0 {
-			result.Stderr += string(f.Stderr)
-			if _, err := stderr.Write(f.Stderr); err != nil {
+			if _, err := errOut.Write(f.Stderr); err != nil {
 				return fmt.Errorf("write stderr: %w", err)
 			}
 		}
 		if f.Done {
 			result.ExitCode = f.ExitCode
+			result.ExitCodeKnown = f.Error == ""
 		}
 		return nil
 	})
-	if err != nil && result.ExitCode == 0 {
-		return result, err
-	}
-	return result, nil
+	result.Stdout, result.Stderr = out.String(), errOut.String()
+	result.StdoutTruncated, result.StderrTruncated = out.Truncated(), errOut.Truncated()
+	return result, err
 }
 
-func (c *VsockConnection) ExecBackground(ctx context.Context, req substrate.ExecRequest) (int, error) {
-	// Wrap the command so it daemonises and prints its pid. nohup + & is the
-	// classic POSIX recipe; we capture $! before exiting.
-	command, err := RemoteCommand(req)
-	if err != nil {
-		return 0, err
-	}
-	shell := "nohup " + command + " >/dev/null 2>&1 & echo $!"
-	conn, err := c.dial(ctx)
-	if err != nil {
-		return 0, err
-	}
-	defer conn.Close()
-
-	if err := json.NewEncoder(conn).Encode(vsockrpc.Request{
-		Op:  vsockrpc.OpExec,
-		Cmd: []string{"sh", "-c", shell},
-	}); err != nil {
-		return 0, err
-	}
-
-	var stdoutBuf strings.Builder
-	dec := json.NewDecoder(conn)
-	for {
-		var f vsockrpc.Frame
-		if err := dec.Decode(&f); err != nil {
-			return 0, err
-		}
-		if len(f.Stdout) > 0 {
-			stdoutBuf.Write(f.Stdout)
-		}
-		if f.Done {
-			if f.Error != "" {
-				return 0, fmt.Errorf("%s", f.Error)
-			}
-			var pid int
-			fmt.Sscanf(strings.TrimSpace(stdoutBuf.String()), "%d", &pid)
-			return pid, nil
-		}
-	}
+func (c *VsockConnection) Start(ctx context.Context, req substrate.ExecRequest) (substrate.ExecutionHandle, error) {
+	return startTask(ctx, c, c.executionIdentity, req)
 }
 
-func (c *VsockConnection) CopyFile(ctx context.Context, srcPath, dstPath string) error {
-	data, err := os.ReadFile(srcPath)
+func (c *VsockConnection) CopyFile(ctx context.Context, srcPath, dstPath string) (err error) {
+	defer func() {
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
+	}()
+	file, err := os.Open(srcPath)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", srcPath, err)
 	}
-	info, err := os.Stat(srcPath)
+	defer file.Close()
+	info, err := file.Stat()
 	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("copy source must be a regular file")
+	}
+	digest := sha256.New()
+	if _, err := io.Copy(digest, file); err != nil {
+		return err
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	if err := c.WaitReady(ctx, 30*time.Second); err != nil {
 		return err
 	}
 
@@ -322,17 +314,19 @@ func (c *VsockConnection) CopyFile(ctx context.Context, srcPath, dstPath string)
 		return err
 	}
 	defer conn.Close()
+	defer abortConnOnContext(ctx, conn)()
 
 	req := vsockrpc.Request{
-		Op:   vsockrpc.OpWriteFile,
-		Path: dstPath,
-		Mode: uint32(info.Mode().Perm()),
-		Size: int64(len(data)),
+		SHA256: fmt.Sprintf("%x", digest.Sum(nil)),
+		Op:     vsockrpc.OpWriteFile,
+		Path:   dstPath,
+		Mode:   uint32(info.Mode().Perm()),
+		Size:   info.Size(),
 	}
 	if err := json.NewEncoder(conn).Encode(req); err != nil {
 		return err
 	}
-	if _, err := conn.Write(data); err != nil {
+	if _, err := io.CopyN(conn, file, info.Size()); err != nil {
 		return fmt.Errorf("write body: %w", err)
 	}
 	dec := json.NewDecoder(conn)
@@ -342,6 +336,9 @@ func (c *VsockConnection) CopyFile(ctx context.Context, srcPath, dstPath string)
 	}
 	if f.Error != "" {
 		return fmt.Errorf("%s", f.Error)
+	}
+	if !f.Done || f.SHA256 != req.SHA256 {
+		return fmt.Errorf("file transfer lacks matching terminal checksum")
 	}
 	return nil
 }

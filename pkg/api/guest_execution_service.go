@@ -9,6 +9,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 const guestExecutionMaxTimeout = 24 * 60 * 60
@@ -23,6 +25,7 @@ var (
 type GuestExecutionService struct {
 	store   guestExecutionPersistence
 	publish func(context.Context, string, controlplane.AgentCommand) (controlplane.AgentCommand, error)
+	enqueue func(context.Context, controlplane.GuestExecution, controlplane.AgentCommand) (controlplane.GuestExecution, error)
 	now     func() time.Time
 }
 
@@ -31,6 +34,24 @@ func newGuestExecutionService(store guestExecutionPersistence, publish func(cont
 		now = func() time.Time { return time.Now().UTC() }
 	}
 	return &GuestExecutionService{store: store, publish: publish, now: now}
+}
+
+func newGuestExecutionServiceWithOutbox(store guestExecutionPersistence, publish func(context.Context, string, controlplane.AgentCommand) (controlplane.AgentCommand, error), enqueue func(context.Context, controlplane.GuestExecution, controlplane.AgentCommand) (controlplane.GuestExecution, error), now func() time.Time) *GuestExecutionService {
+	service := newGuestExecutionService(store, publish, now)
+	service.enqueue = enqueue
+	return service
+}
+
+func newGuestExecutionServiceFromStore(store guestExecutionPersistence, publish func(context.Context, string, controlplane.AgentCommand) (controlplane.AgentCommand, error), now func() time.Time) *GuestExecutionService {
+	service := newGuestExecutionService(store, publish, now)
+	service.enqueue = func(ctx context.Context, execution controlplane.GuestExecution, command controlplane.AgentCommand) (controlplane.GuestExecution, error) {
+		if err := store.CreateGuestExecutionDispatch(ctx, execution, command); err != nil {
+			return controlplane.GuestExecution{}, err
+		}
+		execution.CommandID = command.ID
+		return execution, nil
+	}
+	return service
 }
 
 func validateGuestExecutionRequest(req controlplane.GuestExecutionRequest) error {
@@ -53,13 +74,47 @@ func (s *GuestExecutionService) Create(ctx context.Context, topology, node, agen
 		return controlplane.GuestExecution{}, err
 	}
 	execution := controlplane.GuestExecution{ID: uuid.NewString(), Version: 1, Topology: topology, Node: node, AgentID: agentID, Status: controlplane.GuestExecutionQueued, Request: req, CreatedAt: s.now()}
+	commandID := ""
+	if s.enqueue != nil {
+		commandID = uuid.NewString()
+		execution.CommandID = commandID
+	}
+	public := execution
+	public.Request = controlplane.GuestExecutionRequest{}
+	command := controlplane.AgentCommand{ID: commandID, AgentID: agentID, Type: "guest_execution", Execution: &public, ExecutionRequest: req}
+	if id, ok := substrate.OperationIdentityFromContext(ctx); ok {
+		if err := id.Validate(); err != nil {
+			return controlplane.GuestExecution{}, err
+		}
+		command.ActionID = execution.ID
+		command.ResourceUID = id.ResourceUID
+		command.TopologyUID = id.TopologyUID
+		command.Generation = id.Generation
+		command.LeaseEpoch = 1
+	}
+	if s.enqueue != nil {
+		command.Status = controlplane.AgentCommandStatusQueued
+		command.Protocol = controlplane.AgentProtocolVersion
+		command.CreatedAt = execution.CreatedAt
+	}
+	if s.enqueue != nil {
+		queued, err := s.enqueue(ctx, execution, command)
+		if err != nil {
+			return controlplane.GuestExecution{}, err
+		}
+		execution = queued
+		if s.publish != nil {
+			if _, err := s.publish(ctx, agentID, command); err != nil {
+				// Durable enqueue is authoritative; notification is only a wake-up.
+			}
+		}
+		return execution, nil
+	}
 	if err := s.store.SaveGuestExecution(ctx, execution); err != nil {
 		return controlplane.GuestExecution{}, err
 	}
 	if s.publish != nil {
-		public := execution
-		public.Request = controlplane.GuestExecutionRequest{}
-		command, err := s.publish(ctx, agentID, controlplane.AgentCommand{Type: "guest_execution", Execution: &public, ExecutionRequest: req})
+		command, err := s.publish(ctx, agentID, command)
 		if err != nil {
 			execution.Status = controlplane.GuestExecutionFailed
 			execution.ResultClass = "dispatch"
@@ -108,6 +163,9 @@ func (s *GuestExecutionService) MarkRunning(ctx context.Context, id string) (con
 	if err != nil {
 		return execution, err
 	}
+	if execution.CancelRequested {
+		return execution, fmt.Errorf("%w: cancellation requested", errGuestExecutionConflict)
+	}
 	if execution.Status != controlplane.GuestExecutionQueued {
 		return execution, fmt.Errorf("%w: cannot start from %s", errGuestExecutionConflict, execution.Status)
 	}
@@ -121,58 +179,19 @@ func (s *GuestExecutionService) MarkRunning(ctx context.Context, id string) (con
 	}
 	return execution, err
 }
-func (s *GuestExecutionService) Complete(ctx context.Context, id string, result controlplane.GuestExecutionResult, resultClass, errText string) (controlplane.GuestExecution, error) {
-	execution, err := s.Get(ctx, id)
-	if err != nil {
-		return execution, err
-	}
-	if guestExecutionTerminal(execution.Status) {
-		return execution, fmt.Errorf("%w: already terminal", errGuestExecutionConflict)
-	}
-	execution.Status = controlplane.GuestExecutionCompleted
-	if errText != "" {
-		execution.Status = controlplane.GuestExecutionFailed
-	}
-	execution.Result = result
-	execution.ResultClass = resultClass
-	execution.Err = errText
-	execution.EndedAt = s.now()
-	execution.ExpiresAt = execution.EndedAt.Add(15 * time.Minute)
-	ok, err := s.store.CompareAndSwapGuestExecution(ctx, execution, execution.Version)
-	if err == nil && !ok {
-		err = fmt.Errorf("%w: version changed", errGuestExecutionConflict)
-	} else if ok {
-		execution.Version++
-	}
-	return execution, err
-}
 func (s *GuestExecutionService) Cancel(ctx context.Context, id string) (controlplane.GuestExecution, error) {
-	execution, err := s.Get(ctx, id)
+	execution, err := s.store.CancelGuestExecution(ctx, id)
 	if err != nil {
-		return execution, err
+		return controlplane.GuestExecution{}, err
 	}
-	if guestExecutionTerminal(execution.Status) {
-		return execution, fmt.Errorf("%w: already terminal", errGuestExecutionConflict)
+	command, err := persistence.GuestExecutionCancellationCommand(*execution)
+	if err != nil {
+		return *execution, err
 	}
-	execution.Status = controlplane.GuestExecutionCancelled
-	execution.EndedAt = s.now()
-	execution.ExpiresAt = execution.EndedAt.Add(15 * time.Minute)
-	ok, err := s.store.CompareAndSwapGuestExecution(ctx, execution, execution.Version)
-	if err == nil && !ok {
-		err = fmt.Errorf("%w: version changed", errGuestExecutionConflict)
-	} else if ok {
-		execution.Version++
+	if s.publish != nil {
+		// The committed outbox is authoritative; notification failure is not a
+		// failed cancellation and cannot roll back its durable intent.
+		_, _ = s.publish(ctx, execution.AgentID, command)
 	}
-	if err == nil && s.publish != nil {
-		target := execution.CommandID
-		if execution.StartedAt.IsZero() && target != "" {
-			_, err = s.publish(ctx, execution.AgentID, controlplane.AgentCommand{ID: target, Status: controlplane.AgentCommandStatusCancelled})
-		} else {
-			_, err = s.publish(ctx, execution.AgentID, controlplane.AgentCommand{Type: "cancel_command", Operation: controlplane.NodeOperation{ExternalID: execution.ID}})
-		}
-		if err != nil {
-			return execution, fmt.Errorf("publish guest execution cancel: %w", err)
-		}
-	}
-	return execution, err
+	return *execution, nil
 }

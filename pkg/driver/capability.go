@@ -13,23 +13,24 @@ import (
 type Capability string
 
 const (
-	CapabilityNode             Capability = "node"
-	CapabilityNIC              Capability = "nic"
-	CapabilitySnapshot         Capability = "snapshot"
-	CapabilityConsole          Capability = "console"
-	CapabilityGuestExec        Capability = "guest-exec"
-	CapabilityGuestFiles       Capability = "guest-files"
-	CapabilityNetwork          Capability = "network"
-	CapabilityArtifact         Capability = "artifact"
-	CapabilityImport           Capability = "import"
-	CapabilityNodeState        Capability = "node-state"
-	CapabilityImageEntry       Capability = "image-entry"
-	CapabilityPower            Capability = "power"
-	CapabilityLinuxNetwork     Capability = "linux-network"
-	CapabilityGuestNetwork     Capability = "guest-network"
-	CapabilityGuestNetworkInit Capability = "guest-network-init"
-	CapabilityReset            Capability = "reset"
-	CapabilityPolicy           Capability = "policy"
+	CapabilityNode              Capability = "node"
+	CapabilityNIC               Capability = "nic"
+	CapabilitySnapshot          Capability = "snapshot"
+	CapabilityConsole           Capability = "console"
+	CapabilityGuestExec         Capability = "guest-exec"
+	CapabilityGuestFiles        Capability = "guest-files"
+	CapabilityNetwork           Capability = "network"
+	CapabilityArtifact          Capability = "artifact"
+	CapabilityImport            Capability = "import"
+	CapabilityOwnershipAdoption Capability = "ownership_adoption"
+	CapabilityNodeState         Capability = "node-state"
+	CapabilityImageEntry        Capability = "image-entry"
+	CapabilityPower             Capability = "power"
+	CapabilityLinuxNetwork      Capability = "linux-network"
+	CapabilityGuestNetwork      Capability = "guest-network"
+	CapabilityGuestNetworkInit  Capability = "guest-network-init"
+	CapabilityReset             Capability = "reset"
+	CapabilityPolicy            Capability = "policy"
 )
 
 type Node interface {
@@ -49,6 +50,12 @@ type Node interface {
 	AdoptNode(context.Context, substrate.NodeHandle) (substrate.NodeHandle, error)
 }
 
+// ManagedDiscovery locates a resource belonging to an already committed action.
+// ErrorNotFound means proven absence, not failure to query the provider.
+type ManagedDiscovery interface {
+	DiscoverManagedNode(context.Context, substrate.OperationIdentity, string) (substrate.NodeHandle, error)
+}
+
 type NIC interface {
 	Attach(context.Context, substrate.NodeHandle, AttachmentRequest) (AttachmentResult, error)
 	Observe(context.Context, substrate.NodeHandle, AttachmentRequest, json.RawMessage) (AttachmentResult, error)
@@ -56,13 +63,15 @@ type NIC interface {
 }
 
 type AttachmentRequest struct {
-	Name         string
-	Network      address.Address
-	MAC          string
-	IPPrefixes   []string
-	Gateway      string
-	Aliases      []string
-	NetworkState json.RawMessage
+	// NetworkIdentity belongs to the target network, never the attached node.
+	NetworkIdentity substrate.OperationIdentity
+	Name            string
+	Network         address.Address
+	MAC             string
+	IPPrefixes      []string
+	Gateway         string
+	Aliases         []string
+	NetworkState    json.RawMessage
 }
 
 type AttachmentResult struct {
@@ -83,7 +92,6 @@ type Console interface {
 
 type GuestExec interface {
 	ExecInNode(context.Context, substrate.NodeHandle, substrate.ExecRequest) (substrate.ExecResult, error)
-	ExecBackground(context.Context, substrate.NodeHandle, substrate.ExecRequest) (int, error)
 }
 
 type GuestFiles interface {
@@ -98,11 +106,21 @@ type Network interface {
 	RemoveEgress(context.Context, string) error
 }
 
+// ManagedBridgeVerifier checks provider ownership independently of the kernel
+// proof. Callers then pin and inspect the exported bridge incarnation.
+type ManagedBridgeVerifier interface {
+	VerifyManagedBridge(context.Context, substrate.ManagedBridgeTarget) error
+	PreflightManagedBridge(context.Context) error
+}
+
 type GuestNetwork interface {
 	EnsureRoute(context.Context, substrate.NodeHandle, string, string) error
 	HasRoute(context.Context, substrate.NodeHandle, string, string) (bool, error)
 }
 
+// GuestNetworkInit runs before reset publishes the replacement for canonical
+// guest-task routing. Implementations prepare host-side configuration and probe
+// readiness; they must not start guest tasks requiring that published identity.
 type GuestNetworkInit interface {
 	PrepareGuestNetwork(context.Context, substrate.NodeHandle) error
 	ObserveGuestNetwork(context.Context, substrate.NodeHandle) (substrate.GuestNetworkInitObservation, error)
@@ -124,6 +142,12 @@ type Artifact interface {
 
 type Import interface {
 	ReadNode(context.Context, string) (substrate.NodeHandle, error)
+}
+
+type OwnershipAdoption interface {
+	InspectAdoption(context.Context, string, substrate.NodeSpec) (substrate.AdoptionEvidence, error)
+	ApplyAdoption(context.Context, substrate.AdoptionEvidence) (substrate.NodeHandle, error)
+	ObserveAdoption(context.Context, substrate.AdoptionEvidence) (substrate.NodeHandle, error)
 }
 
 type NodeState interface {
@@ -158,29 +182,39 @@ type LinuxNetwork interface {
 	DeleteIsolated(context.Context, IsolatedNetworkSpec) error
 	NetworkHealthy(context.Context, IsolatedNetworkSpec) (bool, string)
 	LinkHealthy(context.Context, string, string) bool
-	DeleteAttachment(context.Context, string, string, string) error
+}
+
+// IsolatedNetworkObserver makes absence an explicit successful point query.
+// Any query or ownership ambiguity is an error, never Exists=false evidence.
+type IsolatedNetworkObserver interface {
+	ObserveIsolated(context.Context, IsolatedNetworkSpec) (IsolatedNetworkObservation, error)
+}
+type IsolatedNetworkObservation struct {
+	Exists, Healthy bool
+	Reason          string
 }
 
 type Descriptor struct {
-	Name             string
-	Version          string
-	Node             Node
-	NIC              NIC
-	Snapshot         Snapshot
-	Console          Console
-	GuestExec        GuestExec
-	GuestFiles       GuestFiles
-	Network          Network
-	Artifact         Artifact
-	Import           Import
-	NodeState        NodeState
-	ImageEntry       ImageEntry
-	Power            Power
-	Policy           Policy
-	LinuxNetwork     LinuxNetwork
-	GuestNetwork     GuestNetwork
-	GuestNetworkInit GuestNetworkInit
-	Reset            Reset
+	Name              string
+	Version           string
+	Node              Node
+	NIC               NIC
+	Snapshot          Snapshot
+	Console           Console
+	GuestExec         GuestExec
+	GuestFiles        GuestFiles
+	Network           Network
+	Artifact          Artifact
+	Import            Import
+	OwnershipAdoption OwnershipAdoption
+	NodeState         NodeState
+	ImageEntry        ImageEntry
+	Power             Power
+	Policy            Policy
+	LinuxNetwork      LinuxNetwork
+	GuestNetwork      GuestNetwork
+	GuestNetworkInit  GuestNetworkInit
+	Reset             Reset
 }
 
 func (d Descriptor) capability(capability Capability) any {
@@ -203,6 +237,8 @@ func (d Descriptor) capability(capability Capability) any {
 		return d.Artifact
 	case CapabilityImport:
 		return d.Import
+	case CapabilityOwnershipAdoption:
+		return d.OwnershipAdoption
 	case CapabilityNodeState:
 		return d.NodeState
 	case CapabilityImageEntry:
@@ -222,4 +258,11 @@ func (d Descriptor) capability(capability Capability) any {
 	default:
 		return nil
 	}
+}
+
+// ManagedAttachmentDiscovery returns the complete generation inventory keyed by
+// logical attachment name. It must reject unaccounted attachments and uncertain
+// ownership; it never creates, repairs or infers successful guest configuration.
+type ManagedAttachmentDiscovery interface {
+	DiscoverManagedAttachments(context.Context, substrate.NodeHandle, []AttachmentRequest) (map[string]AttachmentResult, error)
 }

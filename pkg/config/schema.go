@@ -339,9 +339,11 @@ type RouteConfig struct {
 }
 
 type NetworkConfig struct {
-	CIDR string `hcl:"cidr"`
-	Type string `hcl:"type,optional"`
-	NAT  bool   `hcl:"nat,optional"`
+	// ExposeBridge is inferred from mixed-substrate consumers, never an HCL switch.
+	ExposeBridge bool
+	CIDR         string `hcl:"cidr"`
+	Type         string `hcl:"type,optional"`
+	NAT          bool   `hcl:"nat,optional"`
 	// RootAddress 是 root bridge 上用于外部路由/NAT 的地址；为空时不暴露
 	// 该孤立网络的宿主机 L3 路由。
 	RootAddress string           `hcl:"root_address,optional"`

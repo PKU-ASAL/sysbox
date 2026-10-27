@@ -59,6 +59,7 @@ resource "sysbox_image" "vm" {
   architecture = "amd64"
   guest_family = "linux"
 }
+
 `), 0o644))
 
 	s := NewServer(runs, workspaces)
@@ -74,4 +75,14 @@ resource "sysbox_image" "vm" {
 		}
 	}
 	require.True(t, found)
+}
+
+func TestPreflightResolvesBundledArtifactRelativeToRevision(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "kernel.bin"), []byte("kernel"), 0600))
+	path := filepath.Join(dir, "field.sysbox.hcl")
+	require.NoError(t, os.WriteFile(path, []byte("resource \"sysbox_kernel\" \"kernel\" {\n substrate = \"firecracker\"\n source = \"kernel.bin\"\n architecture = \"amd64\"\n}"), 0600))
+	result, err := preflightFile(path)
+	require.NoError(t, err)
+	require.NoError(t, result.err())
 }

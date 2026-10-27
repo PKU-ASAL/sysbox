@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"github.com/oslab/sysbox/pkg/revisiongate"
 	"os"
 	"path/filepath"
 	"sync"
@@ -13,7 +14,6 @@ import (
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/state"
-	"github.com/oslab/sysbox/pkg/util"
 )
 
 type OperationStatus string
@@ -77,14 +77,20 @@ type OperationCheckpoint struct {
 }
 
 type StateResourceLog struct {
-	Type        string               `json:"type"`
-	Name        string               `json:"name"`
-	Provider    string               `json:"provider"`
-	ExternalID  string               `json:"external_id,omitempty"`
-	Instance    map[string]any       `json:"instance"`
-	Attachments []state.Attachment   `json:"attachments,omitempty"`
-	Private     json.RawMessage      `json:"private,omitempty"`
-	Status      state.ResourceStatus `json:"status,omitempty"`
+	ResourceType  string               `json:"resource_type,omitempty"`
+	SchemaVersion int                  `json:"schema_version,omitempty"`
+	OwnerUID      string               `json:"owner_uid,omitempty"`
+	ResourceUID   string               `json:"resource_uid,omitempty"`
+	Generation    int64                `json:"generation,omitempty"`
+	Dependencies  []address.Address    `json:"dependencies,omitempty"`
+	Type          string               `json:"type"`
+	Name          string               `json:"name"`
+	Provider      string               `json:"provider"`
+	ExternalID    string               `json:"external_id,omitempty"`
+	Instance      map[string]any       `json:"instance"`
+	Attachments   []state.Attachment   `json:"attachments,omitempty"`
+	Private       json.RawMessage      `json:"private,omitempty"`
+	Status        state.ResourceStatus `json:"status,omitempty"`
 }
 
 type OperationRecorder interface {
@@ -130,10 +136,18 @@ func (NoopRecorder) MarkResourceStateRecorded()                          {}
 func (NoopRecorder) SubstepStart(int, string, map[string]any) int        { return -1 }
 
 type FileRecorder struct {
-	persistErr error
 	mu         sync.Mutex
 	path       string
 	checkpoint OperationCheckpoint
+	persistErr error
+}
+
+// Err retains the first failed write; a later write cannot repair a missing
+// intent retroactively and must not authorize another provider operation.
+func (r *FileRecorder) Err() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.persistErr
 }
 
 func NewFileRecorder(path, runID, topology string) *FileRecorder {
@@ -281,6 +295,7 @@ func (r *FileRecorder) StepStateResource(index int, resource StateResourceLog) {
 		return
 	}
 	copied := StateResourceLog{
+		ResourceType: resource.ResourceType, SchemaVersion: resource.SchemaVersion, OwnerUID: resource.OwnerUID, ResourceUID: resource.ResourceUID, Generation: resource.Generation, Dependencies: append([]address.Address(nil), resource.Dependencies...),
 		Type:        resource.Type,
 		Name:        resource.Name,
 		Provider:    resource.Provider,
@@ -310,6 +325,7 @@ func (r *FileRecorder) StepStatePatch(index int, op StatePatchOp, resource *Stat
 	}
 	if resource != nil {
 		copied := StateResourceLog{
+			ResourceType: resource.ResourceType, SchemaVersion: resource.SchemaVersion, OwnerUID: resource.OwnerUID, ResourceUID: resource.ResourceUID, Generation: resource.Generation, Dependencies: append([]address.Address(nil), resource.Dependencies...),
 			Type:        resource.Type,
 			Name:        resource.Name,
 			Provider:    resource.Provider,
@@ -457,41 +473,25 @@ func MarkStatePatchesRecorded(cp *OperationCheckpoint, indexes map[int]bool) {
 
 func WriteCheckpoint(path string, cp OperationCheckpoint) error {
 	if path == "" {
-		return fmt.Errorf("checkpoint path required")
+		return nil
 	}
-	if err := util.MkdirAllDurable(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create checkpoint dir: %w", err)
 	}
 	data, err := json.MarshalIndent(&cp, "", "  ")
 	if err != nil {
 		return err
 	}
-	file, err := os.CreateTemp(filepath.Dir(path), ".checkpoint-*")
+	release, err := revisiongate.Guard(context.Background(), path, data)
 	if err != nil {
 		return err
 	}
-	tmp := file.Name()
-	defer os.Remove(tmp)
-	if _, err = file.Write(data); err != nil {
-		file.Close()
+	defer release()
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
 		return err
 	}
-	if err = file.Sync(); err != nil {
-		file.Close()
-		return err
-	}
-	if err = file.Close(); err != nil {
-		return err
-	}
-	if err = os.Rename(tmp, path); err != nil {
-		return err
-	}
-	dir, err := os.Open(filepath.Dir(path))
-	if err != nil {
-		return err
-	}
-	defer dir.Close()
-	return dir.Sync()
+	return os.Rename(tmp, path)
 }
 
 func splitResourceAddr(addr string) (string, string, bool) {
@@ -508,10 +508,8 @@ func splitResourceAddr(addr string) (string, string, bool) {
 
 func (r *FileRecorder) flushLocked() error {
 	err := WriteCheckpoint(r.path, r.checkpoint)
-	if err != nil && r.persistErr == nil {
+	if r.persistErr == nil {
 		r.persistErr = err
 	}
 	return err
 }
-
-func (r *FileRecorder) Err() error { r.mu.Lock(); defer r.mu.Unlock(); return r.persistErr }

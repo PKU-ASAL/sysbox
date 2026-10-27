@@ -18,10 +18,13 @@ func newNodeOperationStore(store apiStore) *nodeOperationStore {
 	return &nodeOperationStore{store: store}
 }
 
-func (s *nodeOperationStore) Create(op controlplane.NodeOperation) controlplane.NodeOperation {
+func prepareNodeOperation(op controlplane.NodeOperation) controlplane.NodeOperation {
 	now := time.Now().UTC()
 	if op.ID == "" {
 		op.ID = uuid.New().String()
+	}
+	if op.Generation > 0 {
+		op.ActionID = op.ID
 	}
 	if op.ProjectID == "" {
 		op.ProjectID = "default"
@@ -54,14 +57,25 @@ func (s *nodeOperationStore) Create(op controlplane.NodeOperation) controlplane.
 			CreatedAt: now,
 		})
 	}
-	s.Save(op)
 	return op
 }
 
-func (s *nodeOperationStore) Save(op controlplane.NodeOperation) {
-	if s.store != nil {
-		_ = s.store.SaveNodeOperation(context.Background(), op)
+func (s *nodeOperationStore) Create(op controlplane.NodeOperation) (controlplane.NodeOperation, error) {
+	op = prepareNodeOperation(op)
+	if s.store == nil {
+		return op, fmt.Errorf("node operation store not configured")
 	}
+	if err := s.store.CreateNodeOperation(context.Background(), op); err != nil {
+		return op, err
+	}
+	return op, nil
+}
+
+func (s *nodeOperationStore) CompareAndSwap(ctx context.Context, old, next controlplane.NodeOperation) error {
+	if s.store == nil {
+		return fmt.Errorf("node operation store not configured")
+	}
+	return s.store.CompareAndSwapNodeOperation(ctx, old, next)
 }
 
 func (s *nodeOperationStore) Get(id string) (*controlplane.NodeOperation, error) {

@@ -30,16 +30,13 @@ func (d *failingGuestDriver) ExecInNode(ctx context.Context, _ substrate.NodeHan
 	}
 	return substrate.ExecResult{Stdout: d.stdout}, d.err
 }
-func (*failingGuestDriver) ExecBackground(context.Context, substrate.NodeHandle, substrate.ExecRequest) (int, error) {
-	return 0, nil
-}
 
 func registerFailingDriver(t *testing.T, d *failingGuestDriver) {
 	t.Helper()
 	old := driver.DefaultRegistry
 	driver.DefaultRegistry = driver.NewRegistry()
 	t.Cleanup(func() { driver.DefaultRegistry = old })
-	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "guest-test", Version: "1", GuestExec: d, NodeState: guestCodec{}}))
+	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "guest-test", Version: "1", Node: guestConnectionNode{connection: legacyGuestConnection{exec: d}}, GuestExec: d, NodeState: guestCodec{}}))
 }
 
 // When a guest operation fails after producing output, that output is the only

@@ -4,8 +4,6 @@ import (
 	"time"
 )
 
-const AgentCommandExecutionLimit = 30 * time.Minute
-
 const (
 	AgentStatusOnline      = "online"
 	AgentStatusOffline     = "offline"
@@ -22,13 +20,14 @@ const (
 	AgentCommandStatusDenied       = "denied"
 	AgentCommandStatusCancelled    = "cancelled"
 
-	ConsoleSessionStatusQueued    = "queued"
-	ConsoleSessionStatusRunning   = "running"
-	ConsoleSessionStatusClosed    = "closed"
-	ConsoleSessionStatusFailed    = "failed"
-	ConsoleSessionStatusCancelled = "cancelled"
-	ConsoleSessionStatusDenied    = "denied"
-	ConsoleSessionStatusLost      = "lost"
+	ConsoleSessionStatusQueued     = "queued"
+	ConsoleSessionStatusRunning    = "running"
+	ConsoleSessionStatusClosed     = "closed"
+	ConsoleSessionStatusFailed     = "failed"
+	ConsoleSessionStatusCancelled  = "cancelled"
+	ConsoleSessionStatusCancelling = "cancelling"
+	ConsoleSessionStatusDenied     = "denied"
+	ConsoleSessionStatusLost       = "lost"
 
 	NodeOperationStatusQueued  = "queued"
 	NodeOperationStatusRunning = "running"
@@ -101,14 +100,8 @@ func (r Run) CanBeClaimedBy(agentID string, now time.Time) bool {
 	return r.LeaseUntil.IsZero() || !r.LeaseUntil.After(now)
 }
 
-// CanReplayClaim recovers a lost receipt for this execution instance only.
-// It never renews a lease or starts another attempt.
-func (r Run) CanReplayClaim(agentID, owner string, now time.Time) bool {
-	return owner != "" && r.AgentID == agentID && r.Status == RunRunning && r.LeaseOwner == owner && r.LeaseUntil.After(now)
-}
-
-func (r Run) CanRenewLease(agentID, owner string, now time.Time) bool {
-	return owner != "" && r.AgentID == agentID && r.Status == RunRunning && r.LeaseOwner == owner && r.LeaseUntil.After(now)
+func (r Run) CanRenewLease(agentID, owner string) bool {
+	return r.AgentID == agentID && r.Status == RunRunning && r.LeaseOwner == owner
 }
 
 func (r *Run) MarkAssigned(agentID string, now time.Time) {

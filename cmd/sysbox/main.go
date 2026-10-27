@@ -25,17 +25,9 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: docker substrate unavailable: %v\n", err)
 	} else {
-		mustRegisterDriver(driver.Descriptor{
-			Name: "docker", Version: "1", Node: dockerSub, NIC: dockerSub,
-			Console: dockerSub, GuestExec: dockerSub, GuestFiles: dockerSub, Network: dockerSub,
-			Artifact: dockerSub, Import: dockerSub,
-			NodeState:    dockerSub,
-			ImageEntry:   dockerSub,
-			Power:        dockerSub,
-			GuestNetwork: dockerSub,
-			Policy:       dockerSub,
-			Reset:        dockerSub,
-		})
+		if err := registerDockerDriver(driver.DefaultRegistry, dockerSub); err != nil {
+			panic(err)
+		}
 	}
 
 	cfg := config.MustLoadServiceConfig("")
@@ -49,10 +41,11 @@ func main() {
 	mustRegisterDriver(driver.Descriptor{
 		Name: "firecracker", Version: "1", Node: fcSub, NIC: fcSub,
 		Console: fcSub, GuestExec: fcSub, GuestFiles: fcSub, Artifact: fcSub,
-		NodeState:    fcSub,
-		Power:        fcSub,
-		GuestNetwork: fcSub,
-		Reset:        fcSub,
+		NodeState:         fcSub,
+		Power:             fcSub,
+		GuestNetwork:      fcSub,
+		OwnershipAdoption: fcSub,
+		Reset:             fcSub,
 	})
 
 	libvirtSub := libvirt.New(cfg.Providers.Libvirt.Workdir)
@@ -60,11 +53,12 @@ func main() {
 		Name: "libvirt", Version: "1", Node: libvirtSub, NIC: libvirtSub,
 		Console: libvirtSub, GuestExec: libvirtSub, GuestFiles: libvirtSub,
 		Artifact: libvirtSub, Import: libvirtSub,
-		NodeState:        libvirtSub,
-		Power:            libvirtSub,
-		GuestNetwork:     libvirtSub,
-		GuestNetworkInit: libvirtSub,
-		Reset:            libvirtSub,
+		NodeState:         libvirtSub,
+		Power:             libvirtSub,
+		GuestNetwork:      libvirtSub,
+		GuestNetworkInit:  libvirtSub,
+		Reset:             libvirtSub,
+		OwnershipAdoption: libvirtSub,
 	})
 
 	if err := commands.ExecuteContext(ctx); err != nil {
@@ -76,4 +70,19 @@ func mustRegisterDriver(descriptor driver.Descriptor) {
 	if err := driver.DefaultRegistry.Register(descriptor); err != nil {
 		panic(err)
 	}
+}
+
+func registerDockerDriver(registry *driver.Registry, dockerSub *docker.Substrate) error {
+	return registry.Register(driver.Descriptor{
+		Name: "docker", Version: "1", Node: dockerSub, NIC: dockerSub,
+		Console: dockerSub, GuestExec: dockerSub, GuestFiles: dockerSub, Network: dockerSub,
+		Artifact: dockerSub, Import: dockerSub,
+		OwnershipAdoption: dockerSub,
+		NodeState:         dockerSub,
+		ImageEntry:        dockerSub,
+		Power:             dockerSub,
+		GuestNetwork:      dockerSub,
+		Policy:            dockerSub,
+		Reset:             dockerSub,
+	})
 }

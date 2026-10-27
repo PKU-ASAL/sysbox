@@ -36,3 +36,28 @@ scripts/prepare-fc-rootfs.sh
 Artifact cache 命中前后都必须验证 digest。下载中断不能原子提升为有效 artifact。Reset 在 replacement 前重新散列 baseline，避免 plan 后内容被替换。
 
 运行 `examples/microvm` 验证单 microVM artifact；运行 `examples/heterogeneous-matrix` 验证 Docker、Firecracker 和 libvirt 的组合。
+
+## Docker digest compatibility
+
+OCI `sha256` locks may match the daemon image ID or a digest from its
+`RepoDigests`. A successful lock becomes the artifact's recorded identity;
+container creation still uses the daemon-local immutable image ID. Reset stores
+both values, checks the local ID when observing a container, and rejects a
+changed image binding on cold recovery. Legacy reset handles retain their old
+ID-equals-baseline interpretation. Mutable tags are not valid reset image IDs.
+
+The runtime image includes the official Docker 29 CLI because preflight invokes
+`docker version` independently of the Go SDK. Upgrading only the Sysbox binary
+does not upgrade this CLI. The Go SDK continues to negotiate its API version.
+
+Stage-1 acceptance used isolated Docker 20.10.24 and 29.9.1 daemons, with a runtime
+CLI at 29.9.1. Both CLI connections and real manifest-locked image resolution
+passed; unrelated digests were rejected. Both daemons in these configurations
+reported a config digest as image ID: do not assume every Docker 29 installation
+returns a manifest digest. Docker Hub direct access timed out; the real pulls
+used the host-configured mirror `docker.1ms.run/library/alpine:3.22`.
+
+Run `TestDockerDigestCompatibilityE2E` with the `e2e` tag,
+`SYSBOX_DOCKER_COMPAT_E2E=1`, an explicit disposable `DOCKER_HOST`, and optionally
+`SYSBOX_DOCKER_COMPAT_IMAGE`. This test does not authorize use of a production
+daemon. Existing artifact publication admission/completion remains mandatory.

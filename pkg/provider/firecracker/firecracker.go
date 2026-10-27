@@ -1,6 +1,7 @@
 package firecracker
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -19,9 +20,10 @@ import (
 type Substrate struct {
 	substrate.BaseSubstrate // inherits Validate / DecodeProviderConfig defaults
 
-	firecrackerBin string
-	kernelPath     string
-	rootfsDir      string // base directory for per-VM rootfs copies
+	firecrackerBin     string
+	kernelPath         string
+	rootfsDir          string // base directory for per-VM rootfs copies
+	grantPublicKeyFile string
 
 	// nextCID is a monotonic allocator for the per-VM guest_cid field.
 	// vsock CIDs 0/1/2 are reserved (HYPERVISOR, LOCAL, HOST) so we start at 3.
@@ -62,9 +64,10 @@ func New(kernelPath, rootfsDir string) *Substrate {
 	// TODO: jailer-based sandboxing is not implemented; VMs run as direct
 	// firecracker child processes with the daemon's privileges.
 	return &Substrate{
-		firecrackerBin: fcBin,
-		kernelPath:     kernelPath,
-		rootfsDir:      rootfsDir,
+		grantPublicKeyFile: cfg.Agent.ExecutionGrantPublicKeyFile,
+		firecrackerBin:     fcBin,
+		kernelPath:         kernelPath,
+		rootfsDir:          rootfsDir,
 	}
 }
 
@@ -116,6 +119,15 @@ func (s *Substrate) MarshalProviderState(h substrate.NodeHandle) (json.RawMessag
 	if !ok || hs == nil {
 		return nil, nil
 	}
+	if vm := lookupVM(hs.VMDir); vm != nil {
+		if err := vm.lockOperation(context.Background()); err != nil {
+			return nil, err
+		}
+		defer vm.unlockOperation()
+	}
+	if hs.Version != manifestVersion {
+		return nil, fmt.Errorf("firecracker provider state version %d unsupported; rebuild required", hs.Version)
+	}
 	return json.Marshal(hs)
 }
 
@@ -127,6 +139,9 @@ func (s *Substrate) UnmarshalProviderState(data json.RawMessage) (any, error) {
 	var hs HandleState
 	if err := json.Unmarshal(data, &hs); err != nil {
 		return nil, fmt.Errorf("firecracker: unmarshal handle state: %w", err)
+	}
+	if hs.Version != manifestVersion {
+		return nil, fmt.Errorf("firecracker provider state version %d unsupported; rebuild required", hs.Version)
 	}
 	return &hs, nil
 }
@@ -142,14 +157,18 @@ func (s *Substrate) Connection(handle substrate.NodeHandle, hints []substrate.Co
 			if hs == nil || hs.VsockUDS == "" {
 				return nil, fmt.Errorf("vsock connection requested but VM has no vsock channel")
 			}
-			return transport.NewVsockConnection(hs.VsockUDS, hs.VsockPort), nil
+			conn := transport.NewVsockConnection(hs.VsockUDS, hs.VsockPort)
+			conn.BindExecutionIdentity(handle.ID, handle.Generation)
+			return conn, nil
 		case "ssh":
 			return s.sshConn(handle, hints), nil
 		}
 	}
 	// Auto: prefer vsock, fall back to SSH.
 	if hs != nil && hs.VsockUDS != "" {
-		return transport.NewVsockConnection(hs.VsockUDS, hs.VsockPort), nil
+		conn := transport.NewVsockConnection(hs.VsockUDS, hs.VsockPort)
+		conn.BindExecutionIdentity(handle.ID, handle.Generation)
+		return conn, nil
 	}
 	return s.sshConn(handle, hints), nil
 }
@@ -193,5 +212,11 @@ func (s *Substrate) sshConn(handle substrate.NodeHandle, hints []substrate.Conne
 		knownHosts = h.KnownHosts
 		insecureHost = h.InsecureSkipHostKeyCheck
 	}
-	return transport.NewSSHConnectionWithTrust(host, port, user, key, pass, knownHosts, insecureHost)
+	namespace := ""
+	if hs != nil {
+		namespace = hs.NetnsName
+	}
+	conn := transport.NewSSHConnectionInNamespaceWithTrust(namespace, host, port, user, key, pass, knownHosts, insecureHost)
+	conn.BindExecutionIdentity(handle.ID, handle.Generation)
+	return conn
 }

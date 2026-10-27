@@ -1,0 +1,339 @@
+package hostsupervisor
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/guesttask"
+	"github.com/oslab/sysbox/pkg/substrate"
+	"github.com/oslab/sysbox/pkg/transport"
+)
+
+// RunChildren owns the durable guest tasks of one host Run. Configure its
+// exported fields before starting tasks; a completed owner cannot be reused.
+type RunChildren struct {
+	Dispatcher *Dispatcher
+	RenewGrant func(context.Context, controlplane.SignedExecutionGrant, controlplane.SignedExecutionGrant) (controlplane.SignedExecutionGrant, error)
+
+	mu               sync.Mutex
+	wg               sync.WaitGroup
+	children         map[string]TaskRecord
+	starting         int
+	unknownAdmission bool
+	stopCtx          context.Context
+	stop             context.CancelFunc
+	closed           bool
+	failures         []error
+	finishOnce       sync.Once
+	finished         chan struct{}
+}
+
+func (r *RunChildren) initializeLocked() {
+	if r.children == nil {
+		r.children = make(map[string]TaskRecord)
+		r.stopCtx, r.stop = context.WithCancel(context.Background())
+		r.finished = make(chan struct{})
+	}
+}
+
+// Start persists intent through Dispatcher before any provider effect. Even a
+// lost start reply leaves a child to reconcile, with the same durable handle.
+func (r *RunChildren) Start(ctx context.Context, ref TargetRef, req guesttask.Request) (substrate.ExecutionHandle, error) {
+	r.mu.Lock()
+	r.initializeLocked()
+	if r.closed || r.stopCtx.Err() != nil {
+		r.mu.Unlock()
+		return substrate.ExecutionHandle{}, fmt.Errorf("run children are closed")
+	}
+	if r.Dispatcher == nil {
+		r.mu.Unlock()
+		return substrate.ExecutionHandle{}, fmt.Errorf("run child dispatcher unavailable")
+	}
+	// Reserve before releasing admission. Wait can seal admission at any point,
+	// but can never observe a zero count while an admitted Start is in flight.
+	r.wg.Add(1)
+	r.starting++
+	r.mu.Unlock()
+	startCtx, cancel := context.WithCancel(ctx)
+	unregister := context.AfterFunc(r.stopCtx, cancel)
+	unregisterParent := context.AfterFunc(ctx, func() { r.fail(ctx.Err()) })
+	record, err := r.Dispatcher.Start(startCtx, ref, req)
+	unregisterParent()
+	unregister()
+	cancel()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.starting--
+	watching := false
+	if record.Handle.ID != "" {
+		key := recordKey(record.Handle)
+		if _, exists := r.children[key]; !exists {
+			r.children[key] = record
+			watching = true
+			go r.watch(ctx, record)
+		}
+	} else {
+		// A failed admission can follow accepted authority. Without a durable
+		// handle there is no task receipt that can discharge that uncertainty.
+		r.unknownAdmission = true
+	}
+	if !watching {
+		r.wg.Done()
+	}
+	if err != nil {
+		r.failures = append(r.failures, err)
+		r.stop()
+	}
+	return record.Handle, err
+}
+
+// ProveStopped seals admission and checks acknowledged stop evidence in the
+// trusted journal. It does not cancel children and does not erase execution
+// failures returned by Wait. Call Cancel first when owned cleanup is required.
+func (r *RunChildren) ProveStopped(ctx context.Context) error {
+	r.mu.Lock()
+	r.initializeLocked()
+	r.closed = true
+	if r.starting != 0 || r.unknownAdmission {
+		r.mu.Unlock()
+		return fmt.Errorf("run child admission remains unconfirmed")
+	}
+	records := make([]TaskRecord, 0, len(r.children))
+	for _, record := range r.children {
+		records = append(records, record)
+	}
+	r.mu.Unlock()
+	for _, admitted := range records {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		unlock, err := r.Dispatcher.lock(ctx, admitted.Handle)
+		if err != nil {
+			return err
+		}
+		current, err := r.Dispatcher.load(admitted.Handle)
+		unlock()
+		if err != nil {
+			return fmt.Errorf("child %s stop evidence: %w", admitted.Handle.ID, err)
+		}
+		// Renewal and stop-only reconstruction may change expiry/state, but
+		// never command, attempt, session, epoch or parent identity.
+		if current.RunID != admitted.RunID || current.RunID != r.Dispatcher.RunID || current.Ref != admitted.Ref || !sameTaskGrant(current.Grant.Grant, admitted.Grant.Grant) {
+			return fmt.Errorf("child %s parent identity changed", admitted.Handle.ID)
+		}
+		if current.StopReceipt == nil || !current.Reported {
+			return fmt.Errorf("child %s termination remains unconfirmed", admitted.Handle.ID)
+		}
+	}
+	return ctx.Err()
+}
+
+func (r *RunChildren) fail(err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err != nil {
+		r.failures = append(r.failures, err)
+	}
+	r.stop()
+}
+
+func (r *RunChildren) watch(parent context.Context, record TaskRecord) {
+	defer r.wg.Done()
+	ctx, cancel := context.WithCancel(parent)
+	defer cancel()
+	unregister := context.AfterFunc(r.stopCtx, cancel)
+	defer unregister()
+	unregisterParent := context.AfterFunc(parent, func() { r.fail(parent.Err()) })
+	defer unregisterParent()
+	if err := r.observe(ctx, record); err != nil {
+		r.fail(err)
+		// The parent's canceled deadline must not prevent owned cleanup.
+		cleanup, done := context.WithTimeout(context.WithoutCancel(parent), recoveryTaskBudget)
+		defer done()
+		if err := r.cleanup(cleanup, record); err != nil {
+			r.fail(fmt.Errorf("child %s cleanup: %w", record.Handle.ID, err))
+		}
+	}
+}
+
+func (r *RunChildren) observe(ctx context.Context, record TaskRecord) error {
+	budget, err := controlplane.ExecutionGrantBudget(record.Grant, time.Now())
+	if err != nil {
+		return err
+	}
+	grantDeadline := time.Now().Add(budget)
+	renew := time.NewTimer(budget / 3)
+	defer renew.Stop()
+	poll := time.NewTimer(100 * time.Millisecond)
+	defer poll.Stop()
+	for {
+		call, cancel := context.WithDeadline(ctx, grantDeadline)
+		current, err := r.observeWithTimeoutRetry(call, record)
+		cancel()
+		if err != nil {
+			return err
+		}
+		if current.StopReceipt != nil && current.Reported {
+			if !current.Result.ExitCodeKnown {
+				return fmt.Errorf("child %s stopped with unknown exit status", record.Handle.ID)
+			}
+			if current.Result.ExitCode != 0 {
+				return fmt.Errorf("child %s exited with status %d", record.Handle.ID, current.Result.ExitCode)
+			}
+			return nil
+		}
+		record = current
+		// Measure the polling interval after releasing the task lock. A fixed
+		// ticker is already readable after a slow Docker/SSH observation and
+		// causes immediate lock reacquisition, starving recovery and renewal.
+		poll.Reset(100 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-poll.C:
+		case <-renew.C:
+			parent, ok := transport.ParentExecutionGrantFromContext(ctx)
+			if !ok || r.RenewGrant == nil {
+				return fmt.Errorf("run child renewal authority unavailable")
+			}
+			call, cancel := context.WithTimeout(ctx, recoveryTaskBudget)
+			grant, err := r.RenewGrant(call, parent, current.Grant)
+			if err == nil {
+				record, err = r.Dispatcher.Renew(call, record.Ref, record.Handle, grant)
+			}
+			cancel()
+			if err != nil {
+				return err
+			}
+			budget, err = controlplane.ExecutionGrantBudget(grant, time.Now())
+			if err != nil {
+				return err
+			}
+			grantDeadline = time.Now().Add(budget)
+			renew.Reset(budget / 3)
+		}
+	}
+}
+
+func (r *RunChildren) cleanup(ctx context.Context, record TaskRecord) error {
+	current, err := r.Dispatcher.Cancel(ctx, record.Ref, record.Handle)
+	if err == nil && current.StopReceipt != nil && current.Reported {
+		return nil
+	}
+	poll := time.NewTimer(50 * time.Millisecond)
+	defer poll.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return errors.Join(err, ctx.Err())
+		case <-poll.C:
+			current, err = r.Dispatcher.Observe(ctx, record.Ref, record.Handle)
+			if err == nil && current.StopReceipt != nil && current.Reported {
+				return nil
+			}
+			poll.Reset(50 * time.Millisecond)
+		}
+	}
+}
+
+// Wait seals admission and waits for natural completion. Services remain
+// active until the parent is canceled; they are never silently stopped here.
+func (r *RunChildren) Wait(ctx context.Context) error {
+	r.mu.Lock()
+	r.initializeLocked()
+	r.closed = true
+	r.mu.Unlock()
+	r.finishOnce.Do(func() {
+		go func() { r.wg.Wait(); close(r.finished) }()
+	})
+	select {
+	case <-r.finished:
+	case <-ctx.Done():
+		r.fail(ctx.Err())
+	case <-r.stopCtx.Done():
+	}
+	// Provider implementations may ignore context cancellation. Give owned
+	// cleanup a bounded opportunity, then report uncertainty without inventing
+	// stop evidence or dropping the durable task record.
+	timer := time.NewTimer(recoveryTaskBudget)
+	defer timer.Stop()
+	var unfinished error
+	select {
+	case <-r.finished:
+	case <-timer.C:
+		unfinished = fmt.Errorf("run child termination remains unconfirmed: %w", context.DeadlineExceeded)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return errors.Join(append(append([]error{}, r.failures...), ctx.Err(), unfinished)...)
+}
+
+// Cancel stops all owned children and waits for bounded reconciliation. Any
+// unconfirmed stop remains in the Dispatcher journal for recovery.
+func (r *RunChildren) Cancel(ctx context.Context) error {
+	r.mu.Lock()
+	r.initializeLocked()
+	r.closed = true
+	r.stop()
+	r.mu.Unlock()
+	return r.Wait(ctx)
+}
+
+// Finish timestamps the entire Run only after every owned child has completed.
+func (r *RunChildren) Finish(ctx context.Context, run *controlplane.Run) error {
+	if run == nil || run.Status != controlplane.RunDone {
+		return fmt.Errorf("successful parent outcome required before waiting for children")
+	}
+	if err := r.Wait(ctx); err != nil {
+		return err
+	}
+	run.EndedAt = time.Now().UTC()
+	return nil
+}
+
+// A read timeout is not revocation. Retry only that failure, under the original
+// caller budget, and reauthorize before each retry. Never retry Start or Renew.
+func (r *RunChildren) observeWithTimeoutRetry(ctx context.Context, record TaskRecord) (TaskRecord, error) {
+	var current TaskRecord
+	for attempt := 0; attempt < 3; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return current, err
+		}
+		call, cancel := context.WithTimeout(ctx, recoveryTaskBudget)
+		observed, err := r.Dispatcher.Observe(call, record.Ref, record.Handle)
+		cancel()
+		current = observed
+		if ctx.Err() != nil {
+			return current, ctx.Err()
+		}
+		if err == nil || !errors.Is(err, context.DeadlineExceeded) || attempt == 2 {
+			return current, err
+		}
+		// Use the exact original envelope. If renewal raced this read, stale
+		// authority fails closed rather than extending or replacing a grant.
+		if r.Dispatcher.Authorize == nil {
+			return current, guesttask.ErrUnauthorized
+		}
+		check, stop := context.WithTimeout(ctx, recoveryAuthorizationBudget)
+		err = r.Dispatcher.Authorize(check, record.Grant)
+		if check.Err() != nil {
+			err = check.Err()
+		}
+		stop()
+		if err != nil {
+			return current, err
+		}
+		delay := time.NewTimer(100 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			delay.Stop()
+			return current, ctx.Err()
+		case <-delay.C:
+		}
+	}
+	return current, context.DeadlineExceeded
+}

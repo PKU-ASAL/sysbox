@@ -51,6 +51,24 @@ func TestAgentServicePublishAndAcquireCommandLease(t *testing.T) {
 	require.Equal(t, leased.Status, stored[0].Status)
 }
 
+func TestCommandEventFenceRejectsStaleLease(t *testing.T) {
+	svc, _, registry, _ := newTestAgentService(t)
+	ctx := context.Background()
+	cmd, err := svc.PublishCommand(ctx, "host-a", controlplane.AgentCommand{Type: "node_operation", ActionID: "action", ResourceUID: "uid", Generation: 2, LeaseEpoch: 4})
+	require.NoError(t, err)
+	leased, ok := svc.AcquireCommandLease(ctx, "host-a", cmd)
+	require.True(t, ok)
+	svc.RecordCommandEvent(ctx, controlplane.AgentCommandEvent{AgentID: "host-a", CommandID: leased.ID, Status: "ack", LeaseOwner: "stale", Attempt: leased.Attempt, ActionID: "action", ResourceUID: "uid", Generation: 2, LeaseEpoch: 4})
+	got, err := svc.FindCommand(ctx, "host-a", leased.ID)
+	require.NoError(t, err)
+	require.Equal(t, controlplane.AgentCommandStatusLeased, got.Status)
+	svc.RecordCommandEvent(ctx, controlplane.AgentCommandEvent{AgentID: "host-a", CommandID: leased.ID, Status: "ack", LeaseOwner: leased.LeaseOwner, Attempt: leased.Attempt, ActionID: "action", ResourceUID: "uid", Generation: 2, LeaseEpoch: 4})
+	got, err = svc.FindCommand(ctx, "host-a", leased.ID)
+	require.NoError(t, err)
+	require.Equal(t, controlplane.AgentCommandStatusAcknowledged, got.Status)
+	require.NotEmpty(t, registry.ListCommandEvents("host-a"))
+}
+
 func TestAgentServiceRecordCommandEventUpdatesCommand(t *testing.T) {
 	svc, _, registry, _ := newTestAgentService(t)
 	ctx := context.Background()
@@ -69,16 +87,15 @@ func TestAgentServiceRecordCommandEventUpdatesCommand(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, controlplane.AgentCommandStatusAcknowledged, got.Status)
 
-	// Terminal ownership remains durable so late ACK cannot recreate the command.
+	// A terminal event removes the command rather than keeping a completed row.
 	svc.RecordCommandEvent(ctx, controlplane.AgentCommandEvent{
 		AgentID:   "host-a",
 		CommandID: cmd.ID,
 		Status:    controlplane.AgentCommandStatusCompleted,
 		CreatedAt: now,
 	})
-	got, err = svc.FindCommand(ctx, "host-a", cmd.ID)
-	require.NoError(t, err)
-	require.Equal(t, controlplane.AgentCommandStatusCompleted, got.Status)
+	_, err = svc.FindCommand(ctx, "host-a", cmd.ID)
+	require.Error(t, err)
 
 	require.Len(t, registry.ListCommandEvents("host-a"), 2)
 }
@@ -117,18 +134,18 @@ func TestAgentServiceLeavesLiveGuestCommandPending(t *testing.T) {
 func TestAgentServiceCompleteRunStoresProjection(t *testing.T) {
 	svc, _, registry, jobs := newTestAgentService(t)
 	run := jobs.start("mixed", "apply")
-	jobs.assign(run, "host-a")
-	claimed, claimErr := jobs.claim(run.ID, "host-a")
-	require.NoError(t, claimErr)
+	require.NoError(t, jobs.assign(run, "host-a"))
+	claimed, err := jobs.claim(run.ID, "host-a")
+	require.NoError(t, err)
 
 	completion, err := svc.CompleteRun("host-a", run.ID, controlplane.RunCompletion{
 		Run: controlplane.Run{
 			ID:         run.ID,
+			AgentID:    "host-a",
+			Topology:   "mixed",
+			Workspace:  "mixed",
+			Status:     controlplane.RunDone,
 			LeaseOwner: claimed.LeaseOwner, Attempt: claimed.Attempt,
-			AgentID:   "host-a",
-			Topology:  "mixed",
-			Workspace: "mixed",
-			Status:    controlplane.RunDone,
 		},
 	})
 	require.NoError(t, err)

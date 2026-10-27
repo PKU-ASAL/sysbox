@@ -16,6 +16,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/oslab/sysbox/pkg/revisiongate"
 	"github.com/oslab/sysbox/pkg/runtime"
 )
 
@@ -23,25 +25,27 @@ type localAPIStore struct {
 	runsDir string
 }
 
-const apiSchemaVersion = 4
+const apiSchemaVersion = 14
 
 // errGlobalRevisionNotFound is returned by GetGlobalRevision when no revision
 // exists for the requested digest. Callers use errors.Is to detect it so they
 // never have to string-match backend-specific messages.
 var errGlobalRevisionNotFound = errors.New("global revision not found")
 
-type apiMigration struct {
-	Version int
-	Name    string
-	SQL     string
-}
-
-var apiMigrations = []apiMigration{
-	{
-		Version: 1,
-		Name:    "base_schema",
-		SQL: `
-CREATE TABLE IF NOT EXISTS sysbox_runs (
+// API schemas are created fresh or validated at the exact current version.
+// There is deliberately no in-place migration path.
+const apiPostgresSchema = `
+CREATE TABLE sysbox_execution_authority (
+ id TEXT PRIMARY KEY,
+ data JSONB NOT NULL,
+ updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE sysbox_api_schema_migrations (
+ name TEXT PRIMARY KEY,
+ version INTEGER NOT NULL,
+ updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE sysbox_runs (
   topology TEXT NOT NULL,
   id TEXT PRIMARY KEY,
   data JSONB NOT NULL,
@@ -52,36 +56,36 @@ CREATE TABLE IF NOT EXISTS sysbox_runs (
   attempt INTEGER NOT NULL DEFAULT 0,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE TABLE IF NOT EXISTS sysbox_checkpoints (
+CREATE TABLE sysbox_checkpoints (
   topology TEXT NOT NULL,
   run_id TEXT PRIMARY KEY,
   data JSONB NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE TABLE IF NOT EXISTS sysbox_health (
+CREATE TABLE sysbox_health (
   topology TEXT PRIMARY KEY,
   data JSONB NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE TABLE IF NOT EXISTS sysbox_policies (
+CREATE TABLE sysbox_policies (
   workspace TEXT NOT NULL,
   id TEXT PRIMARY KEY,
   data JSONB NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE TABLE IF NOT EXISTS sysbox_console_sessions (
+CREATE TABLE sysbox_console_sessions (
   workspace TEXT NOT NULL,
   id TEXT PRIMARY KEY,
   data JSONB NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE TABLE IF NOT EXISTS sysbox_node_operations (
-  workspace TEXT NOT NULL,
+CREATE TABLE sysbox_node_operations (
+  workspace TEXT NOT NULL DEFAULT '',
   id TEXT PRIMARY KEY,
   data JSONB NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE TABLE IF NOT EXISTS sysbox_agents (
+CREATE TABLE sysbox_agents (
   id TEXT PRIMARY KEY,
   status TEXT NOT NULL,
   disabled BOOLEAN NOT NULL DEFAULT false,
@@ -91,14 +95,14 @@ CREATE TABLE IF NOT EXISTS sysbox_agents (
   data JSONB NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE TABLE IF NOT EXISTS sysbox_agent_command_events (
+CREATE TABLE sysbox_agent_command_events (
   agent_id TEXT NOT NULL,
   command_id TEXT NOT NULL,
   status TEXT NOT NULL,
   data JSONB NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE TABLE IF NOT EXISTS sysbox_agent_commands (
+CREATE TABLE sysbox_agent_commands (
   agent_id TEXT NOT NULL,
   id TEXT PRIMARY KEY,
   status TEXT NOT NULL,
@@ -108,60 +112,40 @@ CREATE TABLE IF NOT EXISTS sysbox_agent_commands (
   attempt INTEGER NOT NULL DEFAULT 0,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE TABLE IF NOT EXISTS sysbox_agent_inventory (
-  agent_id TEXT PRIMARY KEY,
-  data JSONB NOT NULL,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+CREATE TABLE sysbox_dispatch_retries (
+ command_id TEXT PRIMARY KEY,
+ failures INTEGER NOT NULL DEFAULT 0,
+ next TIMESTAMPTZ NOT NULL,
+ last_error TEXT NOT NULL DEFAULT ''
 );
-CREATE TABLE IF NOT EXISTS sysbox_guest_executions (
+CREATE TABLE sysbox_guest_executions (
   id TEXT PRIMARY KEY,
   data JSONB NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE TABLE IF NOT EXISTS sysbox_guest_file_operations (
+CREATE TABLE sysbox_guest_file_operations (
   id TEXT PRIMARY KEY,
   data JSONB NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE TABLE IF NOT EXISTS sysbox_run_requests (
+CREATE TABLE sysbox_run_requests (
   id TEXT PRIMARY KEY,
   fingerprint TEXT NOT NULL,
-  run_id TEXT NOT NULL UNIQUE,
+  run_id TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);`,
-	},
-	{
-		Version: 2,
-		Name:    "global_revisions",
-		SQL: `
-CREATE TABLE IF NOT EXISTS sysbox_global_revisions (
+);
+CREATE TABLE sysbox_global_revisions (
   workspace TEXT NOT NULL DEFAULT '',
   id TEXT PRIMARY KEY,
   data JSONB NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);`,
-	},
-	{
-		Version: 3,
-		Name:    "resource_projections",
-		SQL: `
-CREATE TABLE IF NOT EXISTS sysbox_projection (
-  topology TEXT PRIMARY KEY,
-  data JSONB NOT NULL,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-		);`,
-	},
-	{
-		Version: 4,
-		Name:    "topology_placements",
-		SQL: `CREATE TABLE IF NOT EXISTS sysbox_topology_placements (
+);
+CREATE TABLE sysbox_topology_placements (
   topology TEXT PRIMARY KEY,
   agent_id TEXT NOT NULL,
   protocol TEXT NOT NULL DEFAULT '',
   bound_at TIMESTAMPTZ NOT NULL
-);`,
-	},
-}
+);`
 
 func (s *localAPIStore) SchemaVersion(context.Context) (int, error) {
 	return apiSchemaVersion, nil
@@ -176,7 +160,10 @@ func newAPIStore(runsDir, backendURL string) (apiStore, error) {
 		return store, nil
 	}
 	if strings.HasPrefix(backendURL, "sqlite://") {
-		path := strings.TrimPrefix(backendURL, "sqlite://")
+		path, err := persistence.SQLitePath(backendURL)
+		if err != nil {
+			return nil, err
+		}
 		return &sqliteAPIStore{dbPath: path, runsDir: runsDir}, nil
 	}
 	return &localAPIStore{runsDir: runsDir}, nil
@@ -230,49 +217,32 @@ func (s *localAPIStore) LoadHealth(_ context.Context, topology string) (*HealthS
 	return &snap, nil
 }
 
-func (s *localAPIStore) SaveResourceProjection(_ context.Context, proj controlplane.ResourceProjection) error {
-	path := filepath.Join(s.runsDir, proj.Topology, "projection.json")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	raw, err := json.MarshalIndent(proj, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, raw, 0o644)
-}
-
-func (s *localAPIStore) LoadResourceProjection(_ context.Context, topology string) (*controlplane.ResourceProjection, error) {
-	raw, err := os.ReadFile(filepath.Join(s.runsDir, topology, "projection.json"))
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	var proj controlplane.ResourceProjection
-	if err := json.Unmarshal(raw, &proj); err != nil {
-		return nil, fmt.Errorf("decode resource projection: %w", err)
-	}
-	return &proj, nil
-}
-
 func (s *localAPIStore) checkpointFile(topology, runID string) string {
 	return filepath.Join(s.runsDir, topology, "runs", runID+".checkpoint.json")
 }
 
-func (s *localAPIStore) SaveGlobalRevision(_ context.Context, rev controlplane.GlobalRevision) error {
-	return writeLocalObject(filepath.Join(s.runsDir, "global-revisions", rev.Revision+".json"), rev)
+func (s *localAPIStore) SaveGlobalRevision(ctx context.Context, rev controlplane.GlobalRevision) error {
+	return s.SaveGlobalRevisionAtomic(ctx, rev)
 }
 
 func (s *localAPIStore) GetGlobalRevision(_ context.Context, revision string) (*controlplane.GlobalRevision, error) {
-	raw, err := os.ReadFile(filepath.Join(s.runsDir, "global-revisions", revision+".json"))
+	root, err := revisiongate.Catalog(s.runsDir)
 	if err != nil {
+		return nil, err
+	}
+	retired, err := revisiongate.Retired(root, revision)
+	if err != nil {
+		return nil, err
+	}
+	if retired {
 		return nil, errGlobalRevisionNotFound
 	}
-	var rev controlplane.GlobalRevision
-	if err := json.Unmarshal(raw, &rev); err != nil {
-		return nil, fmt.Errorf("decode global revision: %w", err)
+	rev, err := readLocalObject[controlplane.GlobalRevision](filepath.Join(root, revision+".json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, errGlobalRevisionNotFound
+	}
+	if err != nil {
+		return nil, err
 	}
 	return &rev, nil
 }
@@ -292,12 +262,8 @@ func (s *localAPIStore) ListPolicies(_ context.Context, workspace string) ([]con
 	return readLocalObjects[controlplane.Policy](filepath.Join(s.runsDir, workspace, "policies", "*.json"))
 }
 
-func (s *localAPIStore) SaveConsoleSession(_ context.Context, sess controlplane.ConsoleSession) error {
-	workspace := sess.Workspace
-	if workspace == "" {
-		workspace = sess.Topology
-	}
-	return writeLocalObject(filepath.Join(s.runsDir, workspace, "sessions", sess.ID+".json"), sess)
+func (s *localAPIStore) SaveConsoleSession(ctx context.Context, sess controlplane.ConsoleSession) error {
+	return persistence.NewConsoleRepository(localConsoleStorage{store: s}).Create(ctx, sess)
 }
 
 func (s *localAPIStore) GetConsoleSession(ctx context.Context, id string) (*controlplane.ConsoleSession, error) {
@@ -310,7 +276,7 @@ func (s *localAPIStore) GetConsoleSession(ctx context.Context, id string) (*cont
 			return &item, nil
 		}
 	}
-	return nil, fmt.Errorf("session not found")
+	return nil, errConsoleSessionNotFound
 }
 
 func (s *localAPIStore) ListConsoleSessions(_ context.Context, workspace string) ([]controlplane.ConsoleSession, error) {
@@ -320,59 +286,35 @@ func (s *localAPIStore) ListConsoleSessions(_ context.Context, workspace string)
 	return readLocalObjects[controlplane.ConsoleSession](filepath.Join(s.runsDir, workspace, "sessions", "*.json"))
 }
 
-func (s *localAPIStore) SaveNodeOperation(_ context.Context, op controlplane.NodeOperation) error {
-	workspace := op.Workspace
-	if workspace == "" {
-		workspace = op.Topology
+func (s *localAPIStore) CreateNodeOperation(ctx context.Context, op controlplane.NodeOperation) error {
+	repo, err := s.nodeOperationRepository(ctx)
+	if err != nil {
+		return err
 	}
-	return writeLocalObject(filepath.Join(s.runsDir, workspace, "node-ops", op.ID+".json"), op)
+	return repo.Create(ctx, op)
+}
+func (s *localAPIStore) CompareAndSwapNodeOperation(ctx context.Context, old, next controlplane.NodeOperation) error {
+	repo, err := s.nodeOperationRepository(ctx)
+	if err != nil {
+		return err
+	}
+	return repo.CompareAndSwap(ctx, old, next)
 }
 
 func (s *localAPIStore) GetNodeOperation(ctx context.Context, id string) (*controlplane.NodeOperation, error) {
-	items, err := s.ListNodeOperations(ctx, "")
+	repo, err := s.nodeOperationRepository(ctx)
 	if err != nil {
 		return nil, err
 	}
-	for _, item := range items {
-		if item.ID == id {
-			return &item, nil
-		}
-	}
-	return nil, fmt.Errorf("node operation not found")
+	return repo.Get(ctx, id)
 }
 
-func (s *localAPIStore) ListNodeOperations(_ context.Context, workspace string) ([]controlplane.NodeOperation, error) {
-	if workspace == "" {
-		return readLocalObjects[controlplane.NodeOperation](filepath.Join(s.runsDir, "*", "node-ops", "*.json"))
-	}
-	return readLocalObjects[controlplane.NodeOperation](filepath.Join(s.runsDir, workspace, "node-ops", "*.json"))
-}
-
-func writeLocalObject(path string, v any) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	raw, err := json.MarshalIndent(v, "", "  ")
+func (s *localAPIStore) ListNodeOperations(ctx context.Context, workspace string) ([]controlplane.NodeOperation, error) {
+	repo, err := s.nodeOperationRepository(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return os.WriteFile(path, raw, 0o644)
-}
-
-func readLocalObjects[T any](pattern string) ([]T, error) {
-	files, _ := filepath.Glob(pattern)
-	out := make([]T, 0, len(files))
-	for _, f := range files {
-		raw, err := os.ReadFile(f)
-		if err != nil {
-			continue
-		}
-		var item T
-		if err := json.Unmarshal(raw, &item); err == nil {
-			out = append(out, item)
-		}
-	}
-	return out, nil
+	return repo.List(ctx, workspace)
 }
 
 // postgresReachabilityTimeout bounds the eager startup check that verifies a
@@ -405,8 +347,8 @@ func (s *postgresAPIStore) ping() error {
 }
 
 // connect acquires a connection from the lazily-initialized pool. The pool and
-// its schema migrations are established exactly once; opening a fresh pgx.Conn
-// and running the full migration pass on every request would exhaust the
+// its schema are established exactly once; opening a fresh pgx.Conn
+// and validating the schema on every request would exhaust the
 // server's Postgres connection limit and make every call pay DDL contention.
 func (s *postgresAPIStore) connect(ctx context.Context) (*pgxpool.Conn, error) {
 	pool, err := s.poolFor(ctx)
@@ -445,50 +387,79 @@ func (s *postgresAPIStore) poolFor(ctx context.Context) (*pgxpool.Pool, error) {
 }
 
 func (s *postgresAPIStore) ensureSchema(ctx context.Context, pool *pgxpool.Pool) error {
-	_, err := pool.Exec(ctx, `
-CREATE TABLE IF NOT EXISTS sysbox_api_schema_migrations (
-  name TEXT PRIMARY KEY,
-  version INTEGER NOT NULL,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);`)
-	if err != nil {
-		return fmt.Errorf("postgres ensure schema migrations table: %w", err)
-	}
-	for _, migration := range apiMigrations {
-		if err := s.applyMigration(ctx, pool, migration); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (s *postgresAPIStore) applyMigration(ctx context.Context, pool *pgxpool.Pool, migration apiMigration) error {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
-	if _, err := tx.Exec(ctx, migration.SQL); err != nil {
-		return fmt.Errorf("postgres apply api migration %03d_%s: %w", migration.Version, migration.Name, err)
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext(current_schema()), hashtext('sysbox-api-schema'))`); err != nil {
+		return err
 	}
-	_, err = tx.Exec(ctx, `
-INSERT INTO sysbox_api_schema_migrations (name, version, updated_at)
-VALUES ('api', $1, now())
-ON CONFLICT (name) DO UPDATE SET version=EXCLUDED.version, updated_at=now()
-WHERE sysbox_api_schema_migrations.version < EXCLUDED.version`, migration.Version)
-	if err != nil {
-		return fmt.Errorf("postgres record api schema version: %w", err)
+	var marker bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_tables WHERE schemaname=current_schema() AND tablename='sysbox_api_schema_migrations')`).Scan(&marker); err != nil {
+		return err
 	}
-	stepName := fmt.Sprintf("api/%03d_%s", migration.Version, migration.Name)
-	_, err = tx.Exec(ctx, `
-INSERT INTO sysbox_api_schema_migrations (name, version, updated_at)
-VALUES ($1, $2, now())
-ON CONFLICT (name) DO UPDATE SET version=EXCLUDED.version, updated_at=now()`,
-		stepName, migration.Version)
-	if err != nil {
-		return fmt.Errorf("postgres record api migration step: %w", err)
+	if marker {
+		var version, records int
+		if err := tx.QueryRow(ctx, `SELECT count(*), coalesce(max(version) FILTER (WHERE name='api'),0) FROM sysbox_api_schema_migrations`).Scan(&records, &version); err != nil {
+			return fmt.Errorf("%w: API schema marker requires explicit rebuild: %v", persistence.ErrUnsupportedVersion, err)
+		}
+		if records != 1 || version != apiSchemaVersion {
+			return fmt.Errorf("%w: API schema %d requires explicit rebuild (current %d)", persistence.ErrUnsupportedVersion, version, apiSchemaVersion)
+		}
+		for _, shape := range apiPostgresTableShapes {
+			var exists bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_tables WHERE schemaname=current_schema() AND tablename=$1)`, shape.table).Scan(&exists); err != nil {
+				return err
+			}
+			if !exists {
+				return fmt.Errorf("%w: missing API table %s requires explicit rebuild", persistence.ErrUnsupportedVersion, shape.table)
+			}
+			if _, err := tx.Exec(ctx, "SELECT "+shape.columns+" FROM "+shape.table+" LIMIT 0"); err != nil {
+				return fmt.Errorf("%w: API table %s requires explicit rebuild: %v", persistence.ErrUnsupportedVersion, shape.table, err)
+			}
+		}
+		return tx.Commit(ctx)
+	}
+	// Repository state tables may already coexist in this schema. Only API
+	// tables participate in this gate; none may predate the API version marker.
+	tables := make([]string, 0, len(apiPostgresTableShapes))
+	for _, shape := range apiPostgresTableShapes {
+		tables = append(tables, shape.table)
+	}
+	var existing bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_tables WHERE schemaname=current_schema() AND tablename=ANY($1))`, tables).Scan(&existing); err != nil {
+		return err
+	}
+	if existing {
+		return fmt.Errorf("%w: unversioned API tables require explicit rebuild", persistence.ErrUnsupportedVersion)
+	}
+	if _, err := tx.Exec(ctx, apiPostgresSchema); err != nil {
+		return fmt.Errorf("postgres create API schema: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO sysbox_api_schema_migrations(name,version) VALUES('api',$1)`, apiSchemaVersion); err != nil {
+		return err
 	}
 	return tx.Commit(ctx)
+}
+
+var apiPostgresTableShapes = []struct{ table, columns string }{
+	{"sysbox_runs", "topology,id,data,status,agent_id,lease_owner,lease_until,attempt,updated_at"},
+	{"sysbox_checkpoints", "topology,run_id,data,updated_at"},
+	{"sysbox_health", "topology,data,updated_at"},
+	{"sysbox_policies", "workspace,id,data,created_at"},
+	{"sysbox_console_sessions", "workspace,id,data,updated_at"},
+	{"sysbox_node_operations", "workspace,id,data,updated_at"},
+	{"sysbox_agents", "id,status,disabled,quarantined,protocol,secret_hash,data,updated_at"},
+	{"sysbox_agent_command_events", "agent_id,command_id,status,data,created_at"},
+	{"sysbox_agent_commands", "agent_id,id,status,data,lease_owner,lease_until,attempt,updated_at"},
+	{"sysbox_dispatch_retries", "command_id,failures,next,last_error"},
+	{"sysbox_guest_executions", "id,data,updated_at"},
+	{"sysbox_guest_file_operations", "id,data,updated_at"},
+	{"sysbox_execution_authority", "id,data,updated_at"},
+	{"sysbox_run_requests", "id,fingerprint,run_id,created_at"},
+	{"sysbox_global_revisions", "workspace,id,data,created_at"},
+	{"sysbox_topology_placements", "topology,agent_id,protocol,bound_at"},
 }
 
 func (s *postgresAPIStore) SchemaVersion(ctx context.Context) (int, error) {
@@ -601,48 +572,6 @@ func (s *postgresAPIStore) LoadHealth(ctx context.Context, topology string) (*He
 	return &snap, nil
 }
 
-func (s *postgresAPIStore) SaveResourceProjection(ctx context.Context, proj controlplane.ResourceProjection) error {
-	conn, err := s.connect(ctx)
-	if err != nil {
-		return err
-	}
-	defer conn.Release()
-	raw, err := json.Marshal(proj)
-	if err != nil {
-		return err
-	}
-	_, err = conn.Exec(ctx, `
-INSERT INTO sysbox_projection (topology, data, updated_at)
-VALUES ($1, $2::jsonb, now())
-ON CONFLICT (topology) DO UPDATE SET data=EXCLUDED.data, updated_at=now()`,
-		proj.Topology, string(raw))
-	if err != nil {
-		return fmt.Errorf("postgres save resource projection: %w", err)
-	}
-	return nil
-}
-
-func (s *postgresAPIStore) LoadResourceProjection(ctx context.Context, topology string) (*controlplane.ResourceProjection, error) {
-	conn, err := s.connect(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer conn.Release()
-	var raw []byte
-	err = conn.QueryRow(ctx, `SELECT data::text FROM sysbox_projection WHERE topology=$1`, topology).Scan(&raw)
-	if err == pgx.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("postgres load resource projection: %w", err)
-	}
-	var proj controlplane.ResourceProjection
-	if err := json.Unmarshal(raw, &proj); err != nil {
-		return nil, fmt.Errorf("decode resource projection: %w", err)
-	}
-	return &proj, nil
-}
-
 func (s *postgresAPIStore) SaveGlobalRevision(ctx context.Context, rev controlplane.GlobalRevision) error {
 	return s.saveObject(ctx, "sysbox_global_revisions", "", rev.Revision, rev)
 }
@@ -731,28 +660,7 @@ func (s *postgresAPIStore) ListPolicies(ctx context.Context, workspace string) (
 }
 
 func (s *postgresAPIStore) SaveConsoleSession(ctx context.Context, sess controlplane.ConsoleSession) error {
-	workspace := sess.Workspace
-	if workspace == "" {
-		workspace = sess.Topology
-	}
-	conn, err := s.connect(ctx)
-	if err != nil {
-		return err
-	}
-	defer conn.Release()
-	raw, err := json.Marshal(sess)
-	if err != nil {
-		return err
-	}
-	_, err = conn.Exec(ctx, `
-INSERT INTO sysbox_console_sessions (workspace, id, data, updated_at)
-VALUES ($1, $2, $3::jsonb, now())
-ON CONFLICT (id) DO UPDATE SET workspace=EXCLUDED.workspace, data=EXCLUDED.data, updated_at=now()`,
-		workspace, sess.ID, string(raw))
-	if err != nil {
-		return fmt.Errorf("postgres save console session: %w", err)
-	}
-	return nil
+	return persistence.NewConsoleRepository(postgresConsoleStorage{store: s}).Create(ctx, sess)
 }
 
 func (s *postgresAPIStore) GetConsoleSession(ctx context.Context, id string) (*controlplane.ConsoleSession, error) {
@@ -808,82 +716,35 @@ func (s *postgresAPIStore) ListConsoleSessions(ctx context.Context, workspace st
 	return out, rows.Err()
 }
 
-func (s *postgresAPIStore) SaveNodeOperation(ctx context.Context, op controlplane.NodeOperation) error {
-	workspace := op.Workspace
-	if workspace == "" {
-		workspace = op.Topology
-	}
-	conn, err := s.connect(ctx)
+func (s *postgresAPIStore) CreateNodeOperation(ctx context.Context, op controlplane.NodeOperation) error {
+	repo, err := s.nodeOperationRepository(ctx)
 	if err != nil {
 		return err
 	}
-	defer conn.Release()
-	raw, err := json.Marshal(op)
+	return repo.Create(ctx, op)
+}
+func (s *postgresAPIStore) CompareAndSwapNodeOperation(ctx context.Context, old, next controlplane.NodeOperation) error {
+	repo, err := s.nodeOperationRepository(ctx)
 	if err != nil {
 		return err
 	}
-	_, err = conn.Exec(ctx, `
-INSERT INTO sysbox_node_operations (workspace, id, data, updated_at)
-VALUES ($1, $2, $3::jsonb, now())
-ON CONFLICT (id) DO UPDATE SET workspace=EXCLUDED.workspace, data=EXCLUDED.data, updated_at=now()`,
-		workspace, op.ID, string(raw))
-	if err != nil {
-		return fmt.Errorf("postgres save node operation: %w", err)
-	}
-	return nil
+	return repo.CompareAndSwap(ctx, old, next)
 }
 
 func (s *postgresAPIStore) GetNodeOperation(ctx context.Context, id string) (*controlplane.NodeOperation, error) {
-	conn, err := s.connect(ctx)
+	repo, err := s.nodeOperationRepository(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Release()
-	var raw []byte
-	err = conn.QueryRow(ctx, `SELECT data::text FROM sysbox_node_operations WHERE id=$1`, id).Scan(&raw)
-	if err == pgx.ErrNoRows {
-		return nil, fmt.Errorf("node operation not found")
-	}
-	if err != nil {
-		return nil, fmt.Errorf("postgres get node operation: %w", err)
-	}
-	var op controlplane.NodeOperation
-	if err := json.Unmarshal(raw, &op); err != nil {
-		return nil, err
-	}
-	return &op, nil
+	return repo.Get(ctx, id)
 }
 
 func (s *postgresAPIStore) ListNodeOperations(ctx context.Context, workspace string) ([]controlplane.NodeOperation, error) {
-	conn, err := s.connect(ctx)
+	repo, err := s.nodeOperationRepository(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Release()
-	query := `SELECT data::text FROM sysbox_node_operations ORDER BY updated_at DESC`
-	args := []any{}
-	if workspace != "" {
-		query = `SELECT data::text FROM sysbox_node_operations WHERE workspace=$1 ORDER BY updated_at DESC`
-		args = append(args, workspace)
-	}
-	rows, err := conn.Query(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("postgres list node operations: %w", err)
-	}
-	defer rows.Close()
-	var out []controlplane.NodeOperation
-	for rows.Next() {
-		var raw []byte
-		if err := rows.Scan(&raw); err != nil {
-			return nil, err
-		}
-		var item controlplane.NodeOperation
-		if err := json.Unmarshal(raw, &item); err != nil {
-			return nil, err
-		}
-		out = append(out, item)
-	}
-	return out, rows.Err()
+	return repo.List(ctx, workspace)
 }
 
 func nullableTime(t time.Time) any {
@@ -953,10 +814,9 @@ func dsnWithoutSysboxQuery(raw string) string {
 
 func markInterruptedRuns(runs []controlplane.Run) []controlplane.Run {
 	for i := range runs {
-		if runs[i].RequestFingerprint != "" {
-			continue
-		}
-		if runs[i].Status == controlplane.RunAssigned || runs[i].Status == controlplane.RunRunning {
+		// Restarting an API process is not evidence that an independently
+		// assigned agent stopped. Its durable lease and observations decide that.
+		if runs[i].AgentID == "" && (runs[i].Status == controlplane.RunAssigned || runs[i].Status == controlplane.RunRunning) {
 			runs[i].Status = controlplane.RunFailed
 			runs[i].Err = "server restarted before run completion"
 			runs[i].Recoverable = true

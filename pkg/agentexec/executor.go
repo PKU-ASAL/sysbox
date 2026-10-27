@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"path/filepath"
 	"time"
 
 	"github.com/coder/websocket"
@@ -18,7 +19,7 @@ import (
 type Bridge interface {
 	AttachRun(run *controlplane.Run)
 	LogWriter(runID string) io.Writer
-	LockTopology(topology string) func()
+	LockTopology(ctx context.Context, topology string) (func(), error)
 	Finish(run *controlplane.Run, err error)
 	StateManager(topology string) (*state.Manager, error)
 	HCLFile(topology string) string
@@ -26,13 +27,38 @@ type Bridge interface {
 	CheckpointStore() runtime.CheckpointStore
 	ParentRun(ctx context.Context, id string) (*controlplane.Run, error)
 	ReconcileParentJournal(parent, run *controlplane.Run) error
-	Preflight(ctx context.Context, topology string, log io.Writer) error
+	Preflight(ctx context.Context, run *controlplane.Run, log io.Writer) error
 	OpenConsole(ctx context.Context, sess controlplane.ConsoleSession, req controlplane.ConsoleRequest, ws *websocket.Conn) error
 	Topologies(ctx context.Context) []string
 }
 
 type Reporter interface {
 	ReportRunComplete(ctx context.Context, run *controlplane.Run, projection controlplane.Projection) error
+}
+
+// ActionRepositoryProvider binds runtime journal and resource state to the
+// deployment's single atomic backend.
+type ActionRepositoryProvider interface {
+	ActionRepository(topology string) (runtime.ActionRepository, error)
+}
+
+func (e *Executor) installActionRepository(exec *runtime.Executor, topology string) error {
+	if provider, ok := e.bridge.(ActionRepositoryProvider); ok {
+		repository, err := provider.ActionRepository(topology)
+		if err != nil {
+			return err
+		}
+		if repository == nil {
+			return fmt.Errorf("action repository unavailable")
+		}
+		exec.SetActionRepository(repository)
+		return nil
+	}
+	if repository, ok := e.bridge.CheckpointStore().(runtime.ActionRepository); ok {
+		exec.SetActionRepository(repository)
+		return nil
+	}
+	return fmt.Errorf("%w: bridge has no atomic action repository", runtime.ErrConvergenceUnsupported)
 }
 
 type ApplyHook interface {
@@ -48,31 +74,36 @@ type DestroyHook interface {
 
 type ResetHook interface {
 	BuildResetPlan(g *graph.Graph, st *state.State, target string) (*runtime.Plan, error)
-	ResumeResetPlan(ctx context.Context, parent *controlplane.Run, current *runtime.Plan) (*runtime.Plan, error)
 	BeforeReset(plan *runtime.Plan) error
+}
+
+type ResetContinuationVerifier interface {
+	VerifyResetContinuation(context.Context, *controlplane.Run, *controlplane.Run) error
 }
 
 type Executor struct {
 	bridge Bridge
 }
 
-// hclFileForRun prefers the immutable revision snapshot attached to a run.
-// Bridges that predate snapshots retain the topology path as a compatibility
-// fallback for queued legacy runs.
+// Remote runs require their dispatched immutable snapshot. Standalone CLI
+// bridges may provide an explicitly selected local configuration source.
 type runWorkspaceBridge interface {
 	HCLFileForRun(*controlplane.Run) string
 }
 
-func (e *Executor) hclFileForRun(run *controlplane.Run) string {
-	if run.SnapshotPath != "" {
-		return run.SnapshotPath
+func (e *Executor) hclFileForRun(ctx context.Context, run *controlplane.Run) string {
+	if path := RunWorkspace(ctx, run); path != "" {
+		return path
+	}
+	if _, remote := e.bridge.(remoteBridge); remote {
+		return ""
 	}
 	if b, ok := e.bridge.(runWorkspaceBridge); ok {
 		if path := b.HCLFileForRun(run); path != "" {
 			return path
 		}
 	}
-	return e.bridge.HCLFile(run.Topology)
+	return ""
 }
 
 func NewExecutorWithBridge(bridge Bridge) *Executor {
@@ -94,59 +125,54 @@ func (e *Executor) ExecuteContext(ctx context.Context, run *controlplane.Run) {
 	}
 	e.bridge.AttachRun(run)
 	log := e.bridge.LogWriter(run.ID)
+	var cleanup *controlplane.CleanupReceipt
 	switch run.Op {
 	case "apply", "repair":
-		if run.ParentID != "" {
-			parent, err := e.bridge.ParentRun(ctx, run.ParentID)
-			if err != nil {
-				e.bridge.Finish(run, err)
-				break
-			}
-			e.executeResumeApply(ctx, parent, run, log)
-			break
-		}
 		e.executeApply(ctx, run, log)
 	case "destroy":
-		if run.ParentID != "" {
-			parent, err := e.bridge.ParentRun(ctx, run.ParentID)
-			if err != nil {
-				e.bridge.Finish(run, err)
-				break
-			}
-			e.executeResumeDestroy(ctx, parent, run, log)
-			break
-		}
-		e.executeDestroy(ctx, run, log)
+		cleanup = e.executeDestroy(ctx, run, log)
 	case "reset":
-		var parent *controlplane.Run
-		if run.ParentID != "" {
-			var err error
-			parent, err = e.bridge.ParentRun(ctx, run.ParentID)
-			if err != nil {
-				e.bridge.Finish(run, err)
-				break
-			}
-			if err := e.bridge.ReconcileParentJournal(parent, run); err != nil {
-				e.bridge.Finish(run, err)
-				break
-			}
-		}
-		e.executeReset(ctx, run, parent, log)
+		e.executeReset(ctx, run, log)
 	default:
 		e.bridge.Finish(run, fmt.Errorf("unsupported run op %q", run.Op))
 	}
-	e.reportCompletion(ctx, run)
+	run.Cleanup = cleanup
+	report := *run
+	e.reportCompletion(ctx, &report)
 }
 
-func (e *Executor) executeReset(ctx context.Context, run, parent *controlplane.Run, log io.Writer) {
-	unlock := e.bridge.LockTopology(run.Topology)
+func (e *Executor) prepareExecutionContext(ctx context.Context, run *controlplane.Run) (context.Context, func(), error) {
+	if prepared, ok := e.bridge.(interface {
+		PrepareExecution(context.Context, *controlplane.Run) (context.Context, func(), error)
+	}); ok {
+		return prepared.PrepareExecution(ctx, run)
+	}
+	return ctx, func() {}, nil
+}
+
+func (e *Executor) executeReset(ctx context.Context, run *controlplane.Run, log io.Writer) {
+	if run.ParentID != "" && run.Target != "" {
+		e.bridge.Finish(run, fmt.Errorf("reset continuation cannot override the original target scope"))
+		return
+	}
+	unlock, err := e.bridge.LockTopology(ctx, run.Topology)
+	if err != nil {
+		e.bridge.Finish(run, err)
+		return
+	}
 	defer unlock()
+	ctx, release, err := e.prepareExecutionContext(ctx, run)
+	if err != nil {
+		e.bridge.Finish(run, err)
+		return
+	}
+	defer release()
 
 	if err := ctx.Err(); err != nil {
 		e.bridge.Finish(run, err)
 		return
 	}
-	if err := e.bridge.Preflight(ctx, run.Topology, log); err != nil {
+	if err := e.bridge.Preflight(ctx, run, log); err != nil {
 		e.bridge.Finish(run, err)
 		return
 	}
@@ -160,8 +186,12 @@ func (e *Executor) executeReset(ctx context.Context, run, parent *controlplane.R
 		e.bridge.Finish(run, err)
 		return
 	}
-	g, mgr, st, _, _, err := runtime.LoadWorkspaceWithManager(e.hclFileForRun(run), mgr)
+	g, mgr, st, _, _, err := runtime.LoadWorkspaceWithManager(e.hclFileForRun(ctx, run), mgr)
 	if err != nil {
+		e.bridge.Finish(run, err)
+		return
+	}
+	if err := runtime.ValidateArtifactSources(ctx, g, filepath.Dir(e.hclFileForRun(ctx, run)), secret.EnvironmentResolver{}); err != nil {
 		e.bridge.Finish(run, err)
 		return
 	}
@@ -170,32 +200,30 @@ func (e *Executor) executeReset(ctx context.Context, run, parent *controlplane.R
 		e.bridge.Finish(run, fmt.Errorf("reset is not supported by this execution bridge"))
 		return
 	}
-	plan, err := hook.BuildResetPlan(g, st, run.Target)
-	if err != nil {
-		e.bridge.Finish(run, err)
-		return
-	}
-	if parent != nil {
-		plan, err = hook.ResumeResetPlan(ctx, parent, plan)
+	var plan *runtime.Plan
+	if run.ParentID == "" {
+		plan, err = hook.BuildResetPlan(g, st, run.Target)
 		if err != nil {
 			e.bridge.Finish(run, err)
 			return
 		}
-	}
-	if !plan.HasChanges() {
-		_, _ = log.Write([]byte("Reset already complete.\n"))
-		e.bridge.Finish(run, nil)
-		return
-	}
-	if err := hook.BeforeReset(plan); err != nil {
-		e.bridge.Finish(run, err)
-		return
+		if !plan.HasChanges() {
+			_, _ = log.Write([]byte("Reset already complete.\n"))
+			e.bridge.Finish(run, nil)
+			return
+		}
+		if err := hook.BeforeReset(plan); err != nil {
+			e.bridge.Finish(run, err)
+			return
+		}
 	}
 
 	exec := runtime.NewExecutor(g, st)
 	exec.SetRunContext(run.Topology, run.ID)
-	exec.SetWorkspaceFromHCLFile(e.hclFileForRun(run))
+	exec.SetRunIncarnation(run.QueuedAt, run.Revision)
+	exec.SetWorkspaceFromHCLFile(e.hclFileForRun(ctx, run))
 	exec.SetOperation(run.Op)
+	exec.SetResumeRunID(run.ParentID)
 	exec.SetLogger(log)
 	exec.SetSecretResolver(secret.Dispatcher{
 		"env":   secret.EnvironmentResolver{},
@@ -207,29 +235,63 @@ func (e *Executor) executeReset(ctx context.Context, run, parent *controlplane.R
 	recorder.SetLeaseOwner(run.LeaseOwner)
 	recorder.SetStateSerialBefore(st.Meta.Serial)
 	exec.SetRecorder(recorder)
-	exec.SetStatePatchSink(&runtime.StatePatchManagerSink{Manager: mgr, State: st, Owner: run.LeaseOwner})
+	if err := e.installActionRepository(exec, run.Topology); err != nil {
+		e.bridge.Finish(run, err)
+		return
+	}
+	if run.ParentID != "" {
+		loader, ok := e.bridge.CheckpointStore().(runtime.CheckpointLoader)
+		if !ok {
+			e.bridge.Finish(run, fmt.Errorf("reset continuation requires durable parent checkpoint"))
+			return
+		}
+		parent, err := ResolveResetOrigin(ctx, e.bridge, run)
+		if err != nil {
+			e.bridge.Finish(run, err)
+			return
+		}
+		checkpoint, err := loader.LoadCheckpoint(ctx, run.Topology, parent.ID)
+		if err != nil {
+			e.bridge.Finish(run, err)
+			return
+		}
+		request, err := exec.PrepareResetContinuation(ctx, checkpoint, parent.QueuedAt, parent.Revision)
+		if err != nil {
+			e.bridge.Finish(run, err)
+			return
+		}
+		if err := hook.BeforeReset(&runtime.Plan{Actions: request.Checkpoint.Plan}); err != nil {
+			e.bridge.Finish(run, err)
+			return
+		}
+		if err := exec.ContinueReset(ctx, *request); err != nil {
+			e.bridge.Finish(run, err)
+			return
+		}
+		recorder.SetStateSerialAfter(st.Meta.Serial)
+		recorder.MarkResourceStateRecorded()
+		if err := recorder.Err(); err != nil {
+			recorder.Finish(err)
+			e.bridge.Finish(run, err)
+			return
+		}
+		e.bridge.Finish(run, nil)
+		return
+	}
 	if snap, err := mgr.Snapshot(ctx, "before reset "+run.ID); err == nil && snap != nil {
 		_, _ = log.Write([]byte(fmt.Sprintf("State snapshot: %s\n", snap.ID)))
 	}
 	if err := exec.Reset(ctx, plan); err != nil {
-		if saveErr := mgr.SaveWithLease(ctx, st, state.LockOptions{Owner: run.LeaseOwner}); saveErr != nil {
-			_, _ = log.Write([]byte(fmt.Sprintf("warning: save state failed: %v\n", saveErr)))
-		} else {
-			recorder.SetStateSerialAfter(st.Meta.Serial)
-		}
 		e.bridge.Finish(run, err)
 		return
 	}
-	saveStep := recorder.StepStartKind("state", "state", controlplane.PlanActionNoop)
-	if err := mgr.SaveWithLease(ctx, st, state.LockOptions{Owner: run.LeaseOwner}); err != nil {
-		recorder.StepFailed(saveStep, err)
+	recorder.SetStateSerialAfter(st.Meta.Serial)
+	recorder.MarkResourceStateRecorded()
+	if err := recorder.Err(); err != nil {
 		recorder.Finish(err)
-		e.bridge.Finish(run, fmt.Errorf("save state: %w", err))
+		e.bridge.Finish(run, err)
 		return
 	}
-	recorder.SetStateSerialAfter(st.Meta.Serial)
-	recorder.StepDone(saveStep)
-	recorder.MarkResourceStateRecorded()
 	_, _ = log.Write([]byte("Reset complete.\n"))
 	e.bridge.Finish(run, runOutcome(nil, recorder.Err()))
 }
@@ -299,14 +361,24 @@ func reportRunCompleteWithRetry(ctx context.Context, reporter Reporter, run *con
 }
 
 func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log io.Writer) {
-	unlock := e.bridge.LockTopology(run.Topology)
+	unlock, err := e.bridge.LockTopology(ctx, run.Topology)
+	if err != nil {
+		e.bridge.Finish(run, err)
+		return
+	}
 	defer unlock()
+	ctx, release, err := e.prepareExecutionContext(ctx, run)
+	if err != nil {
+		e.bridge.Finish(run, err)
+		return
+	}
+	defer release()
 
 	if err := ctx.Err(); err != nil {
 		e.bridge.Finish(run, err)
 		return
 	}
-	if err := e.bridge.Preflight(ctx, run.Topology, log); err != nil {
+	if err := e.bridge.Preflight(ctx, run, log); err != nil {
 		e.bridge.Finish(run, err)
 		return
 	}
@@ -321,8 +393,12 @@ func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log 
 		e.bridge.Finish(run, err)
 		return
 	}
-	g, mgr, st, root, evalCtx, err := runtime.LoadWorkspaceWithInputs(e.hclFileForRun(run), mgr, run.Inputs)
+	g, mgr, st, root, evalCtx, err := runtime.LoadWorkspaceWithInputs(e.hclFileForRun(ctx, run), mgr, run.Inputs)
 	if err != nil {
+		e.bridge.Finish(run, err)
+		return
+	}
+	if err := runtime.ValidateArtifactSources(ctx, g, filepath.Dir(e.hclFileForRun(ctx, run)), secret.Dispatcher{"env": secret.EnvironmentResolver{}, "input": secret.InputResolver{Inputs: run.Inputs}}); err != nil {
 		e.bridge.Finish(run, err)
 		return
 	}
@@ -340,7 +416,8 @@ func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log 
 	}
 	exec := runtime.NewExecutor(g, st)
 	exec.SetRunContext(run.Topology, run.ID)
-	exec.SetWorkspaceFromHCLFile(e.hclFileForRun(run))
+	exec.SetRunIncarnation(run.QueuedAt, run.Revision)
+	exec.SetWorkspaceFromHCLFile(e.hclFileForRun(ctx, run))
 	exec.SetOperation(run.Op)
 	exec.SetLogger(log)
 	exec.SetSecretResolver(secret.Dispatcher{
@@ -353,25 +430,12 @@ func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log 
 	recorder.SetLeaseOwner(run.LeaseOwner)
 	recorder.SetStateSerialBefore(st.Meta.Serial)
 	exec.SetRecorder(recorder)
-	exec.SetStatePatchSink(&runtime.StatePatchManagerSink{Manager: mgr, State: st, Owner: run.LeaseOwner})
-	refresh := true
-	if hook, ok := e.bridge.(ApplyHook); ok {
-		refresh = hook.RefreshApply()
-	}
-	if refresh {
-		plan, err = exec.Refresh(ctx, plan)
-		if err != nil {
-			e.bridge.Finish(run, err)
-			return
-		}
-	}
-	if err := ctx.Err(); err != nil {
+	if err := e.installActionRepository(exec, run.Topology); err != nil {
 		e.bridge.Finish(run, err)
 		return
 	}
-	if !plan.HasChanges() {
-		_, _ = log.Write([]byte("No changes. Apply is a no-op.\n"))
-		e.bridge.Finish(run, nil)
+	if err := ctx.Err(); err != nil {
+		e.bridge.Finish(run, err)
 		return
 	}
 	if hook, ok := e.bridge.(ApplyHook); ok {
@@ -385,30 +449,21 @@ func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log 
 		_, _ = log.Write([]byte(fmt.Sprintf("State snapshot: %s\n", snap.ID)))
 	}
 	if err := exec.Apply(ctx, plan); err != nil {
-		if saveErr := mgr.SaveWithLease(ctx, st, state.LockOptions{Owner: run.LeaseOwner}); saveErr != nil {
-			_, _ = log.Write([]byte(fmt.Sprintf("warning: save state failed: %v\n", saveErr)))
-		} else {
-			recorder.SetStateSerialAfter(st.Meta.Serial)
-		}
 		e.bridge.Finish(run, err)
 		return
 	}
-	saveStep := recorder.StepStartKind("state", "state", controlplane.PlanActionNoop)
 	if err := ctx.Err(); err != nil {
-		recorder.StepFailed(saveStep, err)
 		recorder.Finish(err)
 		e.bridge.Finish(run, err)
-		return
-	}
-	if err := mgr.SaveWithLease(ctx, st, state.LockOptions{Owner: run.LeaseOwner}); err != nil {
-		recorder.StepFailed(saveStep, err)
-		recorder.Finish(err)
-		e.bridge.Finish(run, fmt.Errorf("save state: %w", err))
 		return
 	}
 	recorder.SetStateSerialAfter(st.Meta.Serial)
-	recorder.StepDone(saveStep)
 	recorder.MarkResourceStateRecorded()
+	if err := recorder.Err(); err != nil {
+		recorder.Finish(err)
+		e.bridge.Finish(run, err)
+		return
+	}
 	_, _ = log.Write([]byte("Apply complete.\n"))
 
 	// Checks run after apply: their probes (a command inside a node, a
@@ -426,49 +481,55 @@ func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log 
 	e.bridge.Finish(run, runOutcome(nil, recorder.Err()))
 }
 
-func (e *Executor) executeDestroy(ctx context.Context, run *controlplane.Run, log io.Writer) {
-	unlock := e.bridge.LockTopology(run.Topology)
+func (e *Executor) executeDestroy(ctx context.Context, run *controlplane.Run, log io.Writer) *controlplane.CleanupReceipt {
+	unlock, err := e.bridge.LockTopology(ctx, run.Topology)
+	if err != nil {
+		e.bridge.Finish(run, err)
+		return nil
+	}
 	defer unlock()
+	ctx, release, err := e.prepareExecutionContext(ctx, run)
+	if err != nil {
+		e.bridge.Finish(run, err)
+		return nil
+	}
+	defer release()
 
 	if err := ctx.Err(); err != nil {
 		e.bridge.Finish(run, err)
-		return
+		return nil
 	}
 	mgr, err := e.bridge.StateManager(run.Topology)
 	if err != nil {
 		e.bridge.Finish(run, err)
-		return
+		return nil
 	}
 	mgr.AllowUnsafeMutation(run.UnsafeState)
 	if err := mgr.CheckMutationSafety(); err != nil {
 		e.bridge.Finish(run, err)
-		return
+		return nil
 	}
 	st, err := mgr.Load()
 	if err != nil {
 		e.bridge.Finish(run, err)
-		return
-	}
-	if len(st.Resources) == 0 {
-		_, _ = log.Write([]byte("Nothing to destroy.\n"))
-		e.bridge.Finish(run, nil)
-		return
+		return nil
 	}
 	plan := defaultDestroyPlan(st)
 	if hook, ok := e.bridge.(DestroyHook); ok {
 		plan, err = hook.BuildDestroyPlan(st)
 		if err != nil {
 			e.bridge.Finish(run, err)
-			return
+			return nil
 		}
 		if err := hook.BeforeDestroy(plan); err != nil {
 			e.bridge.Finish(run, err)
-			return
+			return nil
 		}
 	}
 	exec := runtime.NewExecutor(graph.New(), st)
 	exec.SetRunContext(run.Topology, run.ID)
-	exec.SetWorkspaceFromHCLFile(e.hclFileForRun(run))
+	exec.SetRunIncarnation(run.QueuedAt, run.Revision)
+	exec.SetWorkspaceFromHCLFile(e.hclFileForRun(ctx, run))
 	exec.SetLogger(log)
 	checkpointPath := e.bridge.CheckpointFile(run.Topology, run.ID)
 	fileRecorder := runtime.NewFileRecorder(checkpointPath, run.ID, run.Topology)
@@ -476,53 +537,56 @@ func (e *Executor) executeDestroy(ctx context.Context, run *controlplane.Run, lo
 	recorder.SetLeaseOwner(run.LeaseOwner)
 	recorder.SetStateSerialBefore(st.Meta.Serial)
 	exec.SetRecorder(recorder)
-	exec.SetStatePatchSink(&runtime.StatePatchManagerSink{Manager: mgr, State: st, Owner: run.LeaseOwner})
 	if snap, err := mgr.Snapshot(ctx, "before destroy "+run.ID); err == nil && snap != nil {
 		_, _ = log.Write([]byte(fmt.Sprintf("State snapshot: %s\n", snap.ID)))
 	}
+	if err := e.installActionRepository(exec, run.Topology); err != nil {
+		e.bridge.Finish(run, err)
+		return nil
+	}
 	if err := exec.Destroy(ctx, plan); err != nil {
-		if saveErr := mgr.SaveWithLease(ctx, st, state.LockOptions{Owner: run.LeaseOwner}); saveErr != nil {
-			_, _ = log.Write([]byte(fmt.Sprintf("warning: save state failed: %v\n", saveErr)))
-		} else {
-			recorder.SetStateSerialAfter(st.Meta.Serial)
-		}
 		e.bridge.Finish(run, err)
-		return
+		return nil
 	}
-	saveStep := recorder.StepStartKind("state", "state", controlplane.PlanActionNoop)
 	if err := ctx.Err(); err != nil {
-		recorder.StepFailed(saveStep, err)
 		recorder.Finish(err)
 		e.bridge.Finish(run, err)
-		return
-	}
-	if err := mgr.SaveWithLease(ctx, st, state.LockOptions{Owner: run.LeaseOwner}); err != nil {
-		recorder.StepFailed(saveStep, err)
-		recorder.Finish(err)
-		e.bridge.Finish(run, fmt.Errorf("save state: %w", err))
-		return
+		return nil
 	}
 	recorder.SetStateSerialAfter(st.Meta.Serial)
-	recorder.StepDone(saveStep)
 	recorder.MarkResourceStateRecorded()
+	if err := recorder.Err(); err != nil {
+		recorder.Finish(err)
+		e.bridge.Finish(run, err)
+		return nil
+	}
+	var proof *controlplane.CleanupReceipt
+	if run.AgentID != "" && run.Attempt > 0 && run.LeaseOwner != "" {
+		proof, err = e.proveCleanup(ctx, *run)
+		if err != nil {
+			e.bridge.Finish(run, err)
+			return nil
+		}
+	}
 	_, _ = log.Write([]byte("Destroy complete.\n"))
 	e.bridge.Finish(run, runOutcome(nil, recorder.Err()))
+	return proof
 }
 
-func (e *Executor) executeResumeApply(ctx context.Context, parent, run *controlplane.Run, log io.Writer) {
-	if err := e.bridge.ReconcileParentJournal(parent, run); err != nil {
-		e.bridge.Finish(run, err)
-		return
+func (e *Executor) proveCleanup(ctx context.Context, run controlplane.Run) (*controlplane.CleanupReceipt, error) {
+	provider, ok := e.bridge.(ActionRepositoryProvider)
+	if !ok {
+		return nil, fmt.Errorf("cleanup proof requires atomic action repository")
 	}
-	e.executeApply(ctx, run, log)
-}
-
-func (e *Executor) executeResumeDestroy(ctx context.Context, parent, run *controlplane.Run, log io.Writer) {
-	if err := e.bridge.ReconcileParentJournal(parent, run); err != nil {
-		e.bridge.Finish(run, err)
-		return
+	repo, err := provider.ActionRepository(run.Topology)
+	if err != nil {
+		return nil, err
 	}
-	e.executeDestroy(ctx, run, log)
+	prover, ok := repo.(runtime.CleanupProver)
+	if !ok {
+		return nil, fmt.Errorf("cleanup proof is unsupported by action repository")
+	}
+	return prover.ProveCleanup(ctx, run)
 }
 
 func defaultDestroyPlan(st *state.State) *runtime.Plan {

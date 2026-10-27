@@ -25,9 +25,11 @@ func TestPlacementSharedSQLiteAcrossIndependentRunsDirectories(t *testing.T) {
 	}
 	first := a.jobs.startWithOptions("shared", "apply", runStartOptions{AgentID: "host-b"})
 	require.NoError(t, a.scheduler.DispatchRun(ctx, first, []string{"docker"}))
+	require.NoError(t, a.jobs.finish(first, nil))
 	next := b.jobs.startWithOptions("shared", "reset", runStartOptions{})
 	require.NoError(t, b.scheduler.DispatchRun(ctx, next, []string{"docker"}))
 	require.Equal(t, "host-b", next.AgentID)
+	require.NoError(t, b.jobs.finish(next, nil))
 	conflict := b.jobs.startWithOptions("shared", "apply", runStartOptions{AgentID: "host-a"})
 	require.ErrorContains(t, b.scheduler.DispatchRun(ctx, conflict, []string{"docker"}), "placed")
 }
@@ -39,7 +41,7 @@ func TestDeleteTopologyReleasesDatabasePlacement(t *testing.T) {
 	s := NewServerWithConfig(cfg)
 	w := s.workspaceService()
 	require.NoError(t, w.bindPlacement("lab", "host-b", controlplane.AgentProtocolVersion))
-	require.NoError(t, w.Delete(context.Background(), "lab", false))
+	require.NoError(t, w.Delete(context.Background(), "lab", true))
 	p, err := w.loadPlacement("lab")
 	require.NoError(t, err)
 	require.Nil(t, p)
@@ -65,7 +67,8 @@ func TestSQLiteSnapshotSurvivesClaimAndReload(t *testing.T) {
 func TestRecoveryChildPreservesSnapshot(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
 	parent := &controlplane.Run{ID: "parent", Topology: "lab", Op: "apply", SnapshotPath: "/immutable/field.sysbox.hcl"}
-	child := s.jobs.startChild(parent)
+	child, err := s.jobs.startChild(parent)
+	require.NoError(t, err)
 	require.Equal(t, parent.SnapshotPath, child.SnapshotPath)
 }
 

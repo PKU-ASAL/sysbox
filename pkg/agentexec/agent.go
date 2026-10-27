@@ -3,14 +3,18 @@ package agentexec
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -19,30 +23,38 @@ import (
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/hostsupervisor"
+	"github.com/oslab/sysbox/pkg/persistence"
 )
 
 const DefaultAgentID = "local"
 
 type Options struct {
-	APIURL                           string
-	Token                            string
-	SessionID                        string
-	ID                               string
-	Name                             string
-	Capabilities                     []string
-	Labels                           map[string]string
-	Version                          string
-	Secret                           string
-	PollInterval                     time.Duration
-	RunRenewInterval                 time.Duration
-	RunRenewTTL                      time.Duration
-	Policy                           config.AgentPolicyConfig
-	CapacityPath                     string
-	ArtifactPaths                    []string
-	ReportGuestExecutionCompleteFunc func(context.Context, string, controlplane.GuestExecutionCompletion) error
-	ReportGuestFileStartFunc         func(context.Context, string) error
-	ReportGuestFileCompleteFunc      func(context.Context, string, controlplane.GuestFileOperationCompletion) error
-	RequestTimeout                   time.Duration
+	HostSupervisorSocket string
+	// RequireHostSupervisor is enabled by the production Agent command. Local
+	// unit fixtures may leave it false to exercise the explicit in-process CLI
+	// executor without making that path a remote control-plane fallback.
+	RequireHostSupervisor       bool
+	observationSequence         *atomic.Uint64
+	ExecutionSessionFile        string
+	ExecutionSessionID          string
+	ExecutionGrantPublicKeyFile string
+	APIURL                      string
+	Token                       string
+	ID                          string
+	Name                        string
+	Capabilities                []string
+	Labels                      map[string]string
+	Version                     string
+	Secret                      string
+	PollInterval                time.Duration
+	RunRenewInterval            time.Duration
+	RunRenewTTL                 time.Duration
+	Policy                      config.AgentPolicyConfig
+	CapacityPath                string
+	ArtifactPaths               []string
+	ReportGuestFileStartFunc    func(context.Context, string) error
+	RequestTimeout              time.Duration
 
 	// httpClient is the shared HTTP client for agent → API requests. Run builds
 	// it once so keep-alive connections are reused across heartbeats, projections
@@ -72,13 +84,16 @@ func Run(ctx context.Context, opts Options, bridge Bridge) error {
 	if opts.RequestTimeout <= 0 {
 		opts.RequestTimeout = 30 * time.Second
 	}
-	if opts.SessionID == "" {
-		opts.SessionID = uuid.NewString()
-	}
 	opts.httpClient = &http.Client{Timeout: opts.RequestTimeout}
 	opts.APIURL = strings.TrimRight(opts.APIURL, "/")
 	if len(opts.Capabilities) == 0 {
 		opts.Capabilities, _ = agent.DetectCapabilities()
+	}
+	if opts.HostSupervisorSocket != "" && !slices.Contains(opts.Capabilities, controlplane.RunRecoveryCapability) {
+		opts.Capabilities = append(opts.Capabilities, controlplane.RunRecoveryCapability)
+	}
+	if opts.HostSupervisorSocket != "" && !slices.Contains(opts.Capabilities, controlplane.RunRecoveryInputsCapability) {
+		opts.Capabilities = append(opts.Capabilities, controlplane.RunRecoveryInputsCapability)
 	}
 	if err := post(ctx, opts, opts.APIURL+"/v1/agents", controlplane.Agent{
 		ID:           opts.ID,
@@ -93,6 +108,15 @@ func Run(ctx context.Context, opts Options, bridge Bridge) error {
 	}, nil); err != nil {
 		return err
 	}
+	if opts.ExecutionSessionFile == "" {
+		opts.ExecutionSessionFile = filepath.Join(config.DefaultRunsDir(), "_agents", opts.ID, "execution-session.json")
+	}
+	session, err := establishExecutionSession(ctx, opts)
+	if err != nil {
+		return err
+	}
+	opts.ExecutionSessionID = session.ID
+	opts.observationSequence = &atomic.Uint64{}
 
 	executor := NewExecutorWithBridge(remoteBridge{Bridge: bridge, reporter: opts})
 	go heartbeatLoop(ctx, opts)
@@ -206,6 +230,14 @@ func commandWebSocketAndExecute(ctx context.Context, runner *commandRunner, opts
 			})
 			continue
 		}
+		reporter.Report(ctx, controlplane.AgentCommandEvent{
+			CommandID: cmd.ID,
+			ActionID:  cmd.ActionID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation, LeaseEpoch: cmd.LeaseEpoch,
+			LeaseOwner: cmd.LeaseOwner, Attempt: cmd.Attempt,
+			Type:    cmd.Type,
+			Status:  "ack",
+			Message: "command received",
+		})
 		go runner.Execute(ctx, &cmd, func(event controlplane.AgentCommandEvent) {
 			reporter.Report(ctx, event)
 		})
@@ -216,14 +248,16 @@ type commandRunner struct {
 	mu       sync.Mutex
 	executor *Executor
 	opts     Options
-	running  map[string]context.CancelFunc
+	running  map[string]*trackedCommand
+}
+
+type trackedCommand struct {
+	cancel context.CancelFunc
+	keys   []string
 }
 
 func newCommandRunner(executor *Executor, opts Options) *commandRunner {
-	if opts.SessionID == "" {
-		opts.SessionID = uuid.NewString()
-	}
-	return &commandRunner{executor: executor, opts: opts, running: map[string]context.CancelFunc{}}
+	return &commandRunner{executor: executor, opts: opts, running: map[string]*trackedCommand{}}
 }
 
 func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentCommand, report func(controlplane.AgentCommandEvent)) {
@@ -235,11 +269,12 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 			return
 		}
 		event := controlplane.AgentCommandEvent{
-			LeaseOwner: cmd.LeaseOwner,
-			CommandID:  cmd.ID,
-			Type:       cmd.Type,
-			Status:     status,
-			Message:    message,
+			CommandID: cmd.ID,
+			ActionID:  cmd.ActionID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation, LeaseEpoch: cmd.LeaseEpoch,
+			LeaseOwner: cmd.LeaseOwner, Attempt: cmd.Attempt,
+			Type:    cmd.Type,
+			Status:  status,
+			Message: message,
 		}
 		if err != nil {
 			event.Error = err.Error()
@@ -252,15 +287,9 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 			target = cmd.Session.ID
 		}
 		if r.cancel(target) {
-			if report != nil {
-				report(controlplane.AgentCommandEvent{
-					CommandID: target,
-					Type:      "cancelled",
-					Status:    "cancelled",
-					Message:   "command cancelled by cancel_command",
-				})
-			}
-			emit("completed", "command cancelled", nil)
+			// The target still owns its outcome. Cancelling its context does not
+			// prove its effects stopped or authorize retiring its delivery lease.
+			emit("completed", "cancellation requested", nil)
 			return
 		}
 		emit("failed", "command not running", fmt.Errorf("command %q is not running", target))
@@ -271,51 +300,78 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 		return
 	}
 	runCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	if !r.track(cmd, cancel) {
-		return
-	}
-	defer r.untrack(cmd)
-	path := r.executor.bridge.CheckpointFile("_agent_commands", commandInboxKey(cmd.ID))
-	if err := acceptCommand(path, r.opts.SessionID, cmd); err != nil {
-		emit("failed", "durable command acceptance failed", err)
-		return
-	}
-	if cmd.Type != "run_assigned" {
-		bounded, stop := context.WithTimeout(runCtx, controlplane.AgentCommandExecutionLimit)
-		defer stop()
-		runCtx = bounded
-		emit("ack", "command durably accepted", nil)
-		emit("started", "command started", nil)
-	}
+	tracked := r.track(cmd, cancel)
+	defer r.untrack(tracked)
+	emit("started", "command started", nil)
 	switch cmd.Type {
+	case "gc_delete":
+		if err := runGrantedGC(runCtx, r.opts, *cmd); err != nil {
+			emit("failed", "GC outcome unconfirmed", err)
+			return
+		}
+		emit("completed", "host GC completion reported", nil)
+	case controlplane.RunRecoveryCommand:
+		if !cmd.LeaseUntil.After(time.Now()) {
+			emit("failed", "recovery delivery lease expired", context.DeadlineExceeded)
+			return
+		}
+		recoveryCtx, stopRecovery := context.WithDeadline(runCtx, cmd.LeaseUntil)
+		defer stopRecovery()
+		if r.opts.HostSupervisorSocket == "" {
+			emit("failed", "host supervisor is required for remote recovery", fmt.Errorf("host supervisor socket is not configured"))
+			return
+		}
+		proof := hostsupervisor.RunRecoveryRequest{CommandID: cmd.ID, LeaseOwner: cmd.LeaseOwner, Attempt: cmd.Attempt}
+		result, err := hostsupervisor.NewTaskClient(r.opts.HostSupervisorSocket, hostsupervisor.TargetRef{}).RecoverRun(recoveryCtx, proof)
+		if err != nil {
+			emit("failed", "owning-agent recovery uncertain", err)
+			return
+		}
+		if report != nil {
+			report(controlplane.AgentCommandEvent{AgentID: r.opts.ID, CommandID: cmd.ID, Type: cmd.Type, Status: "completed", ActionID: cmd.ActionID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation, LeaseEpoch: cmd.LeaseEpoch, LeaseOwner: cmd.LeaseOwner, Attempt: cmd.Attempt, Recovery: result})
+		}
 	case "run_assigned":
 		if cmd.Run == nil {
 			emit("failed", "missing run", fmt.Errorf("missing run"))
 			return
 		}
-		claimCtx := runCtx
-		if !cmd.Run.DeadlineAt.IsZero() {
-			var cancelClaim context.CancelFunc
-			claimCtx, cancelClaim = context.WithDeadline(runCtx, cmd.Run.DeadlineAt)
-			defer cancelClaim()
-		}
-		claimed, err := claim(claimCtx, r.opts, cmd.Run.ID)
+		claimed, err := claim(runCtx, r.opts, *cmd.Run)
 		if err != nil {
 			fmt.Printf("[agent] claim %s failed: %v\n", cmd.Run.ID, err)
 			emit("failed", "run claim failed", err)
 			return
 		}
-		emit("ack", "run claim durably accepted", nil)
-		emit("started", "run started", nil)
-		stopRenew := startRunLeaseRenewal(runCtx, r.opts, claimed, cancel)
+		stopRenew := startRunLeaseRenewal(runCtx, r.opts, claimed)
 		defer stopRenew()
-		r.executor.ExecuteContext(runCtx, claimed)
-		if claimed.Status == controlplane.RunDone {
-			emit("completed", "run command completed", nil)
-		} else {
-			emit("failed", "run requires recovery", errors.New(claimed.Err))
+		if r.opts.RequireHostSupervisor && r.opts.HostSupervisorSocket == "" {
+			emit("failed", "host supervisor is required for remote Run", fmt.Errorf("host supervisor socket is not configured"))
+			return
 		}
+		if r.opts.HostSupervisorSocket != "" {
+			completed, err := r.executeAssignedHostRun(runCtx, *claimed, cmd, emit)
+			if err != nil {
+				emit("failed", "host supervisor run failed", err)
+				return
+			}
+			if completed == nil {
+				emit("started", "host supervisor accepted run; awaiting host receipt", nil)
+			} else if completed.Status == controlplane.RunDone {
+				emit("completed", "host supervisor run completed", nil)
+			} else {
+				emit("failed", "host supervisor run failed", errors.New(completed.Err))
+			}
+			return
+		}
+		runCtx, err = r.prepareRunWorkspace(runCtx, *claimed)
+		if err != nil {
+			r.executor.bridge.AttachRun(claimed)
+			r.executor.bridge.Finish(claimed, err)
+			r.executor.reportCompletion(runCtx, claimed)
+			emit("failed", "run revision delivery failed", err)
+			return
+		}
+		r.executor.ExecuteContext(runCtx, claimed)
+		emit("completed", "run command completed", nil)
 	case "session_open":
 		if cmd.Session == nil {
 			emit("failed", "missing session", fmt.Errorf("missing session"))
@@ -328,7 +384,20 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 		}
 		emit("completed", "console session completed", nil)
 	case "node_operation":
-		completed := r.executor.ExecuteNodeOperation(runCtx, cmd.Operation)
+		cmd.Operation.CommandID = cmd.ID
+		cmd.Operation.ActionID, cmd.Operation.ResourceUID, cmd.Operation.Generation = cmd.ActionID, cmd.ResourceUID, cmd.Generation
+		cmd.Operation.LeaseOwner, cmd.Operation.LeaseEpoch, cmd.Operation.Attempt = cmd.LeaseOwner, cmd.LeaseEpoch, cmd.Attempt
+		completed := executeGrantedNodeOperation(runCtx, r.opts, *cmd)
+		if cmd.Operation.Operation == "adoption_inspect" || cmd.Operation.Operation == "adoption_apply" || controlplane.IsGuestSSHAccessOperation(cmd.Operation.Operation) {
+			// The host signer owns canonical completion. Worker events report
+			// delivery/execution progress only, never a substitute result.
+			if completed.Status == controlplane.NodeOperationStatusFailed {
+				emit("failed", "host effect outcome unconfirmed", errors.New(completed.Err))
+				return
+			}
+			emit("completed", "host operation completion reported", nil)
+			return
+		}
 		if err := r.opts.ReportNodeOperationComplete(runCtx, completed); err != nil {
 			fmt.Printf("[agent] report node operation %s failed: %v\n", completed.ID, err)
 			emit("failed", "node operation report failed", err)
@@ -354,25 +423,8 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 			emit("failed", "guest execution start report failed", err)
 			return
 		}
-		mgr, err := r.executor.bridge.StateManager(cmd.Execution.Topology)
-		if err != nil {
-			emit("failed", "guest execution state unavailable", err)
-			return
-		}
-		st, err := mgr.LoadWithContext(opCtx)
-		if err != nil {
-			emit("failed", "guest execution state unavailable", err)
-			return
-		}
-		completed := executeGuestOperation(opCtx, st, cmd.Execution.Node, cmd.ExecutionRequest)
-		// Report completion on runCtx, not opCtx: the operation's own deadline
-		// has very likely expired by now, and the result must still be
-		// delivered — otherwise a timed-out execution is never reported at all
-		// and the caller is left polling something that will never resolve.
-		if err := r.opts.ReportGuestExecutionComplete(runCtx, cmd.Execution.ID, controlplane.GuestExecutionCompletion{Result: completed.Result, ResultClass: completed.ResultClass, Error: completed.Err}); err != nil {
-			emit("failed", "guest execution completion report failed", err)
-			return
-		}
+		completed := executeGrantedGuestOperation(opCtx, r.opts, *cmd)
+		// The host owns durable execution results and retries its signed report.
 		if completed.Err != "" {
 			emit("failed", "guest execution failed", errors.New(completed.ResultClass))
 			return
@@ -387,36 +439,12 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 			emit("failed", "guest file start report failed", err)
 			return
 		}
-		mgr, err := r.executor.bridge.StateManager(cmd.FilePut.Topology)
-		if err != nil {
-			if reportErr := r.opts.ReportGuestFileComplete(runCtx, cmd.FilePut.ID, controlplane.GuestFileOperationCompletion{Error: "file operation failed"}); reportErr != nil {
-				emit("failed", "guest file completion report failed", reportErr)
-				return
-			}
-			emit("failed", "guest file state unavailable", err)
+		if _, err := runGrantedFileInstall(runCtx, r.opts, *cmd); err != nil {
+			emit("failed", "guest file installation outcome unconfirmed", err)
 			return
 		}
-		st, err := mgr.Load()
-		if err != nil {
-			if reportErr := r.opts.ReportGuestFileComplete(runCtx, cmd.FilePut.ID, controlplane.GuestFileOperationCompletion{Error: "file operation failed"}); reportErr != nil {
-				emit("failed", "guest file completion report failed", reportErr)
-				return
-			}
-			emit("failed", "guest file state unavailable", err)
-			return
-		}
-		if err := putGuestFile(runCtx, r.opts, st, *cmd.FilePut); err != nil {
-			if reportErr := r.opts.ReportGuestFileComplete(runCtx, cmd.FilePut.ID, controlplane.GuestFileOperationCompletion{Error: "file operation failed"}); reportErr != nil {
-				emit("failed", "guest file completion report failed", reportErr)
-				return
-			}
-			emit("failed", "guest file put failed", err)
-			return
-		}
-		if err := r.opts.ReportGuestFileComplete(runCtx, cmd.FilePut.ID, controlplane.GuestFileOperationCompletion{}); err != nil {
-			emit("failed", "guest file completion report failed", err)
-			return
-		}
+		// Only the credential-owning host receipt can complete file metadata.
+		// A worker acknowledgement is delivery evidence, not installation proof.
 		emit("completed", "guest file put completed", nil)
 	default:
 		err := fmt.Errorf("unknown command type %q", cmd.Type)
@@ -425,47 +453,41 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 	}
 }
 
-func commandKeys(cmd *controlplane.AgentCommand) []string {
-	keys := []string{cmd.ID}
-	if cmd.Session != nil {
-		keys = append(keys, cmd.Session.ID)
-	}
-	if cmd.Run != nil {
-		keys = append(keys, cmd.Run.ID)
-	}
-	keys = append(keys, cmd.Operation.ID)
-	if cmd.Execution != nil {
-		keys = append(keys, cmd.Execution.ID)
-	}
-	if cmd.FilePut != nil {
-		keys = append(keys, cmd.FilePut.ID)
-	}
-	return keys
-}
-func (r *commandRunner) track(cmd *controlplane.AgentCommand, cancel context.CancelFunc) bool {
+func (r *commandRunner) track(cmd *controlplane.AgentCommand, cancel context.CancelFunc) *trackedCommand {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	keys := commandKeys(cmd)
-	for _, key := range keys {
-		if key != "" {
-			if _, exists := r.running[key]; exists {
-				return false
-			}
+	tracked := &trackedCommand{cancel: cancel}
+	add := func(id string) {
+		if id != "" {
+			tracked.keys = append(tracked.keys, id)
+			r.running[id] = tracked
 		}
 	}
-	for _, key := range keys {
-		if key != "" {
-			r.running[key] = cancel
+	add(cmd.ID)
+	if cmd.Type != controlplane.RunRecoveryCommand {
+		if cmd.Session != nil {
+			add(cmd.Session.ID)
+		}
+		if cmd.Run != nil {
+			add(cmd.Run.ID)
+		}
+		add(cmd.Operation.ID)
+		if cmd.Execution != nil {
+			add(cmd.Execution.ID)
+		}
+		if cmd.FilePut != nil {
+			add(cmd.FilePut.ID)
 		}
 	}
-	return true
+	return tracked
 }
-func (r *commandRunner) untrack(cmd *controlplane.AgentCommand) {
+
+func (r *commandRunner) untrack(tracked *trackedCommand) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for _, key := range commandKeys(cmd) {
-		if key != "" {
-			delete(r.running, key)
+	for _, id := range tracked.keys {
+		if r.running[id] == tracked {
+			delete(r.running, id)
 		}
 	}
 }
@@ -475,12 +497,12 @@ func (r *commandRunner) cancel(id string) bool {
 		return false
 	}
 	r.mu.Lock()
-	cancel := r.running[id]
+	tracked, ok := r.running[id]
 	r.mu.Unlock()
-	if cancel == nil {
+	if !ok {
 		return false
 	}
-	cancel()
+	tracked.cancel()
 	return true
 }
 
@@ -492,11 +514,32 @@ func authorizeAgentCommand(policy config.AgentPolicyConfig, cmd *controlplane.Ag
 		return fmt.Errorf("command %q is not allowed", cmd.Type)
 	}
 	switch cmd.Type {
-	case "run_assigned":
+	case "run_assigned", controlplane.RunRecoveryCommand:
 		if cmd.Run == nil {
 			return fmt.Errorf("missing run")
 		}
 		if err := allowWorkspace(policy, cmd.Run.Workspace, cmd.Run.Topology); err != nil {
+			return err
+		}
+	case "gc_delete":
+		if cmd.Session == nil || cmd.Session.Topology == "" {
+			return fmt.Errorf("GC topology required")
+		}
+		if err := allowWorkspace(policy, cmd.Session.Topology, cmd.Session.Topology); err != nil {
+			return err
+		}
+		provider := ""
+		switch cmd.GCKind {
+		case "container", "network":
+			provider = "docker"
+		case "domain":
+			provider = "libvirt"
+		case "firecracker":
+			provider = "firecracker"
+		default:
+			return fmt.Errorf("invalid GC provider kind")
+		}
+		if err := allowSubstrate(policy, provider); err != nil {
 			return err
 		}
 	case "session_open":
@@ -632,8 +675,11 @@ func (opts Options) ReportRunComplete(ctx context.Context, run *controlplane.Run
 	if projection.AgentID == "" {
 		projection.AgentID = opts.ID
 	}
+	reported := *run
+	reported.Cleanup = nil
 	return post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/runs/"+run.ID+"/complete", controlplane.RunCompletion{
-		Run:        *run,
+		Cleanup:    run.Cleanup,
+		Run:        reported,
 		Projection: projection,
 	}, nil)
 }
@@ -645,6 +691,11 @@ func (opts Options) ReportResourceProjection(ctx context.Context, projection con
 	if projection.AgentID == "" {
 		projection.AgentID = opts.ID
 	}
+	if opts.ExecutionSessionID == "" || opts.observationSequence == nil {
+		return fmt.Errorf("observation requires execution session")
+	}
+	projection.SessionID = opts.ExecutionSessionID
+	projection.Sequence = opts.observationSequence.Add(1)
 	return post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/projections/resources", projection, nil)
 }
 
@@ -655,6 +706,11 @@ func (opts Options) ReportInventory(ctx context.Context, inv controlplane.AgentI
 	if inv.AgentID == "" {
 		inv.AgentID = opts.ID
 	}
+	if opts.ExecutionSessionID == "" || opts.observationSequence == nil {
+		return fmt.Errorf("observation requires execution session")
+	}
+	inv.SessionID = opts.ExecutionSessionID
+	inv.Sequence = opts.observationSequence.Add(1)
 	return post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/inventory", inv, nil)
 }
 
@@ -666,16 +722,6 @@ func (opts Options) ReportNodeOperationComplete(ctx context.Context, op controlp
 		op.AgentID = opts.ID
 	}
 	return post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/node-operations/"+op.ID+"/complete", op, nil)
-}
-
-func (opts Options) ReportGuestExecutionComplete(ctx context.Context, id string, completion controlplane.GuestExecutionCompletion) error {
-	if opts.ReportGuestExecutionCompleteFunc != nil {
-		return opts.ReportGuestExecutionCompleteFunc(ctx, id, completion)
-	}
-	if opts.APIURL == "" || opts.ID == "" || id == "" {
-		return nil
-	}
-	return post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/guest-executions/"+id+"/complete", completion, nil)
 }
 
 func (opts Options) ReportGuestExecutionStart(ctx context.Context, id string) error {
@@ -697,18 +743,6 @@ func (opts Options) ReportGuestFileStart(ctx context.Context, id string) error {
 	})
 }
 
-func (opts Options) ReportGuestFileComplete(ctx context.Context, id string, completion controlplane.GuestFileOperationCompletion) error {
-	return retryGuestFileReport(ctx, func() error {
-		if opts.ReportGuestFileCompleteFunc != nil {
-			return opts.ReportGuestFileCompleteFunc(ctx, id, completion)
-		}
-		if opts.APIURL == "" || opts.ID == "" || id == "" {
-			return nil
-		}
-		return post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/guest-file-operations/"+id+"/complete", completion, nil)
-	})
-}
-
 func retryGuestFileReport(ctx context.Context, report func() error) error {
 	var err error
 	for attempt := 0; attempt < 3; attempt++ {
@@ -727,92 +761,69 @@ func retryGuestFileReport(ctx context.Context, report func() error) error {
 	return err
 }
 
-type postStatusError struct {
-	code    int
-	message string
-}
-
-func (e *postStatusError) Error() string { return e.message }
-func claim(ctx context.Context, opts Options, runID string) (*controlplane.Run, error) {
-	// A permanently unavailable API must not retain this command indefinitely.
+func claim(ctx context.Context, opts Options, expected controlplane.Run) (*controlplane.Run, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	// A new execution instance gets a new identity; transport retries reuse it.
-	request := map[string]string{"claim_id": uuid.NewSHA1(uuid.NameSpaceOID, []byte(opts.SessionID+":"+uuid.NewString())).String()}
+	request := controlplane.RunClaim{QueuedAt: expected.QueuedAt, Revision: expected.Revision, ClaimID: uuid.NewString()}
 	for {
 		var run controlplane.Run
-		err := post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/runs/"+runID+"/claim", request, &run)
+		err := post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/runs/"+expected.ID+"/claim", request, &run)
 		if err == nil {
 			return &run, nil
 		}
-		var status *postStatusError
-		// Any transport/response decoding failure has unknown delivery. Replay the
-		// same claim; explicit protocol rejection must never start another attempt.
-		if errors.As(err, &status) && status.code != http.StatusServiceUnavailable && status.code != http.StatusBadGateway && status.code != http.StatusGatewayTimeout {
+		var responseErr *httpStatusError
+		if errors.As(err, &responseErr) && responseErr.status != http.StatusServiceUnavailable && responseErr.status != http.StatusBadGateway && responseErr.status != http.StatusGatewayTimeout {
 			return nil, err
 		}
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case <-time.After(time.Second):
+		case <-time.After(250 * time.Millisecond):
 		}
 	}
 }
 
-func renewRunLease(ctx context.Context, opts Options, run controlplane.Run) (time.Time, error) {
+type httpStatusError struct {
+	status  int
+	message string
+}
+
+func (e *httpStatusError) Error() string { return e.message }
+
+func renewRunLease(ctx context.Context, opts Options, run *controlplane.Run) error {
+	if run == nil || run.ID == "" || run.LeaseOwner == "" {
+		return nil
+	}
 	var renewed controlplane.Run
-	err := post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/runs/"+run.ID+"/renew", map[string]any{"lease_owner": run.LeaseOwner, "ttl_seconds": int(opts.RunRenewTTL.Seconds())}, &renewed)
-	if err != nil {
-		return time.Time{}, err
+	if err := post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/runs/"+run.ID+"/renew", map[string]any{
+		"lease_owner": run.LeaseOwner,
+		"ttl_seconds": int(opts.RunRenewTTL.Seconds()),
+	}, &renewed); err != nil {
+		return err
 	}
-	if renewed.ID != run.ID || renewed.LeaseOwner != run.LeaseOwner || renewed.Attempt != run.Attempt || !renewed.LeaseUntil.After(time.Now()) {
-		return time.Time{}, fmt.Errorf("renewal ownership mismatch")
+	if !persistence.SameRunIncarnation(*run, renewed) || renewed.LeaseOwner != run.LeaseOwner || renewed.Attempt != run.Attempt || renewed.Status != controlplane.RunRunning || !renewed.LeaseUntil.After(time.Now()) {
+		return fmt.Errorf("run renewal identity or lease mismatch")
 	}
-	return renewed.LeaseUntil, nil
+	return nil
 }
 
-// A lost renewal is an uncertain authority result, never permission to keep
-// mutating resources. The request budget also cannot outlive the last lease.
-func startRunLeaseRenewal(ctx context.Context, opts Options, run *controlplane.Run, onLost context.CancelFunc) func() {
+func startRunLeaseRenewal(ctx context.Context, opts Options, run *controlplane.Run) func() {
 	renewCtx, cancel := context.WithCancel(ctx)
-	snapshot := *run
-	// Respect a shorter API-granted lease in crash tests and deployments; the
-	// agent default must not silently turn a 10s claim into a 30m renewal.
-	remaining := time.Until(snapshot.LeaseUntil)
-	grantTTL := ((remaining + time.Second - 1) / time.Second) * time.Second
-	if grantTTL > 0 && (opts.RunRenewTTL <= 0 || opts.RunRenewTTL > grantTTL) {
-		opts.RunRenewTTL = grantTTL
-	}
+	// The executor mutates its own Run as work completes. Renewal owns a fixed
+	// claim copy and never writes the API response into that executing object.
+	claim := *run
 	go func() {
-		deadline := snapshot.LeaseUntil
-		interval := opts.RunRenewInterval
-		if interval <= 0 {
-			interval = 30 * time.Second
-		}
+		ticker := time.NewTicker(opts.RunRenewInterval)
+		defer ticker.Stop()
 		for {
-			remaining := time.Until(deadline)
-			if remaining <= 0 {
-				onLost()
-				return
-			}
-			wait := min(interval, remaining/2)
-			timer := time.NewTimer(wait)
 			select {
 			case <-renewCtx.Done():
-				timer.Stop()
 				return
-			case <-timer.C:
-			}
-			attempt, stop := context.WithDeadline(renewCtx, deadline)
-			next, err := renewRunLease(attempt, opts, snapshot)
-			stop()
-			if err != nil {
-				if renewCtx.Err() == nil {
-					onLost()
+			case <-ticker.C:
+				if err := renewRunLease(renewCtx, opts, &claim); err != nil && renewCtx.Err() == nil {
+					fmt.Printf("[agent] renew run lease %s failed: %v\n", claim.ID, err)
 				}
-				return
 			}
-			deadline = next
 		}
 	}()
 	return cancel
@@ -866,7 +877,7 @@ func post(ctx context.Context, opts Options, url string, in any, out any) error 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return &postStatusError{code: resp.StatusCode, message: fmt.Sprintf("POST %s: %s", url, resp.Status)}
+		return &httpStatusError{status: resp.StatusCode, message: fmt.Sprintf("POST %s: %s", url, resp.Status)}
 	}
 	if out == nil {
 		return nil
@@ -879,4 +890,82 @@ func authorize(req *http.Request, opts Options) {
 		req.Header.Set("Authorization", "Bearer "+opts.Token)
 	}
 	_ = agent.SignRequest(req, opts.ID, opts.Secret, time.Now())
+}
+
+func (r *commandRunner) executeAssignedHostRun(ctx context.Context, run controlplane.Run, cmd *controlplane.AgentCommand, emit func(string, string, error)) (*controlplane.Run, error) {
+	if cmd == nil || cmd.Run == nil || r.opts.ExecutionSessionID == "" || r.opts.ExecutionGrantPublicKeyFile == "" {
+		return nil, fmt.Errorf("host supervisor run requires execution session and grant key")
+	}
+	action := run.Op
+	if action == "" {
+		action = run.Operation
+	}
+	if !controlplane.IsRunExecutionOperation("run_" + action) {
+		return nil, fmt.Errorf("host supervisor does not support run operation %q", run.Op)
+	}
+	key, err := os.ReadFile(r.opts.ExecutionGrantPublicKeyFile)
+	if err != nil || len(key) != ed25519.PublicKeySize {
+		return nil, controlplane.ErrInvalidExecutionGrant
+	}
+	node := run.Target
+	if i := strings.LastIndex(node, "."); i >= 0 {
+		node = node[i+1:]
+	}
+	if node == "" && cmd.ResourceUID != "" {
+		return nil, fmt.Errorf("host supervisor run requires a single resource target")
+	}
+	target := hostsupervisor.TargetRef{Topology: run.Topology, Node: node, Scope: controlplane.ExecutionScope{TopologyUID: cmd.TopologyUID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation}}
+	req := hostsupervisor.RunRequest{RunID: run.ID, Topology: run.Topology, TopologyUID: cmd.TopologyUID, Revision: run.Revision, ActionID: cmd.ActionID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation, Action: action, Target: run.Target, ExpectedSerial: cmd.ExpectedSerial}
+	if err := req.Validate(); err != nil {
+		return nil, err
+	}
+	client := hostsupervisor.NewTaskClient(r.opts.HostSupervisorSocket, target)
+	boot, err := client.RunHostBootID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	endpoint := r.opts.APIURL + "/v1/agents/" + r.opts.ID + "/commands/" + cmd.ID + "/execution-grant"
+	var grant controlplane.SignedExecutionGrant
+	if err := post(ctx, r.opts, endpoint, map[string]any{"session_id": r.opts.ExecutionSessionID, "lease_owner": cmd.LeaseOwner, "attempt": cmd.Attempt, "boot_id": boot}, &grant); err != nil {
+		return nil, err
+	}
+	// Authenticate before waiting for a freshly issued future timestamp. A
+	// rebooted host can briefly lag the issuer; waiting does not extend expiry
+	// or relax the normal current-time verification below.
+	if err := controlplane.VerifyExecutionGrant(ed25519.PublicKey(key), grant, boot, grant.IssuedAt); err != nil {
+		return nil, err
+	}
+	if err := waitForCanonicalRunStart(ctx, grant.IssuedAt); err != nil {
+		return nil, err
+	}
+	if err := controlplane.VerifyExecutionGrant(ed25519.PublicKey(key), grant, boot, time.Now()); err != nil {
+		return nil, err
+	}
+	if hostsupervisor.ValidateRunGrant(grant, req, boot) != nil || grant.Grant.AgentID != r.opts.ID || grant.Grant.SessionID != r.opts.ExecutionSessionID || grant.Grant.CommandID != cmd.ID || grant.Grant.Attempt != uint64(cmd.Attempt) {
+		return nil, controlplane.ErrInvalidExecutionGrant
+	}
+	renew := func(ctx context.Context, current controlplane.SignedExecutionGrant) (controlplane.SignedExecutionGrant, error) {
+		var next controlplane.SignedExecutionGrant
+		err := post(ctx, r.opts, endpoint+"/renew", map[string]any{"grant": current, "lease_owner": cmd.LeaseOwner}, &next)
+		return next, err
+	}
+	return awaitHostRun(ctx, client, req, run, grant, ed25519.PublicKey(key), renew)
+}
+
+// The wire protocol carries only the durable terminal Run as evidence.
+func decodeHostRunEvidence(raw json.RawMessage) (*controlplane.Run, error) {
+	var run controlplane.Run
+	if json.Unmarshal(raw, &run) == nil && run.ID != "" && run.Status.IsTerminal() {
+		return &run, nil
+	}
+	return nil, fmt.Errorf("host supervisor returned non-terminal run evidence")
+}
+
+func (b remoteBridge) PrepareExecution(ctx context.Context, run *controlplane.Run) (context.Context, func(), error) {
+	if provider, ok := b.Bridge.(interface {
+		PrepareExecution(context.Context, *controlplane.Run) (context.Context, func(), error)
+	}); ok {
+		return provider.PrepareExecution(ctx, run)
+	}
+	return ctx, func() {}, nil
 }

@@ -35,6 +35,147 @@ SUBCOMMAND := $(word 2,$(MAKECMDGOALS))
 
 .DEFAULT_GOAL := help
 
+.PHONY: test-firecracker-e2e
+.PHONY: test-docker-generation-e2e
+.PHONY: test-docker-adoption-e2e
+test-docker-adoption-e2e: ## Verify adoption and cold lifecycle of an isolated Docker container
+	SYSBOX_DOCKER_ADOPTION_E2E=1 $(GOENV) $(GO) test -race -tags e2e ./pkg/provider/docker \
+	  -run '^TestDockerAdoptionColdLifecycleE2E$$' -count=1 -v -timeout=2m
+
+.PHONY: test-managed-bridge-e2e
+
+test-managed-bridge-e2e: ## Verify Docker managed bridge proof and real TAP fencing on the host network
+	@set -eu; test_binary=$$(mktemp /tmp/sysbox-managed-bridge-e2e.XXXXXX); trap 'rm -f "$$test_binary"' EXIT; \
+	CGO_ENABLED=0 $(GOENV) $(GO) test -c -tags e2e -o "$$test_binary" ./pkg/provider/docker; \
+	docker run --rm --network host --cap-add NET_ADMIN --cap-add SYS_ADMIN --security-opt apparmor=unconfined --device /dev/net/tun \
+	  --mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \
+	  --mount "type=bind,src=$$test_binary,dst=/managed-bridge.test,readonly" \
+	  -e SYSBOX_MANAGED_BRIDGE_E2E=1 --entrypoint /managed-bridge.test alpine:3.22 \
+	  -test.run '^TestDockerManagedBridgeTargetE2E$$' -test.v -test.timeout=90s
+.PHONY: test-libvirt-generation-e2e
+.PHONY: test-network-generation-e2e
+.PHONY: test-firecracker-attachment-e2e
+
+.PHONY: test-guesttask-e2e
+.PHONY: test-host-supervisor-e2e
+.PHONY: test-host-power-e2e
+.PHONY: test-host-file-e2e
+test-host-file-e2e: ## Verify signed durable file installation and host recovery with real Docker
+	@set -eu; file_helper=$$(mktemp /tmp/sysbox-file-helper.XXXXXX); trap 'rm -f "$$file_helper"' EXIT; \
+	CGO_ENABLED=0 $(GOENV) $(GO) build -buildvcs=false -o "$$file_helper" ./cmd/sysbox-init; \
+	SYSBOX_GUESTTASK_HELPER="$$file_helper" $(GOENV) $(GO) test -race -tags e2e ./pkg/api \
+	  -run '^TestHostSupervisorRealFileInstallE2E$$' -count=1 -v -timeout=3m
+
+test-host-power-e2e: ## Verify real Docker pause/resume fencing, durable receipts and cold recovery
+	SYSBOX_HOST_POWER_E2E=1 $(GOENV) $(GO) test -race -tags e2e ./pkg/api \
+	  -run '^TestHostSupervisorRealNodePowerE2E$$' -count=1 -v -timeout=2m
+
+test-host-supervisor-e2e: ## Verify signed guest tasks, host recovery and successor grants with real Docker
+	@set -eu; task_helper=$$(mktemp /tmp/sysbox-supervisor-helper.XXXXXX); trap 'rm -f "$$task_helper"' EXIT; \
+	CGO_ENABLED=0 $(GOENV) $(GO) build -buildvcs=false -o "$$task_helper" ./cmd/sysbox-init; \
+	SYSBOX_GUESTTASK_HELPER="$$task_helper" $(GOENV) $(GO) test -race -tags e2e ./pkg/api \
+	  -run '^TestHostSupervisorRealTaskStopAndSuccessorE2E$$' -count=1 -v -timeout=3m
+
+test-guesttask-e2e: ## Verify durable tasks and cancellation in a disposable private cgroup
+	@set -eu; task_binary=$$(mktemp /tmp/sysbox-guesttask-e2e.XXXXXX); trap 'rm -f "$$task_binary"' EXIT; \
+	CGO_ENABLED=0 $(GOENV) $(GO) test -c -o "$$task_binary" ./pkg/guesttask; \
+	docker run --rm --privileged --cgroupns=private --network none \
+	  --mount "type=bind,src=$$task_binary,dst=/task.test,readonly" \
+	  alpine:3.22 sh -c 'mkdir /sys/fs/cgroup/sysbox-test; SYSBOX_GUESTTASK_TEST_CGROUP=/sys/fs/cgroup/sysbox-test /task.test -test.run "^TestReal" -test.v -test.timeout=90s'
+
+test-firecracker-attachment-e2e: ## Test real TAP ownership without booting a VM (Linux x86_64)
+	@set -eu; test "$$(uname -m)" = x86_64; \
+	test_binary=$$(mktemp /tmp/sysbox-tap-e2e.XXXXXX); trap 'rm -f "$$test_binary"' EXIT; \
+	CGO_ENABLED=0 $(GOENV) $(GO) test -c -tags e2e -o "$$test_binary" ./pkg/provider/firecracker; \
+	docker run --rm --network none --cap-add NET_ADMIN --cap-add SYS_ADMIN --device /dev/net/tun --security-opt apparmor=unconfined \
+	  --mount "type=bind,src=$$test_binary,dst=/tap.test,readonly" \
+	  --mount "type=bind,src=$$(command -v ip),dst=/usr/local/bin/ip,readonly" \
+	  --mount type=bind,src=/lib/x86_64-linux-gnu,dst=/lib/x86_64-linux-gnu,readonly \
+	  --mount type=bind,src=/lib64,dst=/lib64,readonly -e SYSBOX_ATTACHMENT_E2E=1 \
+	  --entrypoint /tap.test ubuntu:24.04 -test.run '^TestFirecrackerOwnedTapE2E$$' -test.v -test.timeout=90s
+.PHONY: test-policy-namespace-e2e
+.PHONY: test-firewall-recovery-e2e
+
+test-firewall-recovery-e2e: ## Run real Docker/nft firewall engine recovery (Linux x86_64)
+	@set -eu; test "$$(uname -m)" = x86_64; \
+	test_dir=$$(mktemp -d /tmp/sysbox-firewall-e2e.XXXXXX); \
+	trap 'rm -f "$$test_dir/firewall.test" "$$test_dir/sysbox-netns"; rmdir "$$test_dir"' EXIT; \
+	CGO_ENABLED=0 $(GOENV) $(GO) test -c -tags e2e -o "$$test_dir/firewall.test" ./pkg/runtime; \
+	CGO_ENABLED=0 $(GOENV) $(GO) build -buildvcs=false -o "$$test_dir/sysbox-netns" ./cmd/sysbox-netns; \
+	docker run --rm --network none --pid host --cap-add NET_ADMIN --cap-add SYS_ADMIN --cap-add SYS_PTRACE --security-opt apparmor=unconfined \
+	  --mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \
+	  --mount "type=bind,src=$$test_dir/firewall.test,dst=/firewall.test,readonly" \
+	  --mount "type=bind,src=$$test_dir/sysbox-netns,dst=/usr/local/bin/sysbox-netns,readonly" \
+	  --mount "type=bind,src=$$(command -v nft),dst=/usr/local/bin/nft,readonly" \
+	  --mount "type=bind,src=$$(command -v nsenter),dst=/usr/local/bin/nsenter,readonly" \
+	  --mount type=bind,src=/lib/x86_64-linux-gnu,dst=/lib/x86_64-linux-gnu,readonly \
+	  --mount type=bind,src=/lib64,dst=/lib64,readonly -e SYSBOX_FIREWALL_E2E=1 \
+	  --entrypoint /firewall.test ubuntu:24.04 -test.run '^TestFirewallRealRepositoryRecoveryE2E$$' -test.v -test.timeout=2m
+
+test-policy-namespace-e2e: ## Verify real nft namespace FD isolation in a disposable container (Linux x86_64)
+	@set -eu; test "$$(uname -m)" = x86_64; \
+	test_dir=$$(mktemp -d /tmp/sysbox-policy-fd.XXXXXX); \
+	trap 'rm -f "$$test_dir/network.test" "$$test_dir/sysbox-netns"; rmdir "$$test_dir"' EXIT; \
+	CGO_ENABLED=0 $(GOENV) $(GO) test -c -tags e2e -o "$$test_dir/network.test" ./pkg/provider/network; \
+	CGO_ENABLED=0 $(GOENV) $(GO) build -buildvcs=false -o "$$test_dir/sysbox-netns" ./cmd/sysbox-netns; \
+	docker run --rm --network none --cap-add NET_ADMIN --cap-add SYS_ADMIN --security-opt apparmor=unconfined \
+	  --mount "type=bind,src=$$test_dir/network.test,dst=/network.test,readonly" \
+	  --mount "type=bind,src=$$test_dir/sysbox-netns,dst=/usr/local/bin/sysbox-netns,readonly" \
+	  --mount "type=bind,src=$$(command -v nft),dst=/usr/local/bin/nft,readonly" \
+	  --mount "type=bind,src=$$(command -v nsenter),dst=/usr/local/bin/nsenter,readonly" \
+	  --mount type=bind,src=/lib/x86_64-linux-gnu,dst=/lib/x86_64-linux-gnu,readonly \
+	  --mount type=bind,src=/lib64,dst=/lib64,readonly -e SYSBOX_NETWORK_E2E=1 \
+	  --entrypoint /network.test ubuntu:24.04 -test.run '^TestPolicy(NamespaceFDReplacement|AtomicReplacementRollback|GenerationFencing)E2E$$' -test.v -test.timeout=90s
+
+test-network-generation-e2e: ## Run real network generation tests in a disposable isolated container
+	@set -eu; test_binary=$$(mktemp /tmp/sysbox-network-e2e.XXXXXX); \
+	trap 'rm -f "$$test_binary"' EXIT; \
+	CGO_ENABLED=0 $(GOENV) $(GO) test -c -tags e2e -o "$$test_binary" ./pkg/provider/network; \
+	docker run --rm --network none --cap-add NET_ADMIN --cap-add SYS_ADMIN --security-opt apparmor=unconfined \
+	  --mount "type=bind,src=$$test_binary,dst=/network.test,readonly" -e SYSBOX_NETWORK_E2E=1 \
+	  alpine:3.22 /network.test -test.run '^(TestIsolatedNetworkGenerationRecoveryE2E|TestRootBridgeProxyLifecycleE2E|TestOwnedAttachmentGenerationE2E|TestNetworkBridgeReplacementRejectedE2E|TestAttachmentTargetFencingE2E|TestRootAttachmentRejectsReplacedNetworkNamespaceE2E)$$' -test.v -test.timeout=90s
+
+test-libvirt-generation-e2e: ## Run real libvirt managed-generation effect rejection
+	SYSBOX_LIBVIRT_E2E=1 $(GOENV) $(GO) test -tags e2e ./pkg/provider/libvirt -run '^TestLibvirtRealGenerationEffectsE2E$$' -count=1 -v -timeout=2m
+
+test-docker-generation-e2e: ## Run real Docker managed-generation effect rejection
+	$(GOENV) $(GO) test -tags e2e ./pkg/provider/docker -run '^TestDockerRealGenerationEffectsE2E$$' -count=1 -v -timeout=3m
+
+.PHONY: test-remote-docker-fault-e2e
+test-remote-docker-fault-e2e: ## Real HTTP/Agent/Docker completion-loss and API restart acceptance
+	SYSBOX_REMOTE_DOCKER_E2E=1 $(GOENV) $(GO) test -tags e2e ./pkg/api -run '^TestRemoteDockerCompletionLossRecoveryE2E$$' -count=1 -v -timeout=3m
+
+.PHONY: test-p9-ssh-two-vm
+test-p9-ssh-two-vm: ## Run isolated two-VM managed SSH login and reset acceptance
+	@test -n "$(SYSBOX_P9_LAB_ROOT)" -a -n "$(SYSBOX_CLI_BINARY)" -a -n "$(SYSBOX_GUESTTASK_HELPER)" || { echo 'Set SYSBOX_P9_LAB_ROOT, SYSBOX_CLI_BINARY and SYSBOX_GUESTTASK_HELPER'; exit 2; }
+	python3 scripts/acceptance/ssh_lifecycle.py --root "$(SYSBOX_P9_LAB_ROOT)" --binary "$(SYSBOX_CLI_BINARY)" --helper "$(SYSBOX_GUESTTASK_HELPER)"
+
+.PHONY: test-p9-ssh-reboot
+test-p9-ssh-reboot: ## Reboot dedicated lab VMs and verify managed SSH recovery
+	@test -n "$(SYSBOX_P9_LAB_ROOT)" -a -n "$(SYSBOX_CLI_BINARY)" -a -n "$(SYSBOX_GUESTTASK_HELPER)" || { echo 'Set SYSBOX_P9_LAB_ROOT, SYSBOX_CLI_BINARY and SYSBOX_GUESTTASK_HELPER'; exit 2; }
+	python3 scripts/acceptance/ssh_lifecycle.py --root "$(SYSBOX_P9_LAB_ROOT)" --binary "$(SYSBOX_CLI_BINARY)" --helper "$(SYSBOX_GUESTTASK_HELPER)" --reboot-vms
+
+.PHONY: test-p9-real
+test-p9-real: build-all ## Run implemented real-provider gates; reject skips and missing test matches
+	@set -eu; \
+	test -x "$${SYSBOX_FIRECRACKER_BIN:?set Firecracker binary}"; \
+	test -f "$${SYSBOX_FIRECRACKER_KERNEL:?set Firecracker kernel}"; \
+	test -f "$${SYSBOX_FIRECRACKER_ROOTFS:?set Firecracker rootfs}"; \
+	acceptance_dir=$$(mktemp -d /tmp/sysbox-acceptance.XXXXXX); \
+	trap 'rm -f "$$acceptance_dir/check" "$$acceptance_dir/helper" "$$acceptance_dir/sysbox"; rmdir "$$acceptance_dir"' EXIT; \
+	$(GOENV) $(GO) build -buildvcs=false -o "$$acceptance_dir/check" ./scripts/acceptance; \
+	CGO_ENABLED=0 $(GOENV) $(GO) build -buildvcs=false -o "$$acceptance_dir/helper" ./cmd/sysbox-init; \
+	$(GOENV) $(GO) build -buildvcs=false -o "$$acceptance_dir/sysbox" ./cmd/sysbox; \
+	export GOCACHE="$(GOCACHE)" SYSBOX_GUESTTASK_HELPER="$$acceptance_dir/helper" SYSBOX_CLI_BINARY="$$acceptance_dir/sysbox"; \
+	SYSBOX_REMOTE_DOCKER_E2E=1 SYSBOX_HOST_POWER_E2E=1 "$$acceptance_dir/check" -go "$(GO)" -race -package ./pkg/api -timeout 6m \
+	  -tests TestRemoteDockerGCBatchSequentialRecoveryE2E,TestRemoteDockerAdoptionInspectionE2E,TestRemoteDockerGCDispatchAndLostReceiptE2E,TestRemoteDockerCompletionLossRecoveryE2E,TestRemoteDockerReturnedDestroyRecoveryE2E,TestRemoteDockerColdReturnedDestroyRecoveryE2E,TestRemoteDockerColdResetContinuationE2E,TestRemoteDockerRepeatedResetContinuationE2E,TestRemoteDockerSSHAccessRunE2E,TestRemoteDockerTargetedResetRunE2E,TestRemoteDockerTargetedResetSSHRunE2E,TestHostSupervisorRealTaskStopAndSuccessorE2E,TestHostSupervisorRealNodePowerE2E,TestHostSupervisorRealFileInstallE2E,TestPublicSSHAgentDockerE2E,TestLocalSSHColdReceiptRecoveryE2E; \
+	"$$acceptance_dir/check" -go "$(GO)" -race -package ./cmd/sysbox/commands -tests TestLocalCLIManagedSSHApplyRotateDestroyE2E; \
+	"$$acceptance_dir/check" -go "$(GO)" -race -package ./pkg/sshaccess -tests TestRealSSHDDeploymentReloadRecoveryE2E,TestRealSSHDEffectiveConfigurationConflictE2E; \
+	SYSBOX_DOCKER_ADOPTION_E2E=1 SYSBOX_REMOTE_DOCKER_E2E=1 "$$acceptance_dir/check" -go "$(GO)" -race -package ./pkg/provider/docker -tests TestDockerAdoptionColdLifecycleE2E,TestDockerProductionSSHAccessE2E,TestDockerRealLostDeleteResponseE2E,TestDockerRealGCExactAbsenceE2E; \
+	"$$acceptance_dir/check" -go "$(GO)" -package ./pkg/provider/firecracker -timeout 10m \
+	  -tests TestFirecrackerRealGenerationLifecycleE2E,TestFirecrackerRealResetGenerationAndColdAdoptionE2E,TestFirecrackerRealCrossProcessRecoveryE2E,TestFirecrackerRealControllerCrashRecoveryE2E; \
+	SYSBOX_LIBVIRT_E2E=1 "$$acceptance_dir/check" -go "$(GO)" -package ./pkg/provider/libvirt -tests TestLibvirtUnownedAdoptionColdLifecycleE2E,TestLibvirtRealGenerationEffectsE2E
+
 .PHONY: help build build-all test docs-test test-e2e test-docker-launch test-docker-network-alias test-privileged-compile test-privileged test-privileged-container prepare-libvirt-cloud-image test-heterogeneous-matrix test-heterogeneous-reset test-windows-tools prepare-windows10-media build-windows10-image test-windows10-libvirt release-test release-workflow-test release-build release-verify lint ci clean \
 	cli api \
 	cli-help cli-validate cli-plan cli-apply cli-destroy cli-output cli-state \
@@ -53,6 +194,7 @@ help: ## Show command groups
 	@echo "  make test           Run unit tests"
 	@echo "  make lint           Run go vet"
 	@echo "  make test-e2e       Run API e2e smoke test against make api deploy-full"
+	@echo "  make test-firecracker-e2e  Run direct Firecracker/KVM lifecycle acceptance"
 	@echo "  make test-docker-launch  Run Docker ENTRYPOINT/CMD override acceptance"
 	@echo "  make test-docker-network-alias  Run Docker managed-network DNS alias acceptance"
 	@echo "  make test-privileged-compile  Compile privileged recovery tests without running them"
@@ -69,11 +211,18 @@ build: $(INITDIR)/sysbox-init.linux-$(ARCH).bin ## Build bin/sysbox
 	$(GOENV) CGO_ENABLED=0 $(GO) build -buildvcs=false -o $(BINARY) ./cmd/sysbox
 
 build-all: ## Build sysbox-init for amd64 and arm64
-	$(GOENV) GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -o $(INITDIR)/sysbox-init.linux-amd64.bin ./cmd/sysbox-init
-	$(GOENV) GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -o $(INITDIR)/sysbox-init.linux-arm64.bin ./cmd/sysbox-init
+	$(MAKE) $(INITDIR)/sysbox-init.linux-amd64.bin $(INITDIR)/sysbox-init.linux-arm64.bin
 
-$(INITDIR)/sysbox-init.linux-%.bin: cmd/sysbox-init/main.go cmd/sysbox-init/network.go cmd/sysbox-init/server.go
-	$(GOENV) GOOS=linux GOARCH=$* CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -o $@ ./cmd/sysbox-init
+.PHONY: force-guest-build
+force-guest-build:
+
+# Go's cache tracks all transitive sources. Do not maintain a partial source
+# list here: missing a guesttask dependency would silently embed an old helper.
+$(INITDIR)/sysbox-init.linux-%.bin: force-guest-build
+	@set -eu; guest_build=$$(mktemp -d /tmp/sysbox-init-build.XXXXXX); \
+	trap 'rm -f "$$guest_build/sysbox-init"; rmdir "$$guest_build"' EXIT; \
+	$(GOENV) GOOS=linux GOARCH=$* CGO_ENABLED=0 $(GO) build -buildvcs=false -ldflags="-s -w" -o "$$guest_build/sysbox-init" ./cmd/sysbox-init; \
+	mv "$$guest_build/sysbox-init" "$@"
 
 test: ## Run unit tests
 	$(GOENV) $(GO) test ./...
@@ -83,6 +232,9 @@ docs-test: ## Validate canonical documentation structure and links
 
 test-e2e: ## Run black-box API e2e tests
 	bash tests/e2e/api_smoke.sh
+
+test-firecracker-e2e: ## Run real Firecracker/KVM generation fencing E2E (requires /dev/kvm)
+	$(GOENV) $(GO) test -tags e2e -v ./pkg/provider/firecracker -run '^TestFirecrackerReal.*E2E$$' -count=1 -timeout=10m
 
 test-docker-launch: ## Run Docker launch override lifecycle acceptance
 	bash tests/e2e/docker_launch_override.sh
@@ -94,7 +246,7 @@ test-privileged-compile: ## Compile privileged recovery tests without running th
 	$(GOENV) $(GO) test -tags e2e -run '^$$' ./pkg/api ./pkg/provider/network ./pkg/provider/docker
 
 test-privileged: ## Run privileged recovery tests (requires root/CAP_NET_ADMIN)
-	$(GOENV) $(GO) test -tags e2e -v -run '^Test(Checkpoint|OwnedPolicy|DockerOwnedPolicy).*E2E$$' ./pkg/api ./pkg/provider/network ./pkg/provider/docker
+	$(GOENV) $(GO) test -tags e2e -v -run '^Test(OwnedPolicy|DockerOwnedPolicy).*E2E$$' ./pkg/provider/network ./pkg/provider/docker
 
 test-privileged-container: ## Run privileged acceptance tests through Docker
 	bash tests/e2e/privileged_container.sh

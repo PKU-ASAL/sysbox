@@ -75,7 +75,7 @@ func wireNICsWithHook(ctx context.Context, nicDriver driver.NIC, st *state.State
 		} else if spec.AliasesExplicit {
 			return nil, fmt.Errorf("node %s attachment %q: network aliases require a Docker-managed network", owner, spec.Name)
 		}
-		request := driver.AttachmentRequest{Name: spec.Name, Network: netAddr, MAC: spec.MAC, IPPrefixes: []string{spec.IP}, Gateway: spec.Gateway, Aliases: aliases, NetworkState: networkState}
+		request := driver.AttachmentRequest{NetworkIdentity: attachmentNetworkIdentity(*netState), Name: spec.Name, Network: netAddr, MAC: spec.MAC, IPPrefixes: []string{spec.IP}, Gateway: spec.Gateway, Aliases: aliases, NetworkState: networkState}
 		prepared = append(prepared, preparedNIC{spec: spec, request: request})
 	}
 
@@ -115,6 +115,9 @@ func runNICWireHook(hook NICWireHook, phase string, details map[string]any, fn f
 }
 
 func attachmentRequestFromState(st *state.State, attachment state.Attachment) (driver.AttachmentRequest, error) {
+	if st == nil {
+		return driver.AttachmentRequest{}, fmt.Errorf("topology state required to observe attachment %s network %s", attachment.Name, attachment.Network)
+	}
 	network := st.FindResource(attachment.Network)
 	if network == nil {
 		return driver.AttachmentRequest{}, fmt.Errorf("network %s not found for attachment %s", attachment.Network, attachment.Name)
@@ -123,8 +126,12 @@ func attachmentRequestFromState(st *state.State, attachment state.Attachment) (d
 	if err != nil {
 		return driver.AttachmentRequest{}, err
 	}
-	return driver.AttachmentRequest{Name: attachment.Name, Network: attachment.Network, MAC: attachment.MAC,
+	return driver.AttachmentRequest{NetworkIdentity: attachmentNetworkIdentity(*network), Name: attachment.Name, Network: attachment.Network, MAC: attachment.MAC,
 		IPPrefixes: append([]string(nil), attachment.IPPrefixes...), Gateway: attachment.Gateway, Aliases: append([]string(nil), attachment.Aliases...), NetworkState: raw}, nil
+}
+
+func attachmentNetworkIdentity(network state.Resource) substrate.OperationIdentity {
+	return substrate.OperationIdentity{ActionID: "attachment-target", OwnerUID: network.OwnerUID, TopologyUID: network.OwnerUID, ResourceUID: network.ResourceUID, Generation: network.Generation}
 }
 
 func networkAttachmentState(network state.Resource) (json.RawMessage, error) {

@@ -1,22 +1,27 @@
 package commands
 
 import (
-	"fmt"
+	"context"
 	"path/filepath"
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 )
 
 func loadWorkspaceWithRoot() (*graph.Graph, *state.Manager, *state.State, *config.Root, *hcl.EvalContext, error) {
-	return runtime.LoadWorkspace(flagConfigFile, statePath())
+	mgr, err := newManager()
+	if err != nil {
+		return nil, nil, nil, nil, nil, err
+	}
+	return runtime.LoadWorkspaceWithManager(flagConfigFile, mgr)
 }
 
 func loadWorkspace() (*graph.Graph, *state.Manager, *state.State, error) {
-	g, mgr, s, _, _, err := runtime.LoadWorkspace(flagConfigFile, statePath())
+	g, mgr, s, _, _, err := loadWorkspaceWithRoot()
 	return g, mgr, s, err
 }
 
@@ -29,18 +34,15 @@ func statePath() string {
 // newManager creates a state.Manager using the --backend flag if set,
 // otherwise the plain --state path.
 func newManager() (*state.Manager, error) {
-	if flagBackend != "" {
-		b, err := state.ParseBackendURL(flagBackend)
-		if err != nil {
-			return nil, fmt.Errorf("--backend: %w", err)
-		}
-		manager := state.NewManagerWithBackend(b)
-		manager.AllowUnsafeMutation(flagAllowUnsafeState)
-		return manager, nil
+	backend, path, err := persistence.ResolveLocation(flagBackend, flagStateFile, localTopology())
+	if err != nil {
+		return nil, err
 	}
-	manager := state.NewManager(flagStateFile)
-	manager.AllowUnsafeMutation(flagAllowUnsafeState)
-	return manager, nil
+	repo, err := persistence.OpenConfigured(context.Background(), backend, path)
+	if err != nil {
+		return nil, err
+	}
+	return state.NewManagerWithBackend(repo.StateBackend(localTopology())), nil
 }
 
 func localRunsDir() string {
@@ -56,6 +58,9 @@ func localRunsDir() string {
 }
 
 func localTopology() string {
+	if selected, err := persistence.ConfiguredTopology(flagBackend, ""); err == nil && selected != "" {
+		return selected
+	}
 	dir := filepath.Base(filepath.Dir(flagStateFile))
 	if dir == "." || dir == string(filepath.Separator) || dir == "" {
 		return "local"

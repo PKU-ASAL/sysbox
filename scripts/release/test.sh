@@ -18,6 +18,9 @@ done
 
 expected_tags=$'registry.example/oslab/sysbox:v0.3.4\nregistry.example/oslab/sysbox:0.3.4\nregistry.example/oslab/sysbox:0.3\nregistry.example/oslab/sysbox:0\nregistry.example/oslab/sysbox:latest'
 [[ "$(oci_tags v0.3.4 registry.example/oslab/sysbox)" == "${expected_tags}" ]] || fail "OCI tag set is incorrect"
+for arg in GO_BUILDER_IMAGE ALPINE_IMAGE DOCKER_CLI_IMAGE DEBIAN_IMAGE; do
+  grep -Eq "^ARG ${arg}(=|$)" "${repo_root}/Dockerfile" || fail "Dockerfile is missing ${arg}"
+done
 for arg in VERSION REVISION CREATED SOURCE_URL; do
   grep -Eq "^ARG ${arg}(=|$)" "${repo_root}/Dockerfile" || fail "Dockerfile is missing ARG ${arg}"
 done
@@ -77,11 +80,18 @@ for arch in amd64 arm64; do
   archive="sysbox_v0.1.0_linux_${arch}.tar.gz"
   cmp "${tmp}/first/${archive}" "${tmp}/second/${archive}"
   members="$(tar -tzf "${tmp}/first/${archive}" | sort)"
-  expected=$'LICENSE\nREADME.md\nbuild-metadata.json\nsysbox\nsysbox-init'
+  expected=$'LICENSE\nREADME.md\nbuild-metadata.json\nsysbox\nsysbox-init\nsysbox-netns'
   [[ "${members}" == "${expected}" ]] || fail "unexpected ${arch} archive members: ${members}"
   extracted="${tmp}/extracted-${arch}"
   mkdir -p "${extracted}"
   tar -xzf "${tmp}/first/${archive}" -C "${extracted}" sysbox sysbox-init
+  python3 - "${extracted}" <<'PYTEST'
+import pathlib
+import sys
+root = pathlib.Path(sys.argv[1])
+assert (root / 'sysbox-init').read_bytes() in (root / 'sysbox').read_bytes(), \
+    'release CLI embeds a different helper than the shipped executable'
+PYTEST
   sysbox_sha="$(sha256sum "${extracted}/sysbox" | awk '{print $1}')"
   init_sha="$(sha256sum "${extracted}/sysbox-init" | awk '{print $1}')"
   jq -e --arg arch "${arch}" --arg sysbox_sha "${sysbox_sha}" --arg init_sha "${init_sha}" \

@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 
@@ -65,6 +66,46 @@ func TestNetworkResourceHandlerPlanDiff(t *testing.T) {
 	require.True(t, ok)
 }
 
+func TestNetworkPlanDiffRootRoutesAfterStateRoundTrip(t *testing.T) {
+	route := config.RouteConfig{Destination: "10.30.0.0/16", Via: "10.10.0.2"}
+	changed := config.RouteConfig{Destination: "10.40.0.0/16", Via: "10.10.0.2"}
+	for _, tc := range []struct {
+		name          string
+		before, after []config.RouteConfig
+		want          controlplane.PlanActionType
+	}{
+		{name: "omitted", want: controlplane.PlanActionNoop},
+		{name: "empty to omitted", before: []config.RouteConfig{}, want: controlplane.PlanActionNoop},
+		{name: "omitted to empty", after: []config.RouteConfig{}, want: controlplane.PlanActionNoop},
+		{name: "unchanged route", before: []config.RouteConfig{route}, after: []config.RouteConfig{route}, want: controlplane.PlanActionNoop},
+		{name: "add route", after: []config.RouteConfig{route}, want: controlplane.PlanActionReplace},
+		{name: "remove route", before: []config.RouteConfig{route}, want: controlplane.PlanActionReplace},
+		{name: "change route", before: []config.RouteConfig{route}, after: []config.RouteConfig{changed}, want: controlplane.PlanActionReplace},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			n := &graph.Node{Address: address.Resource("sysbox_network", "dmz"), Data: &config.NetworkConfig{CIDR: "10.10.0.0/24", RootRoutes: tc.before}}
+			attrs := map[string]any{}
+			require.NoError(t, setDesiredHash(n, attrs))
+			raw, err := json.Marshal(state.Resource{Address: n.Address, Driver: "network", Attributes: state.MustAttributes(attrs)})
+			require.NoError(t, err)
+			var persisted state.Resource
+			require.NoError(t, json.Unmarshal(raw, &persisted))
+			n.Data = &config.NetworkConfig{CIDR: "10.10.0.0/24", RootRoutes: tc.after}
+			change, err := (NetworkResourceHandler{}).PlanDiff(n, &persisted)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, change.Action)
+			if tc.want == controlplane.PlanActionNoop {
+				require.Empty(t, change.Changes)
+			} else {
+				require.NotEmpty(t, change.Changes)
+				for _, field := range change.Changes {
+					require.Contains(t, field.Path, "root_routes")
+				}
+			}
+		})
+	}
+}
+
 func TestNetworkResourceHandlerRegistered(t *testing.T) {
 	p, ok := GetResourceHandler("sysbox_network")
 	require.True(t, ok)
@@ -81,13 +122,16 @@ func stubNetworkOps(t *testing.T) func() {
 
 type fakeLinuxNetwork struct{}
 
+func (fakeLinuxNetwork) ObserveIsolated(context.Context, driver.IsolatedNetworkSpec) (driver.IsolatedNetworkObservation, error) {
+	return driver.IsolatedNetworkObservation{Exists: true, Healthy: true}, nil
+}
+
 func (fakeLinuxNetwork) CreateIsolated(context.Context, driver.IsolatedNetworkSpec) error { return nil }
 func (fakeLinuxNetwork) DeleteIsolated(context.Context, driver.IsolatedNetworkSpec) error { return nil }
 func (fakeLinuxNetwork) NetworkHealthy(context.Context, driver.IsolatedNetworkSpec) (bool, string) {
 	return true, ""
 }
-func (fakeLinuxNetwork) LinkHealthy(context.Context, string, string) bool               { return true }
-func (fakeLinuxNetwork) DeleteAttachment(context.Context, string, string, string) error { return nil }
+func (fakeLinuxNetwork) LinkHealthy(context.Context, string, string) bool { return true }
 
 // failingNetworkDriver is a docker Network driver whose RemoveManagedNetwork
 // always fails, so a test can assert the runtime does not silently drop the

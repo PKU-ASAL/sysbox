@@ -3,6 +3,7 @@ package firecracker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,115 +11,158 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/oslab/sysbox/pkg/artifact"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
-const firecrackerResetHandleVersion = 1
+const firecrackerResetHandleVersion = 2
 
 type resetHandleState struct {
-	Version        int          `json:"version"`
-	OldID          string       `json:"old_id"`
-	OldVMDir       string       `json:"old_vm_dir"`
-	OldPID         int          `json:"old_pid,omitempty"`
-	OldPIDStart    string       `json:"old_pid_start,omitempty"`
-	OldSocket      string       `json:"old_socket,omitempty"`
-	NewID          string       `json:"new_id"`
-	BaselinePath   string       `json:"baseline_path"`
-	BaselineDigest string       `json:"baseline_digest"`
-	NewHandle      *HandleState `json:"new_handle,omitempty"`
+	OldProcess     processIdentity             `json:"old_process"`
+	NewIdentity    substrate.OperationIdentity `json:"new_identity"`
+	Version        int                         `json:"version"`
+	OldID          string                      `json:"old_id"`
+	OldVMDir       string                      `json:"old_vm_dir"`
+	OldPID         int                         `json:"old_pid,omitempty"`
+	OldPIDStart    string                      `json:"old_pid_start,omitempty"`
+	OldSocket      string                      `json:"old_socket,omitempty"`
+	NewID          string                      `json:"new_id"`
+	BaselinePath   string                      `json:"baseline_path"`
+	BaselineDigest string                      `json:"baseline_digest"`
+	NewHandle      *HandleState                `json:"new_handle,omitempty"`
 }
 
-func (s *Substrate) PrepareReset(_ context.Context, request substrate.ResetRequest) (substrate.ResetHandle, error) {
+func (s *Substrate) PrepareReset(ctx context.Context, request substrate.ResetRequest) (substrate.ResetHandle, error) {
 	if request.Baseline.Kind != substrate.ArtifactRootFS || request.Node.Image.ID == "" || request.Node.Image.Identity.Digest != request.Baseline.Digest {
 		return substrate.ResetHandle{}, fmt.Errorf("firecracker reset requires a pinned rootfs baseline")
-	}
-	current, ok := request.Current.Provider.(*HandleState)
-	if !ok || current == nil {
-		return substrate.ResetHandle{}, fmt.Errorf("firecracker reset requires typed current handle state")
-	}
-	if err := s.validateOwnedVMDir(request.Current.ID, current.VMDir); err != nil {
-		return substrate.ResetHandle{}, err
 	}
 	if cfg, ok := request.Node.ProviderConfig.(*Config); ok && cfg != nil && cfg.Rootfs != "" && filepath.Clean(cfg.Rootfs) != filepath.Clean(request.Node.Image.ID) {
 		return substrate.ResetHandle{}, fmt.Errorf("firecracker reset rootfs override does not match pinned baseline")
 	}
-	anchor := readProcessAnchor(current.PIDFile)
-	oldPID, oldPIDStart, oldSocket := current.PID, current.PIDStart, current.Socket
-	if anchor.PID > 0 {
-		if anchor.VMID == "" || anchor.StartTime == "" || anchor.Socket == "" || anchor.VMID != request.Current.ID {
-			return substrate.ResetHandle{}, fmt.Errorf("firecracker reset refuses incomplete or mismatched old process anchor")
+	target, supplied := substrate.OperationIdentityFromContext(ctx)
+	if !supplied {
+		return substrate.ResetHandle{}, fmt.Errorf("firecracker reset requires durable target identity")
+	}
+	oldCtx := ctx
+	if supplied {
+		current, _ := request.Current.Provider.(*HandleState)
+		if err := validateResetTarget(target, current); err != nil {
+			return substrate.ResetHandle{}, err
 		}
-		oldPID, oldPIDStart, oldSocket = anchor.PID, anchor.StartTime, anchor.Socket
+		old := target
+		old.Generation = current.Generation
+		oldCtx = substrate.WithOperationIdentity(ctx, old)
+	}
+	_, m, release, err := s.lockedManifest(oldCtx, request.Current)
+	if err != nil {
+		return substrate.ResetHandle{}, err
+	}
+	defer release()
+	if err := recoverLaunch(m); err != nil {
+		return substrate.ResetHandle{}, err
+	}
+	if _, _, err := probeProcess(m.Process); err != nil {
+		return substrate.ResetHandle{}, err
 	}
 	generation := uuid.NewString()
-	state := &resetHandleState{
-		Version: firecrackerResetHandleVersion, OldID: request.Current.ID, OldVMDir: current.VMDir,
-		OldPID: oldPID, OldPIDStart: oldPIDStart, OldSocket: oldSocket,
-		NewID: "fc-r" + generation[:8], BaselinePath: request.Node.Image.ID,
-		BaselineDigest: request.Baseline.Digest,
-	}
+	state := &resetHandleState{Version: firecrackerResetHandleVersion, OldID: request.Current.ID, OldVMDir: m.Handle.VMDir, OldPID: m.Process.PID, OldPIDStart: m.Process.StartTime, OldSocket: m.Handle.Socket, OldProcess: m.Process, NewID: "fc-r" + generation[:8], BaselinePath: request.Node.Image.ID, BaselineDigest: request.Baseline.Digest, NewIdentity: target}
 	return substrate.ResetHandle{Provider: state, Request: request}, nil
 }
-
 func (s *Substrate) DestroyReset(ctx context.Context, handle substrate.ResetHandle) error {
 	state, request, err := firecrackerResetState(handle)
 	if err != nil {
 		return err
 	}
-	if err := s.validateOwnedVMDir(state.OldID, state.OldVMDir); err != nil {
+	if request.Current.ID != state.OldID {
+		return fmt.Errorf("firecracker reset old identity conflict")
+	}
+	dir, err := s.manifestDirectory(request.Current)
+	if err != nil {
 		return err
 	}
-	if _, statErr := os.Stat(state.OldVMDir); os.IsNotExist(statErr) {
-		if state.OldPID > 0 && processMatches(state.OldPID, state.OldPIDStart) {
-			return fmt.Errorf("firecracker reset old process is still running after VM directory removal")
+	if state.OldVMDir != dir {
+		return fmt.Errorf("firecracker reset old directory identity conflict")
+	}
+	oldCtx, _, err := resetOperationContexts(ctx, state, request)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Lstat(state.OldVMDir); os.IsNotExist(err) {
+		live, _, probeErr := probeProcess(state.OldProcess)
+		if probeErr != nil {
+			return probeErr
+		}
+		if live {
+			return fmt.Errorf("firecracker reset old process still running after directory removal")
 		}
 		return nil
-	} else if statErr != nil {
-		return statErr
 	}
-	anchor := readProcessAnchor(filepath.Join(state.OldVMDir, "firecracker.pid"))
-	if state.OldPID > 0 {
-		if state.OldPIDStart == "" || state.OldSocket == "" || anchor.PID != state.OldPID || anchor.StartTime != state.OldPIDStart || anchor.VMID != state.OldID || anchor.Socket != state.OldSocket {
-			return fmt.Errorf("firecracker reset old process ownership anchor mismatch")
-		}
-	} else if anchor.PID > 0 {
-		return fmt.Errorf("firecracker reset found unexpected old process anchor")
-	}
-	if err := s.DestroyNode(ctx, request.Current); err != nil {
-		return err
-	}
-	if (state.OldPID > 0 && processMatches(state.OldPID, state.OldPIDStart)) || (anchor.PID > 0 && processMatches(anchor.PID, anchor.StartTime)) {
-		return fmt.Errorf("firecracker reset old process is still running")
-	}
-	if _, err := os.Stat(state.OldVMDir); err == nil {
-		return fmt.Errorf("firecracker reset old VM directory still exists")
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-	return nil
+	return s.DestroyNode(oldCtx, request.Current)
 }
-
 func (s *Substrate) ApplyReset(ctx context.Context, handle substrate.ResetHandle) (substrate.NodeHandle, error) {
 	state, request, err := firecrackerResetState(handle)
 	if err != nil {
 		return substrate.NodeHandle{}, err
 	}
-	resolved, err := artifact.New().ResolveIdentity(artifact.IdentitySpec{Kind: substrate.ArtifactRootFS, Source: state.BaselinePath, ExpectedDigest: state.BaselineDigest, Architecture: request.Baseline.Architecture, GuestFamily: request.Baseline.GuestFamily})
+	resolved, err := artifact.NewWithContext(ctx).ResolveIdentity(artifact.IdentitySpec{Kind: substrate.ArtifactRootFS, Source: state.BaselinePath, ExpectedDigest: state.BaselineDigest, Architecture: request.Baseline.Architecture, GuestFamily: request.Baseline.GuestFamily})
 	if err != nil || resolved.Identity.Digest != state.BaselineDigest {
 		return substrate.NodeHandle{}, fmt.Errorf("firecracker reset baseline changed: %w", err)
 	}
-	if state.NewHandle != nil {
-		anchor := readProcessAnchor(state.NewHandle.PIDFile)
-		if anchor.PID > 0 && anchor.VMID == state.NewID && processMatches(anchor.PID, anchor.StartTime) {
-			state.NewHandle.PID = anchor.PID
-			state.NewHandle.PIDStart = anchor.StartTime
-			state.NewHandle.Ready = true
-		}
-		state.NewHandle.NICCount = 0
-		handle := firecrackerNodeHandle(state.NewID, state.NewHandle)
-		s.restoreResetVMProcess(state.NewID, state.NewHandle)
-		return handle, nil
+	_, targetCtx, err := resetOperationContexts(ctx, state, request)
+	if err != nil {
+		return substrate.NodeHandle{}, err
 	}
+	ctx = targetCtx
+	if state.NewHandle != nil {
+		h := firecrackerNodeHandle(state.NewID, state.NewHandle)
+		_, m, release, err := s.lockedManifest(ctx, h)
+		if err != nil {
+			return substrate.NodeHandle{}, err
+		}
+		defer release()
+		if err := recoverLaunch(m); err != nil {
+			return substrate.NodeHandle{}, err
+		}
+		if _, _, err := probeProcess(m.Process); err != nil {
+			return substrate.NodeHandle{}, err
+		}
+		return manifestHandle(m), nil
+	}
+	// Creation may have committed its manifest before the caller received the
+	// replacement handle. Discover that exact generation before creating again.
+	var recovered substrate.NodeHandle
+	if state.NewIdentity.TopologyUID != "" {
+		recovered, err = s.DiscoverManagedNode(ctx, state.NewIdentity, request.Node.Name)
+		if err != nil && !driver.IsCategory(err, driver.ErrorNotFound) {
+			return substrate.NodeHandle{}, err
+		}
+	} else {
+		candidate := substrate.NodeHandle{ID: state.NewID, Generation: state.NewIdentity.Generation}
+		_, m, release, lookupErr := s.lockedManifest(ctx, candidate)
+		if lookupErr == nil {
+			recoveryErr := recoverLaunch(m)
+			if recoveryErr == nil {
+				_, _, recoveryErr = probeProcess(m.Process)
+			}
+			if recoveryErr == nil {
+				recovered = manifestHandle(m)
+			}
+			release()
+			if recoveryErr != nil {
+				return substrate.NodeHandle{}, recoveryErr
+			}
+		} else if !errors.Is(lookupErr, errGenerationAbsent) {
+			return substrate.NodeHandle{}, lookupErr
+		}
+	}
+	if recovered.ID != "" {
+		if recovered.ID != state.NewID {
+			return substrate.NodeHandle{}, fmt.Errorf("firecracker reset replacement identity conflict")
+		}
+		state.NewHandle = recovered.Provider.(*HandleState)
+		return recovered, nil
+	}
+
 	created, err := s.createNodeWithID(ctx, request.Node, state.NewID)
 	if err != nil {
 		return substrate.NodeHandle{}, err
@@ -132,10 +176,15 @@ func (s *Substrate) ApplyReset(ctx context.Context, handle substrate.ResetHandle
 }
 
 func (s *Substrate) ObserveReset(ctx context.Context, handle substrate.ResetHandle) (substrate.ResetObservation, error) {
-	state, _, err := firecrackerResetState(handle)
+	state, request, err := firecrackerResetState(handle)
 	if err != nil {
 		return substrate.ResetObservation{}, err
 	}
+	_, targetCtx, err := resetOperationContexts(ctx, state, request)
+	if err != nil {
+		return substrate.ResetObservation{}, err
+	}
+	ctx = targetCtx
 	observation := substrate.ResetObservation{Phase: substrate.ResetPhaseApplying, OldExternalID: state.OldID, NewExternalID: state.NewID, BaselineDigest: state.BaselineDigest}
 	if state.OldVMDir != "" {
 		if _, err := os.Stat(state.OldVMDir); err == nil {
@@ -164,20 +213,34 @@ func (s *Substrate) ObserveReset(ctx context.Context, handle substrate.ResetHand
 	return observation, nil
 }
 
-func (s *Substrate) CleanupReset(_ context.Context, handle substrate.ResetHandle) error {
-	state, _, err := firecrackerResetState(handle)
-	if err != nil {
-		return err
-	}
-	if state.OldVMDir == "" {
-		return nil
-	}
-	if err := s.validateOwnedVMDir(state.OldID, state.OldVMDir); err != nil {
-		return err
-	}
-	return os.RemoveAll(state.OldVMDir)
+func (s *Substrate) CleanupReset(ctx context.Context, handle substrate.ResetHandle) error {
+	return s.DestroyReset(ctx, handle)
 }
 
+// Runtime authorizes a reset using the replacement generation. Old resources
+// retain their identity throughout recovery; never rewrite the caller's handle
+// or loosen the ordinary manifest generation check to accommodate reset.
+func validateResetTarget(target substrate.OperationIdentity, current *HandleState) error {
+	if current == nil || current.Version != manifestVersion || current.OwnerUID == "" || current.ResourceUID == "" || current.Generation < 1 ||
+		target.ActionID == "" || target.OwnerUID != current.OwnerUID || target.ResourceUID != current.ResourceUID || target.TopologyUID != current.TopologyUID ||
+		target.Generation <= current.Generation || target.Generation-current.Generation != 1 {
+		return fmt.Errorf("firecracker reset target identity must match current owner/resource and generation + 1")
+	}
+	return nil
+}
+
+func resetOperationContexts(ctx context.Context, state *resetHandleState, request substrate.ResetRequest) (context.Context, context.Context, error) {
+	current, _ := request.Current.Provider.(*HandleState)
+	if err := validateResetTarget(state.NewIdentity, current); err != nil {
+		return nil, nil, err
+	}
+	if incoming, ok := substrate.OperationIdentityFromContext(ctx); ok && incoming != state.NewIdentity {
+		return nil, nil, fmt.Errorf("firecracker reset operation identity differs from durable target identity")
+	}
+	old := state.NewIdentity
+	old.Generation = current.Generation
+	return substrate.WithOperationIdentity(ctx, old), substrate.WithOperationIdentity(ctx, state.NewIdentity), nil
+}
 func (s *Substrate) MarshalResetHandle(handle substrate.ResetHandle) (json.RawMessage, error) {
 	state, ok := handle.Provider.(*resetHandleState)
 	if !ok || state == nil {
@@ -220,23 +283,37 @@ func cloneHandleState(state *HandleState) *HandleState {
 		return nil
 	}
 	cloned := *state
+	cloned.Attachments = append([]managedAttachment(nil), state.Attachments...)
 	return &cloned
 }
 
 func firecrackerNodeHandle(id string, state *HandleState) substrate.NodeHandle {
 	conn := substrate.ConnInfo{}
 	if state.VsockUDS != "" {
-		conn = substrate.ConnInfo{Kind: substrate.ConnKindVsock, Endpoint: fmt.Sprintf("%s:%d", state.VsockUDS, state.VsockPort)}
+		conn = substrate.ConnInfo{Kind: substrate.ConnKindVsock, Endpoint: fmt.Sprintf("%s:%d", state.VsockUDS, state.VsockPort), User: state.SSHUser}
 	}
-	return substrate.NodeHandle{ID: id, Provider: state, Conn: conn}
+	return substrate.NodeHandle{ID: id, Generation: state.Generation, Provider: state, Conn: conn}
 }
 
 func (s *Substrate) restoreResetVMProcess(id string, state *HandleState) {
-	vmMu.Lock()
-	defer vmMu.Unlock()
-	if _, exists := vmStore[id]; exists {
+	h := firecrackerNodeHandle(id, state)
+	vm, m, release, err := s.lockedManifest(context.Background(), h)
+	if err != nil {
 		return
 	}
-	started := state.PID > 0 && processMatches(state.PID, state.PIDStart)
-	vmStore[id] = &vmProcess{vmID: id, socket: state.Socket, rootfs: filepath.Join(state.VMDir, "rootfs.ext4"), cfgPath: state.ConfigPath, pid: state.PID, startTime: state.PIDStart, netnsName: state.NetnsName, started: started}
+	defer release()
+	if err := recoverLaunch(m); err != nil {
+		return
+	}
+	live, _, err := probeProcess(m.Process)
+	if err != nil {
+		return
+	}
+	vm.mu.Lock()
+	defer vm.mu.Unlock()
+	if vm.cmd != nil {
+		return
+	}
+	vm.socket, vm.cfgPath, vm.rootfs = m.Handle.Socket, m.Handle.ConfigPath, filepath.Join(m.Handle.VMDir, "rootfs.ext4")
+	vm.pid, vm.startTime, vm.netnsName, vm.started = m.Process.PID, m.Process.StartTime, m.Handle.NetnsName, live
 }

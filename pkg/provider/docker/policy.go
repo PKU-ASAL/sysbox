@@ -15,22 +15,28 @@ import (
 
 	"github.com/oslab/sysbox/pkg/driver"
 	networkprovider "github.com/oslab/sysbox/pkg/provider/network"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 type dockerPolicyTarget struct {
-	ContainerID   string              `json:"container_id"`
-	Bindings      map[string]string   `json:"bindings"`
-	AttachmentIPs map[string][]string `json:"attachment_ips,omitempty"`
+	Identity      substrate.OperationIdentity `json:"-"`
+	ContainerID   string                      `json:"container_id"`
+	Bindings      map[string]string           `json:"bindings"`
+	AttachmentIPs map[string][]string         `json:"attachment_ips,omitempty"`
 }
 
 func decodeDockerPolicyTarget(target driver.PolicyTarget) (dockerPolicyTarget, error) {
 	var state dockerPolicyTarget
+	if err := target.Validate(); err != nil {
+		return state, err
+	}
 	if err := json.Unmarshal(target.State, &state); err != nil {
 		return state, driver.Wrap(driver.ErrorInvalidState, "docker", "decode policy target", err)
 	}
 	if state.ContainerID == "" {
 		return state, driver.Wrap(driver.ErrorInvalidState, "docker", "policy target container_id is required", nil)
 	}
+	state.Identity = target.Identity
 	if state.Bindings == nil {
 		state.Bindings = map[string]string{}
 	}
@@ -42,24 +48,66 @@ func (s *Substrate) ApplyRuleset(ctx context.Context, target driver.PolicyTarget
 	if err != nil {
 		return driver.RulesetObservation{}, err
 	}
-	pid, err := s.policyTargetPID(ctx, state.ContainerID)
+	ns, err := s.policyTargetNamespace(ctx, state)
 	if err != nil {
 		return driver.RulesetObservation{}, err
 	}
-	netnsPath := fmt.Sprintf("/proc/%d/ns/net", pid)
 
 	// Resolve attachment IPs to guest devices by listing interfaces inside the
 	// container netns. Interface listing uses vishvananda/netlink (which carries
 	// a socket deadline) rather than the nftables netlink conn that was removed
 	// from the firewall path.
-	ns, err := os.Open(netnsPath)
+	defer ns.Close()
+	if err := resolvePolicyBindings(ns, &state); err != nil {
+		return driver.RulesetObservation{}, err
+	}
+	if err := validatePolicyForwarding(ns, spec); err != nil {
+		return driver.RulesetObservation{}, err
+	}
+	observation, err := networkprovider.ApplyManagedRuleset(ctx, ns, target.Policy, spec, state.Bindings)
 	if err != nil {
-		return driver.RulesetObservation{}, driver.Wrap(driver.ErrorUnavailable, "docker", "open container network namespace", err)
+		return driver.RulesetObservation{}, err
+	}
+	return observation, nil
+}
+
+func (s *Substrate) DiscoverRuleset(ctx context.Context, target driver.PolicyTarget, spec driver.RulesetSpec) (driver.RulesetObservation, error) {
+	state, err := decodeDockerPolicyTarget(target)
+	if err != nil {
+		return driver.RulesetObservation{}, err
+	}
+	ns, err := s.policyTargetNamespace(ctx, state)
+	if err != nil {
+		return driver.RulesetObservation{}, err
 	}
 	defer ns.Close()
+	if err := resolvePolicyBindings(ns, &state); err != nil {
+		return driver.RulesetObservation{}, err
+	}
+	if err := validatePolicyForwarding(ns, spec); err != nil {
+		return driver.RulesetObservation{}, err
+	}
+	return networkprovider.DiscoverManagedRuleset(ctx, ns, target.Policy, spec, state.Bindings)
+}
+
+func validatePolicyForwarding(ns *os.File, spec driver.RulesetSpec) error {
+	if spec.NAT == nil {
+		return nil
+	}
+	fwd, err := readSysctlInNetNSFD(int(ns.Fd()), "net/ipv4/ip_forward")
+	if err != nil {
+		return driver.Wrap(driver.ErrorUnavailable, "docker", "read NAT forwarding state", err)
+	}
+	if fwd != "1" {
+		return driver.Wrap(driver.ErrorInvalidState, "docker", fmt.Sprintf("NAT requires ip_forward=1, observed %q", fwd), nil)
+	}
+	return nil
+}
+
+func resolvePolicyBindings(ns *os.File, state *dockerPolicyTarget) error {
 	interfaces, err := policyInterfacesInNetNSFD(int(ns.Fd()))
 	if err != nil {
-		return driver.RulesetObservation{}, driver.Wrap(driver.ErrorUnavailable, "docker", "list policy interfaces", err)
+		return driver.Wrap(driver.ErrorUnavailable, "docker", "list policy interfaces", err)
 	}
 	for logical, prefixes := range state.AttachmentIPs {
 		if state.Bindings[logical] != "" || len(prefixes) == 0 {
@@ -67,19 +115,12 @@ func (s *Substrate) ApplyRuleset(ctx context.Context, target driver.PolicyTarget
 		}
 		device, resolveErr := resolvePolicyDevice(prefixes[0], interfaces)
 		if resolveErr != nil {
-			return driver.RulesetObservation{}, driver.Wrap(driver.ErrorUnavailable, "docker", fmt.Sprintf("resolve attachment %q", logical), resolveErr)
+			return driver.Wrap(driver.ErrorUnavailable, "docker", fmt.Sprintf("resolve attachment %q", logical), resolveErr)
 		}
 		state.Bindings[logical] = device
 	}
 
-	observation, err := networkprovider.ApplyRulesetInNetNS(ctx, netnsPath, spec, state.Bindings)
-	if err != nil {
-		return driver.RulesetObservation{}, driver.Wrap(driver.ErrorUnavailable, "docker", "apply ruleset", err)
-	}
-	if fwd, err := readSysctlInNetNSFD(int(ns.Fd()), "net/ipv4/ip_forward"); err == nil && fwd != "1" {
-		return driver.RulesetObservation{}, fmt.Errorf("router ip_forward=%q (expected 1)", fwd)
-	}
-	return observation, nil
+	return nil
 }
 
 type policyInterface struct {
@@ -137,11 +178,12 @@ func (s *Substrate) ObserveRuleset(ctx context.Context, target driver.PolicyTarg
 	if err != nil {
 		return driver.RulesetObservation{}, err
 	}
-	pid, err := s.policyTargetPID(ctx, state.ContainerID)
+	ns, err := s.policyTargetNamespace(ctx, state)
 	if err != nil {
 		return driver.RulesetObservation{}, err
 	}
-	return networkprovider.ObserveRulesetInNetNS(ctx, fmt.Sprintf("/proc/%d/ns/net", pid), owner)
+	defer ns.Close()
+	return networkprovider.ObserveManagedRuleset(ctx, ns, target.Policy, owner)
 }
 
 func (s *Substrate) DeleteRuleset(ctx context.Context, target driver.PolicyTarget, owner string) error {
@@ -149,16 +191,58 @@ func (s *Substrate) DeleteRuleset(ctx context.Context, target driver.PolicyTarge
 	if err != nil {
 		return err
 	}
-	pid, err := s.policyTargetPID(ctx, state.ContainerID)
+	ns, err := s.policyTargetNamespace(ctx, state)
 	if err != nil {
 		return err
 	}
-	return networkprovider.DeleteRulesetInNetNS(ctx, fmt.Sprintf("/proc/%d/ns/net", pid), owner)
+	defer ns.Close()
+	return networkprovider.DeleteManagedRuleset(ctx, ns, target.Policy, owner)
+}
+
+// Hold the kernel namespace object, then recheck its binding to the managed
+// container. Subsequent helpers inherit this FD rather than reopening a PID.
+func (s *Substrate) policyTargetNamespace(ctx context.Context, target dockerPolicyTarget) (*os.File, error) {
+	pid, err := s.policyTargetPID(ctx, target)
+	if err != nil {
+		return nil, err
+	}
+	path := fmt.Sprintf("/proc/%d/ns/net", pid)
+	ns, err := os.Open(path)
+	if err != nil {
+		return nil, driver.Wrap(driver.ErrorUnavailable, "docker", "open policy namespace", err)
+	}
+	verified := false
+	defer func() {
+		if !verified {
+			_ = ns.Close()
+		}
+	}()
+	currentPID, err := s.policyTargetPID(ctx, target)
+	if err != nil {
+		return nil, err
+	}
+	if currentPID != pid {
+		return nil, driver.Wrap(driver.ErrorInvalidState, "docker", "policy target restarted during namespace acquisition", nil)
+	}
+	held, err := ns.Stat()
+	if err != nil {
+		return nil, err
+	}
+	current, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !os.SameFile(held, current) {
+		return nil, driver.Wrap(driver.ErrorInvalidState, "docker", "policy namespace changed during acquisition", nil)
+	}
+	verified = true
+	return ns, nil
 }
 
 // policyTargetPID returns the host PID of a policy target container, mapping a
 // missing container to ErrorNotFound so callers can treat it as drift.
-func (s *Substrate) policyTargetPID(ctx context.Context, containerID string) (int, error) {
+func (s *Substrate) policyTargetPID(ctx context.Context, target dockerPolicyTarget) (int, error) {
+	containerID := target.ContainerID
 	container, err := s.cli.ContainerInspect(ctx, containerID)
 	if err != nil {
 		category := driver.ErrorUnavailable
@@ -166,6 +250,16 @@ func (s *Substrate) policyTargetPID(ctx context.Context, containerID string) (in
 			category = driver.ErrorNotFound
 		}
 		return 0, driver.Wrap(category, "docker", "inspect policy target", err)
+	}
+	if container.ID != containerID || container.Config == nil {
+		return 0, driver.Wrap(driver.ErrorInvalidState, "docker", "policy target exact ID or metadata mismatch", nil)
+	}
+	labels, e := s.managedOwnershipLabels(substrate.WithOperationIdentity(ctx, target.Identity), container)
+	if e != nil {
+		return 0, e
+	}
+	if err := verifyLabels(labels, operationLabels(target.Identity)); err != nil {
+		return 0, err
 	}
 	if container.State == nil || !container.State.Running || container.State.Pid == 0 {
 		return 0, driver.Wrap(driver.ErrorNotFound, "docker", fmt.Sprintf("policy target container %s is not running", containerID), nil)

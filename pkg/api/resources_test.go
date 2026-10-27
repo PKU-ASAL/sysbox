@@ -15,6 +15,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 )
@@ -62,8 +63,11 @@ func TestListResourcesUsesLatestAgentProjectionAsAuthoritative(t *testing.T) {
 
 	s := NewServer(runs, filepath.Join(dir, "workspaces"))
 	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}}))
+	session,err:=persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store:s.apiStore}).OpenSession(context.Background(),"host-a","resources-process","");require.NoError(t,err)
 	body := bytes.NewBufferString(`{
   "agent_id": "host-a",
+	  "session_id": "`+session.ID+`",
+	  "sequence": 1,
   "topology": "mixed",
   "workspace": "mixed",
   "observed_at": "2026-05-29T06:52:52Z",
@@ -119,7 +123,21 @@ func TestGetResourceHealth(t *testing.T) {
 
 func writeState(t *testing.T, runsDir, topology string, st *state.State) {
 	t.Helper()
-	mgr := state.NewManager(filepath.Join(runsDir, topology, "state.json"))
+	repo, err := persistence.OpenFilesystem(filepath.Join(runsDir, topology, "state.json.lifecycle"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, repo.Close()) })
+	current, err := repo.LoadState(context.Background(), topology)
+	require.NoError(t, err)
+	st.TopologyUID = current.TopologyUID
+	st.Meta = current.Meta
+	for i := range st.Resources {
+		st.Resources[i].OwnerUID = st.TopologyUID
+		st.Resources[i].ResourceUID = st.TopologyUID + "/" + st.Resources[i].Address.String()
+		if st.Resources[i].Generation == 0 {
+			st.Resources[i].Generation = 1
+		}
+	}
+	mgr := state.NewManagerWithBackend(repo.StateBackend(topology))
 	require.NoError(t, mgr.Save(st))
 }
 

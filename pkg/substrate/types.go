@@ -17,16 +17,18 @@ var ErrNotSupported = errors.New("operation not supported by this substrate")
 
 // ManagedNetworkSpec describes a substrate-managed network to create.
 type ManagedNetworkSpec struct {
-	Name   string            // resource name used to derive the network's system identifier
-	CIDR   string            // IP address range, e.g. "172.20.0.0/24"
-	NAT    bool              // true → internet access via masquerade
-	Labels map[string]string // provider metadata for recovery/cleanup
+	ExposeBridge bool              // explicitly export a verified host bridge for mixed substrates
+	Name         string            // resource name used to derive the network's system identifier
+	CIDR         string            // IP address range, e.g. "172.20.0.0/24"
+	NAT          bool              // true → internet access via masquerade
+	Labels       map[string]string // provider metadata for recovery/cleanup
 }
 
 // ManagedNetworkInfo is returned by CreateManagedNetwork.
 type ManagedNetworkInfo struct {
-	ID   string // substrate-specific network identifier (docker network ID, etc.)
-	Name string // the system-level name (bridge name, network name)
+	BridgeTarget *ManagedBridgeTarget
+	ID           string // substrate-specific network identifier (docker network ID, etc.)
+	Name         string // the system-level name (bridge name, network name)
 }
 
 type GuestNetworkInitMode string
@@ -122,10 +124,11 @@ type ProviderDeps struct {
 //	           any data here (vm_dir, socket path, vsock CID, etc.) and recover it
 //	           on subsequent calls. Persisted in state via Marshal/UnmarshalProviderState.
 type NodeHandle struct {
-	ID       string
-	Net      NetInfo
-	Conn     ConnInfo
-	Provider any
+	ID         string
+	Generation int64
+	Net        NetInfo
+	Conn       ConnInfo
+	Provider   any
 }
 
 type NodeLifecycleStatus string
@@ -143,16 +146,19 @@ const (
 // Docker derives it from dockerd; Firecracker derives it from pid/socket/vsock
 // anchors; libvirt can derive it from domain state.
 type NodeObservation struct {
-	Exists     bool                `json:"exists"`
-	Running    bool                `json:"running"`
-	Healthy    bool                `json:"healthy"`
-	Adopted    bool                `json:"adopted,omitempty"`
-	Status     NodeLifecycleStatus `json:"status"`
-	PID        int                 `json:"pid,omitempty"`
-	ExitCode   *int                `json:"exit_code,omitempty"`
-	ExternalID string              `json:"external_id,omitempty"`
-	Reason     string              `json:"reason,omitempty"`
-	LastSeen   time.Time           `json:"last_seen,omitempty"`
+	Exists      bool                `json:"exists"`
+	Running     bool                `json:"running"`
+	Healthy     bool                `json:"healthy"`
+	Adopted     bool                `json:"adopted,omitempty"`
+	Status      NodeLifecycleStatus `json:"status"`
+	PID         int                 `json:"pid,omitempty"`
+	ExitCode    *int                `json:"exit_code,omitempty"`
+	ExternalID  string              `json:"external_id,omitempty"`
+	Reason      string              `json:"reason,omitempty"`
+	LastSeen    time.Time           `json:"last_seen,omitempty"`
+	OwnerUID    string              `json:"owner_uid,omitempty"`
+	ResourceUID string              `json:"resource_uid,omitempty"`
+	Generation  int64               `json:"generation,omitempty"`
 }
 
 // NetInfo carries substrate-neutral network info for a node.
@@ -193,16 +199,12 @@ type ConnectionHint struct {
 	InsecureSkipHostKeyCheck bool   // explicit lab-only opt-out
 }
 
-// Connection is the substrate-agnostic interface for reaching a running node
-// (exec, copy, background). Each substrate returns its own implementation.
+// Connection is the minimum foreground execution capability for a running node.
+// Background execution, files and readiness are independent optional capabilities.
 // Moved here from pkg/transport so substrates can implement it without
 // import cycles.
 type Connection interface {
 	Exec(ctx context.Context, req ExecRequest, stdout, stderr io.Writer) (ExecResult, error)
-	ExecBackground(ctx context.Context, req ExecRequest) (int, error)
-
-	// CopyFile copies a local file into the node at dstPath.
-	CopyFile(ctx context.Context, srcPath, dstPath string) error
 }
 
 // ConnectionWaiter is an optional Connection capability: block until the
@@ -258,9 +260,15 @@ func HandlePublicAttributes(h NodeHandle) map[string]any {
 }
 
 type ExecResult struct {
-	Stdout   string
-	Stderr   string
-	ExitCode int
+	Stdout            string
+	Stderr            string
+	ExitCode          int
+	ExitCodeKnown     bool
+	Status            ExecStatus
+	ErrorClass        ExecErrorClass
+	StdoutTruncated   bool
+	StderrTruncated   bool
+	RemoteTermination RemoteTermination
 }
 
 // PIDMode declares how guest processes are visible to the host.

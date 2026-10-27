@@ -32,15 +32,15 @@ ldflags="$(release_ldflags "${tag}" "${commit}" "${build_time}")"
 
 rm -rf "${output}"
 mkdir -p "${output}"
-declare -A sysbox_hashes init_hashes
+declare -A sysbox_hashes init_hashes netns_hashes
 for arch in amd64 arm64; do
   stage="${output}/.stage-${arch}"
   archive="sysbox_${tag}_linux_${arch}.tar.gz"
   mkdir -p "${stage}"
-  CGO_ENABLED=0 GOOS=linux GOARCH="${arch}" go build -trimpath -buildvcs=false -ldflags "${ldflags}" -o "${stage}/sysbox" ./cmd/sysbox
-  CGO_ENABLED=0 GOOS=linux GOARCH="${arch}" go build -trimpath -buildvcs=false -ldflags "${ldflags}" -o "${stage}/sysbox-init" ./cmd/sysbox-init
+  GOARCH="${arch}" "${repo_root}/scripts/release/build-binaries.sh" "${stage}" "${ldflags}"
   sysbox_hashes["${arch}"]="$(sha256sum "${stage}/sysbox" | awk '{print $1}')"
   init_hashes["${arch}"]="$(sha256sum "${stage}/sysbox-init" | awk '{print $1}')"
+  netns_hashes["${arch}"]="$(sha256sum "${stage}/sysbox-netns" | awk '{print $1}')"
   install -m 0644 README.md "${stage}/README.md"
   install -m 0644 LICENSE "${stage}/LICENSE"
   jq -S -n --arg version "${tag}" --arg tag "${tag}" --arg commit "${commit}" \
@@ -50,7 +50,7 @@ for arch in amd64 arm64; do
     >"${stage}/build-metadata.json"
   chmod 0644 "${stage}/build-metadata.json"
   tar --sort=name --format=ustar --owner=0 --group=0 --numeric-owner --mtime="@${epoch}" \
-    --mode='u+rwX,go+rX,go-w' -C "${stage}" -cf - LICENSE README.md build-metadata.json sysbox sysbox-init \
+    --mode='u+rwX,go+rX,go-w' -C "${stage}" -cf - LICENSE README.md build-metadata.json sysbox sysbox-init sysbox-netns \
     | gzip -n -9 >"${output}/${archive}"
   rm -rf "${stage}"
 done
@@ -61,8 +61,8 @@ for arch in amd64 arm64; do
   archive="sysbox_${tag}_linux_${arch}.tar.gz"
   checksum="$(awk -v file="${archive}" '$2 == file {print $1}' "${output}/SHA256SUMS")"
   targets="$(jq -c --arg os linux --arg arch "${arch}" --arg archive "${archive}" --arg sha256 "${checksum}" \
-    --arg sysbox_sha256 "${sysbox_hashes[${arch}]}" --arg sysbox_init_sha256 "${init_hashes[${arch}]}" \
-    '. + [{os:$os,architecture:$arch,archive:$archive,sha256:$sha256,sysbox_sha256:$sysbox_sha256,sysbox_init_sha256:$sysbox_init_sha256}]' <<<"${targets}")"
+    --arg sysbox_sha256 "${sysbox_hashes[${arch}]}" --arg sysbox_init_sha256 "${init_hashes[${arch}]}" --arg sysbox_netns_sha256 "${netns_hashes[${arch}]}" \
+    '. + [{os:$os,architecture:$arch,archive:$archive,sha256:$sha256,sysbox_sha256:$sysbox_sha256,sysbox_init_sha256:$sysbox_init_sha256,sysbox_netns_sha256:$sysbox_netns_sha256}]' <<<"${targets}")"
 done
 fingerprint_payload="$(jq -Scn --arg tag "${tag}" --arg commit "${commit}" --argjson targets "${targets}" '{tag:$tag,commit:$commit,targets:$targets}')"
 release_fingerprint="$(printf '%s' "${fingerprint_payload}" | sha256sum | awk '{print $1}')"

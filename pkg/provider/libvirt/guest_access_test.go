@@ -46,13 +46,6 @@ func TestPrepareGuestNetworkRestoresGeneratedAuthorizedKey(t *testing.T) {
 	require.Contains(t, string(generated), string(publicKey[:len(publicKey)-1]))
 }
 
-func TestGuestFileInstallRequestUsesDirectExecution(t *testing.T) {
-	request := guestFileInstallRequest("chmod", "0600", "/tmp/payload")
-
-	require.Equal(t, substrate.ShellNone, request.Shell)
-	require.NoError(t, request.Validate())
-}
-
 func TestPrepareHandlePreservesEphemeralSSHKeyWhenConfigOmitsOne(t *testing.T) {
 	handle := substrate.NodeHandle{Provider: &HandleState{
 		SSHKey:  "/state/generated-guest-ssh-key",

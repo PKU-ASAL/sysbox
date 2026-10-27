@@ -48,10 +48,6 @@ func (c *ProviderContext) createRouterResource(ctx context.Context, n *graph.Nod
 	return c.exec.createRouterResource(ctx, n)
 }
 
-func (c *ProviderContext) createSSHAccessResource(ctx context.Context, n *graph.Node) (state.Resource, error) {
-	return c.exec.createSSHAccessResource(ctx, n)
-}
-
 func (c *ProviderContext) createFirewallResource(ctx context.Context, n *graph.Node) (state.Resource, error) {
 	return c.exec.createFirewallResource(ctx, n)
 }

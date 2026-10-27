@@ -13,12 +13,10 @@ func TestSecureSSHConnectionDoesNotDisableHostKeyVerification(t *testing.T) {
 	require.NotContains(t, args, "UserKnownHostsFile=/dev/null")
 }
 
-func TestSSHConnectionRunsSSHAndSCPInsideNetworkNamespace(t *testing.T) {
+func TestSSHConnectionRunsCommandsInsideNetworkNamespace(t *testing.T) {
 	connection := NewSSHConnectionInNamespace("sandbox-ns", "10.0.0.2", "22", "ubuntu", "/tmp/key", "")
 	ssh := connection.command(context.Background(), []string{"ubuntu@10.0.0.2", "true"})
 	require.Equal(t, []string{"ip", "netns", "exec", "sandbox-ns", resolveSSHBin(), "ubuntu@10.0.0.2", "true"}, ssh.Args)
-	scp := connection.scpCommand(context.Background(), []string{"/tmp/source", "ubuntu@10.0.0.2:/tmp/target"})
-	require.Equal(t, []string{"ip", "netns", "exec", "sandbox-ns", resolveSCPBin(), "/tmp/source", "ubuntu@10.0.0.2:/tmp/target"}, scp.Args)
 }
 
 func TestSSHConnectionUsesExplicitKnownHosts(t *testing.T) {

@@ -20,10 +20,10 @@ import (
 func TestRemoteBridgePreservesRunSnapshot(t *testing.T) {
 	b := remoteBridge{Bridge: NewLocalBridge(LocalOptions{ConfigFile: "/mutable/field.sysbox.hcl"})}
 	run := &controlplane.Run{Topology: "lab", SnapshotPath: "/immutable/field.sysbox.hcl"}
-	require.Equal(t, run.SnapshotPath, NewExecutorWithBridge(b).hclFileForRun(run))
+	require.Equal(t, run.SnapshotPath, NewExecutorWithBridge(b).hclFileForRun(context.Background(), run))
 }
 
-func TestExecutorRunsRepairThroughApplyReconcile(t *testing.T) {
+func TestExecutorRepairDoesNotEnlargeApprovedNoop(t *testing.T) {
 	dir := t.TempDir()
 	topology := "lab"
 	kernelPath := filepath.Join(dir, "vmlinux")
@@ -37,14 +37,14 @@ resource "sysbox_kernel" "linux" {
   architecture = "amd64"
 }
 `), 0o644))
-	require.NoError(t, state.NewManager(statePath).Save(&state.State{
+	saveLocalTestState(t, statePath, topology, &state.State{
 		Version: state.SchemaVersion,
 		Resources: []state.Resource{{
 			Address:    address.Resource("sysbox_kernel", "linux"),
 			Driver:     "artifact",
 			Attributes: map[string]any{"path": filepath.Join(dir, "missing")},
 		}},
-	}))
+	})
 	var log bytes.Buffer
 	bridge := NewLocalBridge(LocalOptions{
 		Topology:   topology,
@@ -58,9 +58,8 @@ resource "sysbox_kernel" "linux" {
 
 	NewExecutorWithBridge(bridge).ExecuteContext(context.Background(), run)
 
-	require.Empty(t, run.Err)
-	require.Equal(t, controlplane.RunDone, run.Status)
-	require.Contains(t, log.String(), "Apply complete")
+	require.Contains(t, run.Err, runtime.ErrPlanStale.Error())
+	require.Equal(t, controlplane.RunFailed, run.Status)
 	cp, err := runtime.LoadCheckpointFile(filepath.Join(dir, topology, "runs", "run-repair.checkpoint.json"))
 	require.NoError(t, err)
 	require.Equal(t, "repair", cp.Operation)
@@ -118,7 +117,7 @@ func TestExecuteNodeOperationRejectsMissingNode(t *testing.T) {
 	topology := "lab"
 	statePath := filepath.Join(runs, topology, "state.json")
 	require.NoError(t, os.MkdirAll(filepath.Dir(statePath), 0o755))
-	require.NoError(t, state.NewManager(statePath).Save(&state.State{Version: state.SchemaVersion}))
+	saveLocalTestState(t, statePath, topology, &state.State{Version: state.SchemaVersion})
 
 	bridge := NewLocalBridge(LocalOptions{Topology: topology, StatePath: statePath, RunsDir: runs})
 	exec := NewExecutorWithBridge(bridge)
@@ -180,11 +179,10 @@ func TestObserveLocalBridgeReportsStateHealth(t *testing.T) {
 	topology := "lab"
 	statePath := filepath.Join(runs, topology, "state.json")
 	require.NoError(t, os.MkdirAll(filepath.Dir(statePath), 0o755))
-	mgr := state.NewManager(statePath)
 	st := &state.State{Version: state.SchemaVersion, Resources: []state.Resource{
 		{Address: address.Resource("sysbox_image", "alpine"), Driver: "docker", Attributes: map[string]any{"repository": "alpine:latest"}},
 	}}
-	require.NoError(t, mgr.Save(st))
+	saveLocalTestState(t, statePath, topology, st)
 
 	bridge := NewLocalBridge(LocalOptions{Topology: topology, StatePath: statePath, RunsDir: runs})
 	projections := Observe(context.Background(), "local", bridge)

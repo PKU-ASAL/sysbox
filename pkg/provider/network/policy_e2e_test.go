@@ -16,6 +16,7 @@ import (
 	"github.com/vishvananda/netns"
 
 	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 func TestOwnedPolicyRepeatedApplyAndDeleteE2E(t *testing.T) {
@@ -25,7 +26,7 @@ func TestOwnedPolicyRepeatedApplyAndDeleteE2E(t *testing.T) {
 	t.Cleanup(func() { _ = DeleteNetns(namespace) })
 	targetRaw, err := json.Marshal(policyTargetState{Namespace: namespace, Bindings: map[string]string{"inside": "lo", "uplink": "lo"}})
 	require.NoError(t, err)
-	target := driver.PolicyTarget{Resource: "sysbox_firewall.edge", State: targetRaw}
+	target := driver.PolicyTarget{Resource: "sysbox_firewall.edge", Identity: substrate.OperationIdentity{ActionID: "e2e", OwnerUID: "owner", TopologyUID: "owner", ResourceUID: "namespace", Generation: 1}, Policy: substrate.OperationIdentity{ActionID: "e2e", OwnerUID: "owner", TopologyUID: "owner", ResourceUID: "policy", Generation: 1}, State: targetRaw}
 	spec := driver.RulesetSpec{Owner: "e2e/sysbox_firewall.edge", Family: driver.FamilyIPv4,
 		NAT: &driver.NATPolicy{SourceAttachment: "inside", UplinkAttachment: "uplink", SourceCIDRs: []string{"127.0.0.0/8"}, Masquerade: true}}
 	provider := Driver{}
@@ -67,7 +68,7 @@ func TestOwnedPolicyDefaultDenyAndStatefulAllowE2E(t *testing.T) {
 	port := uint16(listener.Addr().(*net.TCPAddr).Port)
 	targetRaw, err := json.Marshal(policyTargetState{Namespace: namespace, Bindings: map[string]string{}})
 	require.NoError(t, err)
-	target := driver.PolicyTarget{Resource: "sysbox_firewall.egress", State: targetRaw}
+	target := driver.PolicyTarget{Resource: "sysbox_firewall.egress", Identity: substrate.OperationIdentity{ActionID: "e2e", OwnerUID: "owner", TopologyUID: "owner", ResourceUID: "namespace", Generation: 1}, Policy: substrate.OperationIdentity{ActionID: "e2e", OwnerUID: "owner", TopologyUID: "owner", ResourceUID: "policy", Generation: 1}, State: targetRaw}
 	provider := Driver{}
 	owner := "e2e/sysbox_firewall.egress"
 
@@ -79,6 +80,7 @@ func TestOwnedPolicyDefaultDenyAndStatefulAllowE2E(t *testing.T) {
 	}
 	require.Error(t, err, "default-drop input/output policy unexpectedly allowed TCP")
 
+	target.Policy.Generation++
 	_, err = provider.ApplyRuleset(context.Background(), target, driver.RulesetSpec{
 		Owner: owner, Family: driver.FamilyIPv4,
 		DefaultInput: driver.VerdictDrop, DefaultOutput: driver.VerdictDrop, DefaultForward: driver.VerdictDrop,
@@ -119,7 +121,7 @@ func TestOwnedPolicyForwardDefaultDenyAndStatefulAllowE2E(t *testing.T) {
 	port := uint16(listener.Addr().(*net.TCPAddr).Port)
 	targetRaw, err := json.Marshal(policyTargetState{Namespace: routerNS, Bindings: map[string]string{"inside": "rin", "uplink": "rout"}})
 	require.NoError(t, err)
-	target := driver.PolicyTarget{Resource: "sysbox_router.forward", State: targetRaw}
+	target := driver.PolicyTarget{Resource: "sysbox_router.forward", Identity: substrate.OperationIdentity{ActionID: "e2e", OwnerUID: "owner", TopologyUID: "owner", ResourceUID: "namespace", Generation: 1}, Policy: substrate.OperationIdentity{ActionID: "e2e", OwnerUID: "owner", TopologyUID: "owner", ResourceUID: "policy", Generation: 1}, State: targetRaw}
 	provider := Driver{}
 	owner := "e2e/sysbox_router.forward"
 
@@ -127,6 +129,7 @@ func TestOwnedPolicyForwardDefaultDenyAndStatefulAllowE2E(t *testing.T) {
 	require.NoError(t, err)
 	require.Error(t, dialFromNamespace(sourceNS, listener.Addr().String(), 250*time.Millisecond), "default-drop forward policy unexpectedly allowed TCP")
 
+	target.Policy.Generation++
 	_, err = provider.ApplyRuleset(context.Background(), target, driver.RulesetSpec{
 		Owner: owner, Family: driver.FamilyIPv4, DefaultInput: driver.VerdictAccept, DefaultOutput: driver.VerdictAccept, DefaultForward: driver.VerdictDrop,
 		Rules: []driver.PolicyRule{
@@ -266,11 +269,13 @@ func TestRootBridgeProxyLifecycleE2E(t *testing.T) {
 		RootBridge:   "lvx" + suffix,
 		RootEnd:      "lvr" + suffix,
 		NamespaceEnd: "lvn" + suffix,
+		RootAddress:  "10.253.0.254/24",
 	}
-	provider := Driver{}
-	t.Cleanup(func() { _ = provider.DeleteIsolated(context.Background(), spec) })
+	provider := Driver{ownershipRoot: t.TempDir()}
+	ctx := substrate.WithOperationIdentity(context.Background(), substrate.OperationIdentity{OwnerUID: spec.Name, TopologyUID: spec.Name, ResourceUID: spec.Name, Generation: 1, ActionID: "e2e"})
+	t.Cleanup(func() { _ = provider.DeleteIsolated(ctx, spec) })
 
-	require.NoError(t, provider.CreateIsolated(context.Background(), spec))
+	require.NoError(t, provider.CreateIsolated(ctx, spec))
 	ok, reason := provider.NetworkHealthy(context.Background(), spec)
 	require.True(t, ok, reason)
 	require.True(t, LinkExists(spec.Name, spec.NamespaceEnd))
@@ -278,7 +283,7 @@ func TestRootBridgeProxyLifecycleE2E(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, hostRouteExists(spec.RootBridge, spec.CIDR))
 
-	require.NoError(t, provider.DeleteIsolated(context.Background(), spec))
+	require.NoError(t, provider.DeleteIsolated(ctx, spec))
 	require.False(t, NetnsExists(spec.Name))
 	_, err = netlink.LinkByName(spec.RootBridge)
 	require.Error(t, err)

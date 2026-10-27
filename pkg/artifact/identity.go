@@ -28,6 +28,22 @@ type ResolvedIdentity struct {
 }
 
 func (r *Resolver) ResolveIdentity(spec IdentitySpec) (ResolvedIdentity, error) {
+	complete, err := r.beginPublication(Spec{Source: spec.Source, SHA256: strings.TrimPrefix(spec.ExpectedDigest, "sha256:")})
+	if err != nil {
+		return ResolvedIdentity{}, err
+	}
+	detached := *r
+	detached.publish = nil
+	result, err := detached.resolveIdentity(spec)
+	if err != nil {
+		return ResolvedIdentity{}, err
+	}
+	if err = complete(Result{Path: result.Path, Source: spec.Source, SHA256: strings.TrimPrefix(result.Identity.Digest, "sha256:"), FromCache: result.FromCache}); err != nil {
+		return ResolvedIdentity{}, err
+	}
+	return result, nil
+}
+func (r *Resolver) resolveIdentity(spec IdentitySpec) (ResolvedIdentity, error) {
 	if err := substrate.ValidateArtifactKind(spec.Kind); err != nil {
 		return ResolvedIdentity{}, err
 	}

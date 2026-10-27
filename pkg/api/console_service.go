@@ -2,18 +2,21 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/state"
 )
 
 type ConsoleService struct {
 	consoles       *consoleSessionHub
 	scheduler      *SchedulerService
-	publishCommand func(context.Context, string, controlplane.AgentCommand) (controlplane.AgentCommand, error)
+	wakeCommand    func(string, controlplane.AgentCommand) error
 	authorize      func(requestSubject, controlplane.ConsoleSession) error
 	hclFile        func(string) string
 	loadState      func(string) (*state.State, error)
@@ -27,10 +30,26 @@ type ConsoleCreateResult struct {
 	Status  int
 }
 
+var errConsoleAccessDenied = errors.New("console access denied")
+
+func (s *ConsoleService) Get(id string, subj requestSubject) (controlplane.ConsoleSession, error) {
+	sess, err := s.consoles.Snapshot(id)
+	if err != nil {
+		return controlplane.ConsoleSession{}, err
+	}
+	if s.authorize == nil {
+		return controlplane.ConsoleSession{}, errors.New("console authorization unavailable")
+	}
+	if err := s.authorize(subj, sess); err != nil {
+		return controlplane.ConsoleSession{}, fmt.Errorf("%w: %v", errConsoleAccessDenied, err)
+	}
+	return sess, nil
+}
+
 func newConsoleService(
 	consoles *consoleSessionHub,
 	scheduler *SchedulerService,
-	publishCommand func(context.Context, string, controlplane.AgentCommand) (controlplane.AgentCommand, error),
+	wakeCommand func(string, controlplane.AgentCommand) error,
 	authorize func(requestSubject, controlplane.ConsoleSession) error,
 	hclFile func(string) string,
 	loadState func(string) (*state.State, error),
@@ -41,7 +60,7 @@ func newConsoleService(
 	return &ConsoleService{
 		consoles:       consoles,
 		scheduler:      scheduler,
-		publishCommand: publishCommand,
+		wakeCommand:    wakeCommand,
 		authorize:      authorize,
 		hclFile:        hclFile,
 		loadState:      loadState,
@@ -63,52 +82,59 @@ func (s *ConsoleService) CreateSession(ctx context.Context, topology, node strin
 	if err != nil {
 		return ConsoleCreateResult{Status: http.StatusConflict}, err
 	}
-	sess := s.consoles.Create(topology, node, agent.ID, req)
-	if err := s.authorize(requestSubject{User: req.RequestedBy, Roles: req.Roles}, sess); err != nil {
-		s.consoles.Update(sess.ID, func(sess *controlplane.ConsoleSession) {
-			sess.Status = controlplane.ConsoleSessionStatusDenied
-			sess.Err = err.Error()
-			sess.EndedAt = time.Now().UTC()
-			sess.Audit = append(sess.Audit, consoleAuditEvent(*sess, "deny", err.Error()))
-		})
-		got, _ := s.consoles.Snapshot(sess.ID)
-		return ConsoleCreateResult{Session: got, Status: http.StatusForbidden}, err
+	sess := newConsoleSession(topology, node, agent.ID, req)
+	if err := s.authorize(subj, sess); err != nil {
+		sess.Status = controlplane.ConsoleSessionStatusDenied
+		sess.Err = err.Error()
+		sess.EndedAt = time.Now().UTC()
+		sess.Audit = append(sess.Audit, consoleAuditEvent(sess, "deny", err.Error()))
+		if _, saveErr := s.consoles.persistSession(ctx, sess, req, nil); saveErr != nil {
+			return ConsoleCreateResult{Status: http.StatusServiceUnavailable}, saveErr
+		}
+		return ConsoleCreateResult{Session: sess, Status: http.StatusForbidden}, err
 	}
-	s.consoles.Update(sess.ID, func(sess *controlplane.ConsoleSession) {
-		sess.Audit = append(sess.Audit, consoleAuditEvent(*sess, "allow", "console session allowed by policy"))
-	})
-	sess, _ = s.consoles.Snapshot(sess.ID)
+	sess.Audit = append(sess.Audit, consoleAuditEvent(sess, "allow", "console session allowed by policy"))
 	if err := s.ensureNodeRunning(ctx, topology, node); err != nil {
-		s.consoles.Update(sess.ID, func(sess *controlplane.ConsoleSession) {
-			sess.Status = controlplane.ConsoleSessionStatusFailed
-			sess.Err = err.Error()
-			sess.EndedAt = time.Now().UTC()
-			sess.Audit = append(sess.Audit, consoleAuditEvent(*sess, "reject", err.Error()))
-		})
-		got, _ := s.consoles.Snapshot(sess.ID)
-		return ConsoleCreateResult{Session: got, Status: http.StatusConflict}, err
+		sess.Status = controlplane.ConsoleSessionStatusFailed
+		sess.Err = err.Error()
+		sess.EndedAt = time.Now().UTC()
+		sess.Audit = append(sess.Audit, consoleAuditEvent(sess, "reject", err.Error()))
+		if _, saveErr := s.consoles.persistSession(ctx, sess, req, nil); saveErr != nil {
+			return ConsoleCreateResult{Status: http.StatusServiceUnavailable}, saveErr
+		}
+		return ConsoleCreateResult{Session: sess, Status: http.StatusConflict}, err
 	}
-	if _, err := s.publishCommand(ctx, agent.ID, controlplane.AgentCommand{
-		Type:    "session_open",
-		Session: &sess,
-		Request: req,
-	}); err != nil {
-		return ConsoleCreateResult{Status: http.StatusInternalServerError}, err
+	cmd := persistence.DurableCommand(controlplane.AgentCommand{
+		ID: "console-open-" + sess.ID, AgentID: agent.ID, Type: "session_open",
+		Session: &sess, Request: req, CreatedAt: sess.CreatedAt,
+	})
+	if _, err := s.consoles.persistSession(ctx, sess, req, &cmd); err != nil {
+		return ConsoleCreateResult{Status: http.StatusServiceUnavailable}, err
+	}
+	if s.wakeCommand != nil {
+		if err := s.wakeCommand(agent.ID, cmd); err != nil {
+			slog.Warn("console outbox wake failed; durable dispatch will retry", "session_id", sess.ID, "error", err)
+		}
 	}
 	return ConsoleCreateResult{Session: sess, Status: http.StatusAccepted}, nil
 }
 
 func (s *ConsoleService) Cancel(ctx context.Context, id string, subj requestSubject) (controlplane.ConsoleSession, error) {
-	if err := s.consoles.Cancel(id, "cancelled by api request", subj.User); err != nil {
+	if _, err := s.Get(id, subj); err != nil {
 		return controlplane.ConsoleSession{}, err
 	}
-	sess, _ := s.consoles.Snapshot(id)
-	_, _ = s.publishCommand(ctx, sess.AgentID, controlplane.AgentCommand{
-		Type: "cancel_command",
-		Session: &controlplane.ConsoleSession{
-			ID: sess.ID,
-		},
-	})
+	if err := s.consoles.Cancel(ctx, id, "cancelled by api request", subj); err != nil {
+		return controlplane.ConsoleSession{}, err
+	}
+	sess, err := s.consoles.Snapshot(id)
+	if err != nil {
+		return controlplane.ConsoleSession{}, err
+	}
+	if sess.Status == controlplane.ConsoleSessionStatusCancelling && s.wakeCommand != nil {
+		if err := s.wakeCommand(sess.AgentID, persistence.ConsoleCancellationCommand(sess)); err != nil {
+			slog.Warn("console cancellation wake failed; durable dispatch will retry", "session_id", sess.ID, "error", err)
+		}
+	}
 	return sess, nil
 }
 
@@ -137,12 +163,10 @@ func (s *ConsoleService) normalizeRequest(req *controlplane.ConsoleRequest, subj
 	if req.TimeoutSeconds < 0 || time.Duration(req.TimeoutSeconds)*time.Second > maxTimeout {
 		return fmt.Errorf("timeout_seconds must be between 0 and %d", int(maxTimeout.Seconds()))
 	}
-	if req.RequestedBy == "" {
-		req.RequestedBy = subj.User
-	}
-	if len(req.Roles) == 0 {
-		req.Roles = subj.Roles
-	}
+	// Identity and roles come from the server's request subject, never from the
+	// console request body. Persist the same identity that policy evaluated.
+	req.RequestedBy = subj.User
+	req.Roles = append([]string(nil), subj.Roles...)
 	req.Policy = "console.rbac"
 	return nil
 }

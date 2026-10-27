@@ -2,13 +2,19 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/oslab/sysbox/pkg/driver"
+	dockerprovider "github.com/oslab/sysbox/pkg/provider/docker"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/oslab/sysbox/pkg/address"
+	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/persistence"
 	fc "github.com/oslab/sysbox/pkg/provider/firecracker"
 	"github.com/oslab/sysbox/pkg/provider/libvirt"
 	"github.com/oslab/sysbox/pkg/state"
@@ -17,17 +23,65 @@ import (
 
 func main() {
 	statePath := flag.String("state", "", "sysbox state path")
+	topology := flag.String("topology", "heterogeneous-matrix", "canonical test topology")
 	nodeName := flag.String("node", "firecracker", "sysbox_node name")
 	target := flag.String("target", "", "IPv4 address to ping")
+	pattern := flag.String("pattern", "", "ICMP payload pattern for independently captured probes")
+	absent := flag.String("absent-resource", "", "saved canonical resource JSON to verify exact provider deletion")
 	query := flag.String("query", "", "state query: netns, libvirt_bridge, root_veth, or libvirt_vm_dir")
 	touchPath := flag.String("touch", "", "create a marker in the selected node")
 	checkAbsent := flag.String("check-absent", "", "require a path to be absent in the selected node")
 	flag.Parse()
+	if *absent != "" {
+		raw, err := os.ReadFile(*absent)
+		if err != nil {
+			fatal(err)
+		}
+		var resource state.Resource
+		if err = json.Unmarshal(raw, &resource); err != nil {
+			fatal(err)
+		}
+		cfg := config.MustLoadServiceConfig("")
+		var provider interface {
+			driver.NodeState
+			HostFenceDeletionAbsent(context.Context, substrate.NodeHandle) error
+		}
+		switch resource.Driver {
+		case "firecracker":
+			provider = fc.New(cfg.Providers.Firecracker.Kernel, cfg.Providers.Firecracker.Workdir)
+		case "libvirt":
+			provider = libvirt.New(cfg.Providers.Libvirt.Workdir)
+		case "docker":
+			d, e := dockerprovider.New()
+			if e != nil {
+				fatal(e)
+			}
+			defer d.Close()
+			provider = d
+		default:
+			fatal(fmt.Errorf("unsupported provider"))
+		}
+		handle, err := resource.ReconstructHandle(provider)
+		if err != nil {
+			fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		ctx = substrate.WithOperationIdentity(ctx, substrate.OperationIdentity{ActionID: "matrix-absence", OwnerUID: resource.OwnerUID, TopologyUID: resource.OwnerUID, ResourceUID: resource.ResourceUID, Generation: resource.Generation})
+		if err = provider.HostFenceDeletionAbsent(ctx, handle); err != nil {
+			fatal(err)
+		}
+		fmt.Println("exact provider deletion absence verified")
+		return
+	}
+	if *pattern != "" && !regexp.MustCompile("^[a-fA-F0-9]{2,32}$").MatchString(*pattern) {
+		fatal(fmt.Errorf("invalid ICMP pattern"))
+	}
 	if *statePath == "" || (*target == "" && *query == "" && *touchPath == "" && *checkAbsent == "") {
 		fmt.Fprintln(os.Stderr, "-state and an operation are required")
 		os.Exit(2)
 	}
-	st, err := state.NewManager(*statePath).Load()
+	st, err := loadTopologyState(*statePath, *topology)
 	if err != nil {
 		fatal(err)
 	}
@@ -39,14 +93,19 @@ func main() {
 	if resource == nil {
 		fatal(fmt.Errorf("node %s not found", *nodeName))
 	}
-	provider := fc.New("", "")
+	cfg := config.MustLoadServiceConfig("")
+	provider := fc.New(cfg.Providers.Firecracker.Kernel, cfg.Providers.Firecracker.Workdir)
 	handle, err := resource.ReconstructHandle(provider)
 	if err != nil {
 		fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
+	ctx = substrate.WithOperationIdentity(ctx, substrate.OperationIdentity{ActionID: "matrix-probe", OwnerUID: resource.OwnerUID, TopologyUID: resource.OwnerUID, ResourceUID: resource.ResourceUID, Generation: resource.Generation})
 	request := substrate.ExecRequest{Program: "ping", Args: []string{"-c", "3", "-W", "2", *target}, Shell: substrate.ShellNone}
+	if *pattern != "" {
+		request.Args = append([]string{"-p", *pattern}, request.Args...)
+	}
 	if *touchPath != "" {
 		request = substrate.ExecRequest{Program: "touch", Args: []string{*touchPath}, Shell: substrate.ShellNone}
 	}
@@ -66,6 +125,22 @@ func main() {
 	if result.ExitCode != 0 {
 		fatal(fmt.Errorf("ping %s exited %d", *target, result.ExitCode))
 	}
+}
+
+func loadMatrixState(path string) (*state.State, error) {
+	return loadTopologyState(path, "heterogeneous-matrix")
+}
+func loadTopologyState(path, topology string) (*state.State, error) {
+	backend, resolved, err := persistence.ResolveLocation("", path, topology)
+	if err != nil {
+		return nil, err
+	}
+	repo, err := persistence.OpenConfigured(context.Background(), backend, resolved)
+	if err != nil {
+		return nil, err
+	}
+	defer repo.Close()
+	return repo.LoadState(context.Background(), topology)
 }
 
 func printQuery(st *state.State, query string) {

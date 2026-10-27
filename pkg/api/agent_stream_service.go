@@ -102,7 +102,7 @@ func (s *AgentStreamService) deliverCommandLine(ctx context.Context, agentID str
 	if !leased {
 		return
 	}
-	_ = s.writeCommand(ctx, conn, cmd)
+	_ = s.writeCommand(ctx, conn, deliverAgentCommand(cmd))
 }
 
 func (s *AgentStreamService) readCommandEvents(ctx context.Context, agentID string, conn *websocket.Conn) error {
@@ -118,6 +118,9 @@ func (s *AgentStreamService) readCommandEvents(ctx context.Context, agentID stri
 		if event.AgentID == "" {
 			event.AgentID = agentID
 		}
+		if event.AgentID != agentID {
+			return fmt.Errorf("command event agent identity mismatch")
+		}
 		if event.CreatedAt.IsZero() {
 			event.CreatedAt = time.Now().UTC()
 		}
@@ -130,7 +133,7 @@ func (s *AgentStreamService) pushPendingCommands(ctx context.Context, agentID st
 	if s.store == nil {
 		return
 	}
-	commands, err := s.store.PendingAgentCommands(ctx, agentID)
+	commands, err := s.store.ListAgentCommands(ctx, agentID)
 	if err != nil {
 		return
 	}
@@ -143,23 +146,19 @@ func (s *AgentStreamService) pushPendingCommands(ctx context.Context, agentID st
 		if !ok {
 			continue
 		}
-		_ = s.writeCommand(ctx, conn, cmd)
+		_ = s.writeCommand(ctx, conn, deliverAgentCommand(cmd))
 	}
 }
 
 func (s *AgentStreamService) writeCommand(ctx context.Context, conn *websocket.Conn, cmd controlplane.AgentCommand) error {
-	expected := cmd
-	cmd = deliverAgentCommand(cmd)
-	if s.store != nil {
-		ok, err := s.store.CompareAndSwapAgentCommand(ctx, expected, cmd)
-		if err != nil {
-			return err
-		}
-		if !ok {
-			return fmt.Errorf("command delivery ownership changed")
-		}
+	if s.store == nil {
+		return fmt.Errorf("agent command store not configured")
 	}
-	raw, err := json.Marshal(cmd)
+	delivered, err := s.store.PrepareAgentCommandDelivery(ctx, cmd)
+	if err != nil {
+		return err
+	}
+	raw, err := json.Marshal(delivered)
 	if err != nil {
 		return err
 	}

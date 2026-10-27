@@ -10,9 +10,10 @@ import (
 )
 
 var flagResetTarget string
+var flagResetResume string
 
 var resetCmd = &cobra.Command{
-	Use:   "reset [--target sysbox_node.name]",
+	Use:   "reset [--target sysbox_node.name] [--resume <run-id>]",
 	Short: "Recreate managed guests from their immutable baselines",
 	Args:  cobra.NoArgs,
 	RunE:  runReset,
@@ -20,9 +21,13 @@ var resetCmd = &cobra.Command{
 
 func init() {
 	resetCmd.Flags().StringVar(&flagResetTarget, "target", "", "reset exactly one node (sysbox_node.name)")
+	resetCmd.Flags().StringVar(&flagResetResume, "resume", "", "continue exactly the persisted reset Run after its previous executor has stopped")
 }
 
 func runReset(cmd *cobra.Command, _ []string) error {
+	if flagResetResume != "" && flagResetTarget != "" {
+		return fmt.Errorf("--resume and --target cannot be combined; continuation retains the original complete scope")
+	}
 	_, _, _, root, _, err := loadWorkspaceWithRoot()
 	if err != nil {
 		return err
@@ -32,10 +37,12 @@ func runReset(cmd *cobra.Command, _ []string) error {
 	}
 
 	run := newLocalRun("reset", localTopology())
+	run.ParentID = flagResetResume
 	run.Target = flagResetTarget
 	run.UnsafeState = flagAllowUnsafeState
 	aborted := false
 	bridge := agentexec.NewLocalBridge(agentexec.LocalOptions{
+		PrepareExecution: prepareLocalSSH,
 		Topology:         run.Topology,
 		ConfigFile:       flagConfigFile,
 		StatePath:        statePath(),

@@ -3,10 +3,12 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
@@ -25,9 +27,17 @@ type Executor struct {
 	logger              io.Writer
 	recorder            OperationRecorder
 	patchSink           StatePatchSink
+	actions             ActionRepository
+	recoveredCreates    map[string]bool
+	recoveredDeletes    map[string]bool
+	activeReset         *ActionRecord
+	activeCreate        *ActionRecord
 	secretResolver      secret.Resolver
 	topology            string
 	runID               string
+	runQueuedAt         time.Time
+	runRevision         string
+	resumeRunID         string
 	workspaceDir        string
 	operation           string
 	currentResourceStep int
@@ -56,6 +66,13 @@ func (e *Executor) SetStatePatchSink(sink StatePatchSink) {
 func (e *Executor) SetRunContext(topology, runID string) {
 	e.topology = topology
 	e.runID = runID
+}
+
+func (e *Executor) SetResumeRunID(runID string) { e.resumeRunID = runID }
+
+func (e *Executor) SetRunIncarnation(queuedAt time.Time, revision string) {
+	e.runQueuedAt = queuedAt
+	e.runRevision = revision
 }
 
 // SetWorkspaceDir records the directory a topology's HCL tree is materialised
@@ -92,11 +109,12 @@ func (e *Executor) resolver() secret.Resolver {
 }
 
 func (e *Executor) recordSubstep(parent int, phase string, details map[string]any, fn func() error) error {
+	if err := e.journalError(); err != nil {
+		return err
+	}
 	step := e.recorder.SubstepStart(parent, phase, details)
-	if checked, ok := e.recorder.(interface{ Err() error }); ok {
-		if err := checked.Err(); err != nil {
-			return fmt.Errorf("pre-effect checkpoint: %w", err)
-		}
+	if err := e.journalError(); err != nil {
+		return err
 	}
 	err := fn()
 	if err != nil {
@@ -104,12 +122,27 @@ func (e *Executor) recordSubstep(parent int, phase string, details map[string]an
 		return err
 	}
 	e.recorder.StepDone(step)
-	if checked, ok := e.recorder.(interface{ Err() error }); ok {
-		if err := checked.Err(); err != nil {
-			return fmt.Errorf("effect receipt checkpoint: %w", err)
+	return e.journalError()
+}
+
+func (e *Executor) journalError() error {
+	if source, ok := e.recorder.(interface{ Err() error }); ok {
+		if err := source.Err(); err != nil {
+			return fmt.Errorf("operation journal unavailable: %w", err)
 		}
 	}
 	return nil
+}
+
+func (e *Executor) finishJournal(operationErr error) error {
+	if err := e.journalError(); err != nil {
+		operationErr = errors.Join(operationErr, err)
+	}
+	e.recorder.Finish(operationErr)
+	if err := e.journalError(); err != nil {
+		return errors.Join(operationErr, err)
+	}
+	return operationErr
 }
 
 func (e *Executor) substepHook(parent int) NICWireHook {
@@ -133,6 +166,42 @@ func (e *Executor) recordStepExternal(ctx context.Context, step int, id address.
 	r := e.state.FindResource(id)
 	if r == nil {
 		return nil
+	}
+	if record := e.activeCreate; record != nil && record.Resource.Equal(id) {
+		candidate := cloneResetStateResource(*r)
+		candidate.OwnerUID = record.OwnerUID
+		candidate.ResourceUID = record.ResourceUID
+		candidate.Generation = record.Generation
+		candidate.ResourceType = id.Type
+		if handler, ok := GetResourceHandler(id.Type); ok {
+			candidate.SchemaVersion = handler.Schema().Version
+			candidate.ExternalID = handler.ExternalID(candidate)
+		}
+		if node := e.graph.Get(id); node != nil {
+			candidate.Dependencies = append([]address.Address(nil), node.Deps...)
+		}
+		record.Candidate = &candidate
+		record.ExpectedSerial = e.state.Meta.Serial
+		record.Status = ActionUncertain
+		record.EffectComplete = false
+		if err := e.actions.CommitActionOutcome(ctx, *record, nil); err != nil {
+			return fmt.Errorf("persist create phase identity: %w", err)
+		}
+		record.Revision++
+		e.recorder.StepStateResource(step, resourceLog(candidate))
+		return e.journalError()
+	}
+	if e.activeReset != nil && e.activeReset.Resource.Equal(id) {
+		candidate := cloneResetStateResource(*r)
+		e.activeReset.Candidate = &candidate
+		e.activeReset.ExpectedSerial = e.state.Meta.Serial
+		e.activeReset.Status = ActionUncertain
+		if err := e.actions.CommitActionOutcome(ctx, *e.activeReset, nil); err != nil {
+			return fmt.Errorf("persist reset phase identity: %w", err)
+		}
+		e.activeReset.Revision++
+		e.recorder.StepStateResource(step, resourceLog(candidate))
+		return e.journalError()
 	}
 	externalID := r.Str("id")
 	if p, ok := GetResourceHandler(r.Address.Type); ok {
@@ -158,6 +227,9 @@ func (e *Executor) recordStepExternal(ctx context.Context, step int, id address.
 		State:    &log,
 	}
 	e.recorder.StepStatePatch(step, StatePatchUpsert, &log)
+	if err := e.journalError(); err != nil {
+		return err
+	}
 	if e.patchSink != nil {
 		if err := e.patchSink.ApplyStatePatch(ctx, patch); err != nil {
 			return fmt.Errorf("persist state patch for %s: %w", id, err)
@@ -168,7 +240,7 @@ func (e *Executor) recordStepExternal(ctx context.Context, step int, id address.
 	return nil
 }
 
-func (e *Executor) recordDeletePatch(ctx context.Context, step int, r state.Resource, action controlplane.PlanActionType) {
+func (e *Executor) recordDeletePatch(ctx context.Context, step int, r state.Resource, action controlplane.PlanActionType) error {
 	log := StateResourceLog{
 		Type:        r.Address.Type,
 		Name:        r.Address.Name,
@@ -180,6 +252,9 @@ func (e *Executor) recordDeletePatch(ctx context.Context, step int, r state.Reso
 		Status:      r.Status,
 	}
 	e.recorder.StepStatePatch(step, StatePatchDelete, &log)
+	if err := e.journalError(); err != nil {
+		return err
+	}
 	if e.patchSink != nil {
 		patch := StatePatch{
 			Index:    step,
@@ -189,11 +264,12 @@ func (e *Executor) recordDeletePatch(ctx context.Context, step int, r state.Reso
 			State:    &log,
 		}
 		if err := e.patchSink.ApplyStatePatch(ctx, patch); err != nil {
-			e.logf("[state] warning: persist delete patch for %s: %v\n", r.Address, err)
+			return fmt.Errorf("persist delete patch for %s: %w", r.Address, err)
 		} else {
 			e.recorder.StepStateRecorded(step)
 		}
 	}
+	return e.journalError()
 }
 
 func (e *Executor) logf(format string, args ...any) {
@@ -203,9 +279,6 @@ func (e *Executor) logf(format string, args ...any) {
 // CreateResource dispatches a node in the graph to the right provider
 // and records the result in state.
 func (e *Executor) CreateResource(ctx context.Context, id address.Address) error {
-	if err := e.effectAuthority(ctx); err != nil {
-		return err
-	}
 	node := e.graph.Get(id)
 	if node == nil {
 		return fmt.Errorf("node %s not in graph", id)
@@ -214,6 +287,10 @@ func (e *Executor) CreateResource(ctx context.Context, id address.Address) error
 	if p, ok := GetResourceHandler(id.Type); ok {
 		res, err := p.Create(ctx, &ProviderContext{exec: e}, node)
 		if err != nil {
+			if !res.Address.IsZero() {
+				e.state.RemoveResource(res.Address)
+				e.state.AddResource(res)
+			}
 			return err
 		}
 		res.ResourceType = id.Type
@@ -223,25 +300,21 @@ func (e *Executor) CreateResource(ctx context.Context, id address.Address) error
 		if res.ExternalID == "" {
 			res.ExternalID = p.ExternalID(res)
 		}
+		e.state.RemoveResource(res.Address)
 		e.state.AddResource(res)
 		return nil
 	}
 
-	return nil
+	return fmt.Errorf("unsupported resource type %q", id.Type)
 }
 
 // DestroyResource tears down a resource listed in state.
 func (e *Executor) DestroyResource(ctx context.Context, r state.Resource) error {
-	if err := e.effectAuthority(ctx); err != nil {
-		return err
-	}
 	if p, ok := GetResourceHandler(r.Address.Type); ok {
 		return p.Delete(ctx, &ProviderContext{exec: e}, r)
 	}
 
-	e.logf("[destroy] skipping unimplemented resource %s\n", r.Address)
-	e.state.RemoveResource(r.Address)
-	return nil
+	return fmt.Errorf("unsupported resource type %q", r.Address.Type)
 }
 
 // -- reference resolution helpers --
@@ -280,16 +353,4 @@ func expandTilde(path string) string {
 		return path
 	}
 	return home + path[1:]
-}
-
-func (e *Executor) effectAuthority(ctx context.Context) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if checked, ok := e.recorder.(interface{ Err() error }); ok {
-		if err := checked.Err(); err != nil {
-			return fmt.Errorf("pre-effect checkpoint: %w", err)
-		}
-	}
-	return nil
 }

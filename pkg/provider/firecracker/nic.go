@@ -5,13 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
-	"log/slog"
 	"net"
 	"os"
 	"os/exec"
 	"strings"
 
 	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
@@ -22,22 +22,32 @@ import (
 // Firecracker does NOT support NIC hot-plug in config-file mode,
 // so we must declare all interfaces before boot.
 type attachmentState struct {
-	Tap         string `json:"tap"`
-	NetNS       string `json:"netns"`
-	GuestDevice string `json:"guest_device"`
+	Link        *network.AttachmentLink `json:"link"`
+	Tap         string                  `json:"tap"`
+	NetNS       string                  `json:"netns"`
+	GuestDevice string                  `json:"guest_device"`
+}
+type managedAttachment struct {
+	Name        string                 `json:"name"`
+	GuestDevice string                 `json:"guest_device"`
+	Target      network.BridgeTarget   `json:"target"`
+	Link        network.AttachmentLink `json:"link"`
 }
 type networkState struct {
-	NetNS  string `json:"netns"`
-	Bridge string `json:"bridge"`
-	// DockerNetName / DockerNetworkID are set for Docker-managed NAT networks
-	// (created via the docker substrate): the bridge lives in the root netns
-	// under Docker's conventional "br-<network-id[:12]>" device name, not the
-	// logical network name.
-	DockerNetName   string `json:"docker_net_name"`
-	DockerNetworkID string `json:"docker_network_id"`
+	ManagedBridge   *substrate.ManagedBridgeTarget `json:"managed_bridge"`
+	NetNS           string                         `json:"netns"`
+	Bridge          string                         `json:"bridge"`
+	NAT             bool                           `json:"nat"`
+	DockerNetworkID string                         `json:"docker_network_id"`
 }
-type linkRequest struct{ Name, NetNS, Bridge, IP, Gateway, MAC string }
-type attachedNIC struct{ Kind, HostEnd, GuestEnd, IP, NetNS string }
+type linkRequest struct {
+	Name, NetNS, IP, Gateway, MAC string
+	Target                        network.BridgeTarget
+}
+type attachedNIC struct {
+	Kind, HostEnd, GuestEnd, IP, NetNS string
+	Link                               network.AttachmentLink
+}
 
 func attachmentTapName(nodeID, logicalName string) string {
 	value := strings.TrimPrefix(nodeID, "sysbox-") + "-" + logicalName
@@ -62,105 +72,155 @@ func (s *Substrate) Attach(ctx context.Context, h substrate.NodeHandle, req driv
 	if len(req.IPPrefixes) > 0 {
 		ip = req.IPPrefixes[0]
 	}
-	// Docker-managed NAT networks record their ID under docker_network_id (and
-	// live in the root netns); their bridge device is Docker's conventional
-	// "br-<network-id[:12]>", not the logical docker_net_name.
-	bridge := target.Bridge
-	if bridge == "" && len(target.DockerNetworkID) >= 12 {
-		bridge = "br-" + target.DockerNetworkID[:12]
+	bridgeTarget, err := attachmentBridgeTarget(req.NetworkIdentity, target)
+	if err != nil {
+		return driver.AttachmentResult{}, err
 	}
-	attached, err := s.attachNIC(ctx, h, linkRequest{Name: req.Name, NetNS: target.NetNS, Bridge: bridge, IP: ip, Gateway: req.Gateway, MAC: req.MAC})
+	attached, err := s.attachNIC(ctx, h, linkRequest{Name: req.Name, NetNS: bridgeTarget.NetworkNamespace, Target: bridgeTarget, IP: ip, Gateway: req.Gateway, MAC: req.MAC})
 	if err != nil {
 		return driver.AttachmentResult{}, driver.Wrap(driver.ErrorUnavailable, "firecracker", "attach network", err)
 	}
-	guest := fmt.Sprintf("eth%d", hs.NICCount-1)
-	raw, _ := json.Marshal(attachmentState{Tap: attached.HostEnd, NetNS: attached.NetNS, GuestDevice: guest})
+	guest := attached.GuestEnd
+	raw, _ := json.Marshal(attachmentState{Tap: attached.HostEnd, NetNS: attached.NetNS, GuestDevice: guest, Link: &attached.Link})
 	return driver.AttachmentResult{Driver: "firecracker", GuestDevice: guest, State: raw}, nil
 }
-func (s *Substrate) Observe(_ context.Context, _ substrate.NodeHandle, _ driver.AttachmentRequest, raw json.RawMessage) (driver.AttachmentResult, error) {
+func (s *Substrate) Observe(ctx context.Context, h substrate.NodeHandle, req driver.AttachmentRequest, raw json.RawMessage) (driver.AttachmentResult, error) {
 	var st attachmentState
 	if err := json.Unmarshal(raw, &st); err != nil {
 		return driver.AttachmentResult{}, driver.Wrap(driver.ErrorInvalidState, "firecracker", "decode attachment state", err)
 	}
-	if !linkExists(st.Tap) && !linkExistsInNetns(st.Tap, st.NetNS) {
-		return driver.AttachmentResult{}, driver.Wrap(driver.ErrorNotFound, "firecracker", "tap not found", nil)
+	if st.Link == nil {
+		return driver.AttachmentResult{}, driver.Wrap(driver.ErrorInvalidState, "firecracker", "attachment ownership proof required", nil)
+	}
+	_, m, release, err := s.lockedManifest(ctx, h)
+	if err != nil {
+		return driver.AttachmentResult{}, err
+	}
+	defer release()
+	id := substrate.OperationIdentity{ActionID: "attachment", OwnerUID: m.OwnerUID, ResourceUID: m.ResourceUID, TopologyUID: m.TopologyUID, Generation: m.Generation}
+	alias, err := network.AttachmentAlias(id, req.Name)
+	if err != nil {
+		return driver.AttachmentResult{}, err
+	}
+	var target networkState
+	if err := json.Unmarshal(req.NetworkState, &target); err != nil {
+		return driver.AttachmentResult{}, err
+	}
+	bridgeTarget, err := attachmentBridgeTarget(req.NetworkIdentity, target)
+	if err != nil {
+		return driver.AttachmentResult{}, err
+	}
+	bridge, err := network.OpenOwnedBridge(ctx, bridgeTarget)
+	if err != nil {
+		return driver.AttachmentResult{}, err
+	}
+	defer bridge.Close()
+	if err := bridge.ObserveAttachment(ctx, *st.Link, alias); err != nil {
+		return driver.AttachmentResult{}, err
 	}
 	return driver.AttachmentResult{Driver: "firecracker", GuestDevice: st.GuestDevice, State: raw}, nil
 }
-func (s *Substrate) Delete(ctx context.Context, _ substrate.NodeHandle, _ driver.AttachmentRequest, raw json.RawMessage) error {
+
+func attachmentBridgeTarget(identity substrate.OperationIdentity, target networkState) (network.BridgeTarget, error) {
+	if target.NAT || target.DockerNetworkID != "" {
+		if target.ManagedBridge == nil || target.ManagedBridge.NetworkID != target.DockerNetworkID {
+			return network.BridgeTarget{}, driver.Wrap(driver.ErrorInvalidState, "firecracker", "managed bridge proof required; rebuild network with mixed-substrate consumers", nil)
+		}
+		return network.BridgeTarget{Identity: identity, Bridge: target.ManagedBridge.Bridge, Managed: target.ManagedBridge}, nil
+	}
+	return network.BridgeTarget{Identity: identity, NetworkNamespace: target.NetNS, Bridge: target.Bridge}, nil
+}
+func (s *Substrate) Delete(ctx context.Context, h substrate.NodeHandle, req driver.AttachmentRequest, raw json.RawMessage) error {
 	var st attachmentState
 	if err := json.Unmarshal(raw, &st); err != nil {
 		return driver.Wrap(driver.ErrorInvalidState, "firecracker", "decode attachment state", err)
 	}
-	if !linkExists(st.Tap) && !linkExistsInNetns(st.Tap, st.NetNS) {
-		return nil
+	if st.Link == nil {
+		return driver.Wrap(driver.ErrorInvalidState, "firecracker", "attachment ownership proof required", nil)
 	}
-	if st.NetNS != "" {
-		if err := exec.CommandContext(ctx, ipBin, "netns", "exec", st.NetNS, ipBin, "link", "del", st.Tap).Run(); err != nil {
-			return driver.Wrap(driver.ErrorUnavailable, "firecracker", "delete tap", err)
-		}
-		return nil
+	_, m, release, err := s.lockedManifest(ctx, h)
+	if err != nil {
+		return err
 	}
-	if err := deleteTapDevice(st.Tap); err != nil {
-		return driver.Wrap(driver.ErrorUnavailable, "firecracker", "delete tap", err)
+	defer release()
+	id := substrate.OperationIdentity{ActionID: "attachment", OwnerUID: m.OwnerUID, ResourceUID: m.ResourceUID, TopologyUID: m.TopologyUID, Generation: m.Generation}
+	alias, err := network.AttachmentAlias(id, req.Name)
+	if err != nil {
+		return err
 	}
-	return nil
+	return network.DeleteOwnedAttachment(ctx, *st.Link, alias)
 }
 
 func (s *Substrate) attachNIC(ctx context.Context, h substrate.NodeHandle, req linkRequest) (attachedNIC, error) {
-	hs, _ := h.Provider.(*HandleState)
-	if hs == nil || hs.ConfigPath == "" {
-		return attachedNIC{}, fmt.Errorf("VM config path not found in handle provider state")
+	vm, m, release, err := s.lockedManifest(ctx, h)
+	if err != nil {
+		return attachedNIC{}, err
+	}
+	defer release()
+	if err := recoverLaunch(m); err != nil {
+		return attachedNIC{}, err
+	}
+	live, _, err := probeProcess(m.Process)
+	if err != nil {
+		return attachedNIC{}, err
+	}
+	state := vm.snapshot()
+	if live || state.destroying || state.destroyed {
+		return attachedNIC{}, fmt.Errorf("firecracker NIC attachment requires a stopped, prepared VM")
+	}
+	hs := &m.Handle
+	if hs.NICCount > 0 && hs.NetnsName != req.NetNS {
+		return attachedNIC{}, fmt.Errorf("firecracker VM cannot attach NICs from multiple network namespaces: %q and %q", hs.NetnsName, req.NetNS)
+	}
+	if req.IP != "" {
+		if _, _, err := splitCIDR(req.IP); err != nil {
+			return attachedNIC{}, err
+		}
+	}
+	// Parse the current configuration before any TAP or namespace mutation.
+	raw, err := readRegularFile(hs.ConfigPath)
+	if err != nil {
+		return attachedNIC{}, err
+	}
+	var prepared fcConfig
+	if err := json.Unmarshal(raw, &prepared); err != nil {
+		return attachedNIC{}, err
+	}
+	bridge, err := network.OpenOwnedBridge(ctx, req.Target)
+	if err != nil {
+		return attachedNIC{}, err
+	}
+	defer bridge.Close()
+	m.Phase = "attaching"
+	if err := saveManifest(m); err != nil {
+		return attachedNIC{}, err
 	}
 
 	tapName := attachmentTapName(h.ID, req.Name)
+	id := substrate.OperationIdentity{ActionID: "attachment", OwnerUID: m.OwnerUID, ResourceUID: m.ResourceUID, TopologyUID: m.TopologyUID, Generation: m.Generation}
+	alias, err := network.AttachmentAlias(id, req.Name)
+	if err != nil {
+		return attachedNIC{}, err
+	}
 
 	netnsName := req.NetNS
-	bridgeName := req.Bridge
-
-	// Create or reuse the TAP device.
-	tapInRoot := linkExists(tapName)
-	tapInNetns := netnsName != "" && linkExistsInNetns(tapName, netnsName)
-
-	if !tapInRoot && !tapInNetns {
-		if err := createTapDevice(tapName); err != nil {
-			return attachedNIC{}, fmt.Errorf("create tap %s: %w", tapName, err)
-		}
-	} else {
-		if tapInRoot {
-			if err := exec.CommandContext(ctx, ipBin, "link", "set", tapName, "up").Run(); err != nil {
-				slog.Warn("set tap up in root netns", "tap", tapName, "error", err)
-			}
-		} else if tapInNetns {
-			if err := exec.CommandContext(ctx, ipBin, "netns", "exec", netnsName, ipBin, "link", "set", tapName, "up").Run(); err != nil {
-				slog.Warn("set tap up in netns", "tap", tapName, "netns", netnsName, "error", err)
-			}
-		}
+	if err := bridge.AttachTap(ctx, tapName, alias); err != nil {
+		return attachedNIC{}, err
 	}
-
-	// Attach TAP to the network bridge. A Docker-managed bridge lives in the
-	// root netns (netnsName == ""), so the TAP must be enslaved there too;
-	// only a named netns needs the move + `ip netns exec`.
-	if bridgeName != "" {
-		if hs.NetnsName != "" && hs.NetnsName != netnsName {
-			return attachedNIC{}, fmt.Errorf("firecracker VM cannot attach NICs from multiple network namespaces: %q and %q", hs.NetnsName, netnsName)
-		}
-		if err := attachTapToBridge(ctx, tapName, bridgeName, netnsName); err != nil {
-			return attachedNIC{}, fmt.Errorf("attach tap to bridge: %w", err)
-		}
-		vmMu.Lock()
-		if vm, ok := vmStore[h.ID]; ok && vm.netnsName == "" {
-			vm.netnsName = netnsName
-		}
-		vmMu.Unlock()
-		if hs.NetnsName == "" {
-			hs.NetnsName = netnsName
-		}
-	}
+	vm.mu.Lock()
+	vm.netnsName = netnsName
+	vm.mu.Unlock()
+	hs.NetnsName = netnsName
 
 	// Add NIC to the VM config JSON.
 	cfgPath := hs.ConfigPath
 	nicIdx := hs.NICCount
+	for i, existing := range hs.Attachments {
+		if existing.Name == req.Name {
+			nicIdx = i
+			break
+		}
+	}
 	ifaceID := fmt.Sprintf("eth%d", nicIdx)
 	fcIface := fcNetworkInterface{
 		IfaceID:     ifaceID,
@@ -182,14 +242,37 @@ func (s *Substrate) attachNIC(ctx context.Context, h substrate.NodeHandle, req l
 		}
 	}
 
-	hs.NICCount = nicIdx + 1
+	proof, err := bridge.CaptureAttachment(ctx, tapName, alias)
+	if err != nil {
+		return attachedNIC{}, err
+	}
+	attachment := managedAttachment{Name: req.Name, GuestDevice: ifaceID, Target: req.Target, Link: proof}
+	if nicIdx < len(hs.Attachments) {
+		hs.Attachments[nicIdx] = attachment
+	} else {
+		hs.Attachments = append(hs.Attachments, attachment)
+	}
+	hs.NICCount = len(hs.Attachments)
 	hs.TapName = tapName
+	m.Phase = "prepared"
+	if err := refreshConfigDigest(m); err != nil {
+		return attachedNIC{}, err
+	}
+	if err := saveManifest(m); err != nil {
+		return attachedNIC{}, err
+	}
+	if original, _ := h.Provider.(*HandleState); original != nil {
+		original.NICCount, original.TapName, original.NetnsName = hs.NICCount, hs.TapName, hs.NetnsName
+		original.Attachments = append([]managedAttachment(nil), hs.Attachments...)
+	}
 
 	return attachedNIC{
-		Kind:    substrate.NICKindTap,
-		HostEnd: tapName,
-		IP:      req.IP,
-		NetNS:   netnsName,
+		Link:     proof,
+		Kind:     substrate.NICKindTap,
+		HostEnd:  tapName,
+		GuestEnd: ifaceID,
+		IP:       req.IP,
+		NetNS:    netnsName,
 	}, nil
 }
 
@@ -225,7 +308,7 @@ func injectKernelIPArg(cfgPath, dev, hostname, cidr, gw string) error {
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
 	}
-	return os.WriteFile(cfgPath, out, 0644)
+	return atomicWriteFile(cfgPath, out, 0600)
 }
 
 // upsertCmdlineArg replaces the first token whose key matches `key=` with the
@@ -321,7 +404,7 @@ func appendNICtoConfig(cfgPath string, iface fcNetworkInterface) error {
 		return fmt.Errorf("marshal config: %w", err)
 	}
 
-	return os.WriteFile(cfgPath, out, 0644)
+	return atomicWriteFile(cfgPath, out, 0600)
 }
 
 // ipBin is the absolute path to the ip binary, resolved once at init.
@@ -341,110 +424,4 @@ func init() {
 	if ipBin == "" {
 		ipBin = "ip" // last resort
 	}
-}
-
-// cleanupTap removes a TAP device from the specified netns (or root netns if empty).
-// This handles the common case where a previous failed apply left the TAP
-// inside a network netns — deleting from root netns would fail silently.
-func cleanupTap(name, netnsName string) {
-	if netnsName != "" {
-		// Try deleting from inside the netns first.
-		if err := exec.Command(ipBin, "netns", "exec", netnsName, ipBin, "tuntap", "del", "dev", name, "mode", "tap").Run(); err != nil {
-			slog.Debug("cleanup tap tuntap in netns", "tap", name, "error", err)
-		}
-		if err := exec.Command(ipBin, "netns", "exec", netnsName, ipBin, "link", "del", name).Run(); err != nil {
-			slog.Debug("cleanup tap link in netns", "tap", name, "error", err)
-		}
-	}
-	// Also try root netns (TAP might not have been moved yet).
-	if err := exec.Command(ipBin, "tuntap", "del", "dev", name, "mode", "tap").Run(); err != nil {
-		slog.Debug("cleanup tap tuntap in root", "tap", name, "error", err)
-	}
-	if err := exec.Command(ipBin, "link", "del", name).Run(); err != nil {
-		slog.Debug("cleanup tap link in root", "tap", name, "error", err)
-	}
-}
-
-// createTapDevice creates a TAP device using ip tuntap.
-// If the device already exists (leftover from a failed run), it is reused.
-func createTapDevice(name string) error {
-	// Check if TAP already exists in root netns — reuse it.
-	if linkExists(name) {
-		if err := exec.Command(ipBin, "link", "set", name, "up").Run(); err != nil {
-			slog.Warn("set existing tap up", "tap", name, "error", err)
-		}
-		return nil
-	}
-
-	cmd := exec.Command(ipBin, "tuntap", "add", "dev", name, "mode", "tap")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("ip tuntap add %s: %w\n%s", name, err, out)
-	}
-	cmd = exec.Command(ipBin, "link", "set", name, "up")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("ip link set %s up: %w\n%s", name, err, out)
-	}
-	return nil
-}
-
-// linkExists checks if a network link exists in the current netns.
-func linkExists(name string) bool {
-	return exec.Command(ipBin, "link", "show", name).Run() == nil
-}
-
-// linkExistsInNetns checks if a network link exists inside a named netns.
-func linkExistsInNetns(name, netnsName string) bool {
-	return exec.Command(ipBin, "netns", "exec", netnsName, ipBin, "link", "show", name).Run() == nil
-}
-
-// attachTapToBridge moves the TAP into the network's netns and enslaves it
-// to the bridge. When netnsName is empty the bridge lives in the root netns,
-// so the TAP is enslaved in place without any `ip netns exec`.
-func attachTapToBridge(ctx context.Context, tapName, bridgeName, netnsName string) error {
-	// runIP executes `ip` inside the target netns (or the current netns when
-	// netnsName is empty).
-	runIP := func(args ...string) ([]byte, error) {
-		argv := []string{ipBin}
-		if netnsName != "" {
-			argv = []string{ipBin, "netns", "exec", netnsName, ipBin}
-		}
-		argv = append(argv, args...)
-		return exec.CommandContext(ctx, argv[0], argv[1:]...).CombinedOutput()
-	}
-
-	// Idempotent: skip if the TAP is already enslaved to the bridge.
-	if out, _ := runIP("link", "show", tapName); strings.Contains(string(out), "master "+bridgeName) {
-		return nil
-	}
-
-	// Move the TAP into the named netns when the bridge lives there. A root-netns
-	// bridge needs no move — the TAP is already in the target netns.
-	if netnsName != "" {
-		if _, err := runIP("link", "show", tapName); err != nil {
-			if out, err := exec.CommandContext(ctx, ipBin, "link", "set", tapName, "netns", netnsName).CombinedOutput(); err != nil {
-				return fmt.Errorf("move tap to netns: %w\n%s", err, out)
-			}
-		}
-	}
-
-	// Enslave the TAP to the bridge first, then bring it up: `ip link set master`
-	// resets the device to DOWN, so the up must come after the enslave.
-	if out, err := runIP("link", "set", tapName, "master", bridgeName); err != nil {
-		return fmt.Errorf("enslave tap to bridge: %w\n%s", err, out)
-	}
-	if out, err := runIP("link", "set", tapName, "up"); err != nil {
-		return fmt.Errorf("set tap up: %w\n%s", err, out)
-	}
-	return nil
-}
-
-// deleteTapDevice removes a TAP device.
-func deleteTapDevice(name string) error {
-	return exec.Command(ipBin, "link", "del", name).Run()
-}
-
-// DeleteTapForNIC removes a TAP device (used during destroy).
-func DeleteTapForNIC(tapName, netnsName string) error {
-	cleanupTap(tapName, netnsName)
-	return nil
 }

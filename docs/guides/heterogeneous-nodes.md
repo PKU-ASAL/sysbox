@@ -40,6 +40,7 @@ Sysbox 可以用原生 libvirt 启动预先安装好的 Windows 10 qcow2，并�
 | 基础镜像 | OCI image | kernel + rootfs | qcow2 |
 | 创建节点 | 调用 Docker 创建容器 | 生成配置并启动 Firecracker 进程 | 创建 libvirt domain |
 | 网络设备 | veth 或 Docker endpoint | TAP | domain 虚拟 NIC/TAP |
+| 目标网络 | 隔离网络或 Docker NAT | 隔离网络 | 隔离网络的受管 root bridge |
 | 网卡接入时机 | 支持运行时接入 | 通常在启动前接入 | 通常写入 domain 配置后启动 |
 | Guest 命令执行 | Docker Exec | vsock RPC 或 SSH | SSH |
 | 状态观察 | Docker Inspect | 进程、socket 和 guest observation | virsh/domain 查询 |
@@ -52,3 +53,21 @@ Sysbox 可以用原生 libvirt 启动预先安装好的 Windows 10 qcow2，并�
 在混合拓扑中显式声明 architecture 和 guest family。所有 provider 必须实现该拓扑需要的 NIC、guest execution、state 或 reset capability，否则 planning 阶段失败。
 
 运行 `examples/heterogeneous-matrix` 验证六向 IPv4 通信、重复 plan、targeted reset 和 residue cleanup。Artifact 准备见 [Artifacts](../operations/artifacts.md)。
+
+## Adopting an unowned libvirt definition
+
+The public inspection/confirm workflow can claim a stopped persistent libvirt
+VM by exact UUID. Inspection and pre-mutation checks compare the full definition
+fingerprint and reject foreign ownership or a concurrent configuration change.
+The host publishes Sysbox ownership and the original fingerprint with libvirt's
+metadata API; after a lost response, cold observation accepts only that exact
+operation and generation. Observation never writes metadata.
+
+The imported handle owns the domain definition only. It contains no managed disk
+path or VM directory, so Destroy stops/undefines the exact owned UUID and preserves
+external disks, backing chains and other storage. Start reuses the existing UUID
+and refuses to reconstruct a missing domain. Reset requires a separately planned
+replacement from an immutable baseline and is rejected for an external definition.
+Guest connectivity and NIC migration are not inferred from arbitrary external XML.
+Libvirt metadata updates have no administrator-proof CAS: external writers must be
+excluded during the explicit adoption operation; Sysbox serializes its own claims.

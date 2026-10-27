@@ -14,18 +14,24 @@ import (
 )
 
 func TestDestroyNodeDoesNotWaitOnProcessAlreadyOwnedByReaper(t *testing.T) {
-	cmd := exec.Command("sh", "-c", "sleep 30")
+	// A shell may exec sleep after manifest seeding, legitimately changing
+	// process identity mid-probe. This fixture tests reaping, not exec races.
+	cmd := exec.Command("sleep", "30")
 	require.NoError(t, cmd.Start())
 	vmID := "destroy-reaper-race"
+	root := t.TempDir()
 	vm := &vmProcess{cmd: cmd, pid: cmd.Process.Pid, started: true}
 	vmMu.Lock()
-	vmStore[vmID] = vm
+	vmStore[filepath.Join(root, vmID)] = vm
 	vmMu.Unlock()
-	go reapVMProcess(vmID, cmd)
+	go reapVMProcess(vm, cmd)
+	sub := New("", root)
+	hs := &HandleState{}
+	seedOwnedManifest(t, sub, vmID, hs, cmd)
 
 	done := make(chan error, 1)
 	go func() {
-		done <- New("", t.TempDir()).DestroyNode(context.Background(), substrate.NodeHandle{ID: vmID})
+		done <- sub.DestroyNode(context.Background(), substrate.NodeHandle{ID: vmID, Provider: hs})
 	}()
 	select {
 	case err := <-done:
@@ -46,9 +52,6 @@ func TestDestroyNodeCleansOwnedHotProcessDuringExitWindow(t *testing.T) {
 	require.NoError(t, cmd.Start())
 	startTime := processStartTime(cmd.Process.Pid)
 	require.NotEmpty(t, startTime)
-	require.NoError(t, writeProcessAnchor(filepath.Join(vmDir, "firecracker.pid"), processAnchor{
-		PID: cmd.Process.Pid, StartTime: startTime, Socket: socket, VMID: vmID,
-	}))
 	for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); {
 		cmdline, err := os.ReadFile(filepath.Join("/proc", fmt.Sprint(cmd.Process.Pid), "cmdline"))
 		if err == nil && len(cmdline) == 0 {
@@ -58,10 +61,13 @@ func TestDestroyNodeCleansOwnedHotProcessDuringExitWindow(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = cmd.Wait() })
 	vmMu.Lock()
-	vmStore[vmID] = &vmProcess{cmd: cmd, pid: cmd.Process.Pid, startTime: startTime, socket: socket, vmID: vmID, started: true}
+	vmStore[filepath.Join(root, vmID)] = &vmProcess{cmd: cmd, pid: cmd.Process.Pid, startTime: startTime, socket: socket, vmID: vmID, started: true}
 	vmMu.Unlock()
 
-	err := New("", root).DestroyNode(context.Background(), substrate.NodeHandle{ID: vmID, Provider: &HandleState{VMDir: vmDir, Socket: socket}})
+	sub := New("", root)
+	hs := &HandleState{VMDir: vmDir, Socket: socket}
+	seedOwnedManifest(t, sub, vmID, hs, cmd)
+	err := sub.DestroyNode(context.Background(), substrate.NodeHandle{ID: vmID, Provider: hs})
 	require.NoError(t, err)
 	_, err = os.Stat(vmDir)
 	require.ErrorIs(t, err, os.ErrNotExist)
@@ -78,15 +84,15 @@ func TestDestroyNodeUsesHotProcessIdentityInsteadOfCommandLineHeuristic(t *testi
 	require.NoError(t, cmd.Start())
 	startTime := processStartTime(cmd.Process.Pid)
 	require.NotEmpty(t, startTime)
-	require.NoError(t, writeProcessAnchor(filepath.Join(vmDir, "firecracker.pid"), processAnchor{
-		PID: cmd.Process.Pid, StartTime: startTime, Socket: socket, VMID: vmID,
-	}))
 	t.Cleanup(func() { _ = cmd.Wait() })
 	vmMu.Lock()
-	vmStore[vmID] = &vmProcess{cmd: cmd, pid: cmd.Process.Pid, startTime: startTime, socket: socket, vmID: vmID, started: true}
+	vmStore[filepath.Join(root, vmID)] = &vmProcess{cmd: cmd, pid: cmd.Process.Pid, startTime: startTime, socket: socket, vmID: vmID, started: true}
 	vmMu.Unlock()
 
-	err := New("", root).DestroyNode(context.Background(), substrate.NodeHandle{ID: vmID, Provider: &HandleState{VMDir: vmDir, Socket: socket}})
+	sub := New("", root)
+	hs := &HandleState{VMDir: vmDir, Socket: socket}
+	seedOwnedManifest(t, sub, vmID, hs, cmd)
+	err := sub.DestroyNode(context.Background(), substrate.NodeHandle{ID: vmID, Provider: hs})
 
 	require.NoError(t, err)
 	_, err = os.Stat(vmDir)

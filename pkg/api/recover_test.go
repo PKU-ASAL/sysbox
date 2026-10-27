@@ -13,35 +13,7 @@ import (
 	"github.com/oslab/sysbox/pkg/state"
 )
 
-func TestRecoverCandidateRequiresSupportedDoneUnrecordedStateResource(t *testing.T) {
-	step := runtime.OperationStep{
-		Kind:          "resource",
-		Provider:      "docker",
-		Status:        runtime.OperationDone,
-		StateResource: &runtime.StateResourceLog{Type: "sysbox_node", Name: "web"},
-	}
-	require.True(t, recoverCandidate(step))
-
-	step.StateRecorded = true
-	require.False(t, recoverCandidate(step))
-
-	step.StateRecorded = false
-	step.StateResource = nil
-	require.False(t, recoverCandidate(step))
-
-	step.StateResource = &runtime.StateResourceLog{Type: "sysbox_node", Name: "vm"}
-	step.Provider = "firecracker"
-	require.True(t, recoverCandidate(step))
-
-	step.Provider = "network"
-	require.True(t, recoverCandidate(step))
-
-	step.Provider = "libvirt"
-	step.StateResource = &runtime.StateResourceLog{Type: "sysbox_unknown", Name: "thing", Provider: "libvirt"}
-	require.False(t, recoverCandidate(step))
-}
-
-func TestRecoverCheckpointReplaysStatePatch(t *testing.T) {
+func TestRecoverCheckpointRejectsBlindStatePatchReplay(t *testing.T) {
 	dir := t.TempDir()
 	cp := runtime.OperationCheckpoint{
 		RunID:    "run-1",
@@ -61,19 +33,17 @@ func TestRecoverCheckpointReplaysStatePatch(t *testing.T) {
 	store := &localAPIStore{runsDir: dir}
 	require.NoError(t, store.SaveCheckpoint(context.Background(), "mixed", "run-1", cp))
 	report, err := reconcileCheckpointJournal(context.Background(), store, "mixed", "run-1", mgr, "test")
-	require.NoError(t, err)
-	require.Len(t, report.Recovered, 1)
-	require.Equal(t, "replayed_state_patch", report.Recovered[0].Status)
+	require.ErrorIs(t, err, runtime.ErrConvergenceUnsupported)
+	require.Nil(t, report)
 
 	st, err := mgr.Load()
 	require.NoError(t, err)
 	res := st.FindResource(address.Resource("sysbox_node", "web"))
-	require.NotNil(t, res)
-	require.Equal(t, "abc", res.ContainerID())
+	require.Nil(t, res)
 
 	cpPtr, err := store.LoadCheckpoint(context.Background(), "mixed", "run-1")
 	require.NoError(t, err)
-	require.True(t, cpPtr.StatePatches[0].Recorded)
+	require.False(t, cpPtr.StatePatches[0].Recorded)
 }
 
 func TestAdoptStateResourceDropsLegacyProviderExtra(t *testing.T) {

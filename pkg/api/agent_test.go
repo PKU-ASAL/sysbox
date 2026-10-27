@@ -19,6 +19,7 @@ import (
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/state"
 )
 
@@ -92,7 +93,7 @@ func TestAgentCommandWebSocketReceivesAssignedRunAndReportsAck(t *testing.T) {
 			require.Equal(t, "run_assigned", cmd.Type)
 			require.NotEmpty(t, cmd.ID)
 			require.NotNil(t, cmd.Run)
-			event = controlplane.AgentCommandEvent{CommandID: cmd.ID, LeaseOwner: cmd.LeaseOwner, Type: cmd.Type, Status: "ack"}
+			event = controlplane.AgentCommandEvent{CommandID: cmd.ID, Type: cmd.Type, Status: "ack", ActionID: cmd.ActionID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation, LeaseEpoch: cmd.LeaseEpoch, LeaseOwner: cmd.LeaseOwner, Attempt: cmd.Attempt}
 			raw, _ := json.Marshal(event)
 			_ = conn.Write(context.Background(), websocket.MessageText, raw)
 		}
@@ -101,6 +102,10 @@ func TestAgentCommandWebSocketReceivesAssignedRunAndReportsAck(t *testing.T) {
 
 	run := s.jobs.start("mixed", "apply")
 	require.NoError(t, s.scheduling().DispatchRun(context.Background(), run, []string{"docker"}))
+	queued, err := s.apiStore.ListAgentCommands(context.Background(), "host-a")
+	require.NoError(t, err)
+	require.Len(t, queued, 1)
+	require.Equal(t, run.ID, queued[0].ActionID)
 
 	select {
 	case event := <-eventCh:
@@ -303,9 +308,12 @@ func TestAgentCommandLeaseExpiresAndRedelivers(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, ok)
 
-	leased.LeaseUntil = time.Now().Add(-time.Second)
-	leased.Status = controlplane.AgentCommandStatusQueued
-	require.NoError(t, store.SaveAgentCommand(ctx, *leased))
+	// Seed expiry through the storage fixture: normal Save cannot rewrite a grant.
+	expired := *leased
+	expired.LeaseUntil = time.Now().Add(-time.Second)
+	raw, err := persistence.EncodeCommandRecord(persistence.CommandRecord{Command: expired})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(store.runsDir, "_agents", "host-a", "commands", "cmd-1.json"), raw, 0600))
 	leased, ok, err = store.AcquireAgentCommandLease(ctx, "host-a", "cmd-1", "owner-2", time.Hour)
 	require.NoError(t, err)
 	require.True(t, ok)
@@ -494,7 +502,7 @@ resource "sysbox_node" "web" {
   ]
 }`)
 	rec := httptest.NewRecorder()
-	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/agents/host-a/projections/resources", body))
+	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/agents/host-a/projections/resources", bindObservationTestBody(t, s, "host-a", body)))
 	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
 
 	rec = httptest.NewRecorder()
@@ -515,7 +523,7 @@ func saveHealthyNodeProjection(t *testing.T, s *Server, agentID, topology, node 
   ]
 }`)
 	rec := httptest.NewRecorder()
-	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/agents/"+agentID+"/projections/resources", body))
+	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/agents/"+agentID+"/projections/resources", bindObservationTestBody(t, s, agentID, body)))
 	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
 }
 
@@ -541,9 +549,9 @@ func TestAgentRunCompletionUpdatesRunAndProjection(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
 	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}}))
 	run := s.jobs.start("mixed", "apply")
-	s.jobs.assign(run, "host-a")
-	claimed, claimErr := s.jobs.claim(run.ID, "host-a")
-	require.NoError(t, claimErr)
+	require.NoError(t, s.jobs.assign(run, "host-a"))
+	claimed, err := s.jobs.claim(run.ID, "host-a")
+	require.NoError(t, err)
 
 	body := bytes.NewBufferString(`{
   "run": {
@@ -597,7 +605,7 @@ func TestAgentResourceProjectionUpdatesStatusProjection(t *testing.T) {
   }
 }`)
 	rec := httptest.NewRecorder()
-	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/agents/host-a/projections/resources", body))
+	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/agents/host-a/projections/resources", bindObservationTestBody(t, s, "host-a", body)))
 	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
 
 	rec = httptest.NewRecorder()
@@ -619,7 +627,7 @@ func TestAgentInventoryPersists(t *testing.T) {
   "topologies": [{"workspace":"mixed","topology":"mixed","serial":3,"resource_count":2,"health":"healthy"}]
 }`)
 	rec := httptest.NewRecorder()
-	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/agents/host-a/inventory", body))
+	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/agents/host-a/inventory", bindObservationTestBody(t, s, "host-a", body)))
 	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
 
 	rec = httptest.NewRecorder()
@@ -632,7 +640,7 @@ func TestAgentInventoryPersists(t *testing.T) {
 func TestNodeOperationCompletionPersists(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
 	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}}))
-	op := s.nodeOps.Create(controlplane.NodeOperation{
+	op, err := s.nodeOperations().enqueue(context.Background(), "topology-uid", prepareNodeOperation(controlplane.NodeOperation{
 		Topology:    "mixed",
 		Workspace:   "mixed",
 		Operation:   "pause",
@@ -640,7 +648,13 @@ func TestNodeOperationCompletionPersists(t *testing.T) {
 		AgentID:     "host-a",
 		RequestedBy: "alice",
 		Roles:       []string{"operator"},
-	})
+		ResourceUID: "resource", Generation: 1,
+	}))
+	require.NoError(t, err)
+	lease, ok, err := s.apiStore.AcquireAgentCommandLease(context.Background(), op.AgentID, op.CommandID, "worker", time.Minute)
+	require.NoError(t, err)
+	require.True(t, ok)
+	op.LeaseOwner, op.LeaseEpoch, op.Attempt = lease.LeaseOwner, lease.LeaseEpoch, lease.Attempt
 	op.Status = controlplane.NodeOperationStatusDone
 	op.Audit = append(op.Audit, controlplane.Event{Action: "complete", Status: "done", Actor: "alice"})
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/hashicorp/hcl/v2"
 
@@ -39,6 +40,11 @@ func (KernelResourceHandler) Read(_ context.Context, current state.Resource) (Re
 		return result, nil
 	}
 	if _, err := os.Stat(path); err != nil {
+		if !os.IsNotExist(err) {
+			result.Status = state.ResourceUnknown
+			result.Reason = err.Error()
+			return result, err
+		}
 		result.Checks = map[string]controlplane.ResourceCheckHealth{"file": {OK: false, Reason: err.Error()}}
 		result.Status = state.ResourceDrifted
 		result.Reason = err.Error()
@@ -69,7 +75,11 @@ func (KernelResourceHandler) Create(ctx context.Context, pc *ProviderContext, n 
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("kernel %s: %w", n.Address.Name, err)
 	}
-	res, err := artifact.New().ResolveIdentity(artifact.IdentitySpec{Kind: substrate.ArtifactKernel, Source: resolvedSource, ExpectedDigest: cfg.SHA256, Architecture: cfg.Architecture, GuestFamily: substrate.GuestFamilyUnknown})
+	resolvedSource, err = artifact.ResolveSource(ctx, resolvedSource, cfg.SHA256, pc.exec.workspaceDir)
+	if err != nil {
+		return state.Resource{}, err
+	}
+	res, err := artifact.NewWithContext(ctx).ResolveIdentity(artifact.IdentitySpec{Kind: substrate.ArtifactKernel, Source: resolvedSource, ExpectedDigest: cfg.SHA256, Architecture: cfg.Architecture, GuestFamily: substrate.GuestFamilyUnknown})
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("kernel %s: %w", n.Address.Name, err)
 	}
@@ -124,14 +134,8 @@ func (KernelResourceHandler) PreflightResource(r config.ResourceBlock, ctx *hcl.
 	if err := config.DecodeResource(&r, cfg, ctx); err != nil {
 		return []substrate.PreflightCheck{DecodePreflightError(r.Type, r.Name, err)}
 	}
-	if check := ArtifactPreflightCheck("kernel:"+r.Name, cfg.Source, cfg.SHA256); check != nil {
+	if check := ArtifactPreflightCheck("kernel:"+r.Name, cfg.Source, cfg.SHA256, filepath.Dir(r.Remain.MissingItemRange().Filename)); check != nil {
 		return []substrate.PreflightCheck{*check}
 	}
 	return nil
-}
-
-// Same shape as the image handler: identity resolution against an immutable
-// digest, with a state-only Delete.
-func (KernelResourceHandler) RecoveryNotRequired() string {
-	return "kernel artifact identity resolution is idempotent; owns no external object and Delete is state-only"
 }

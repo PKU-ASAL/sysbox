@@ -23,6 +23,16 @@ func ResumeResetPlan(checkpoint *OperationCheckpoint, current *Plan) (*Plan, err
 	if checkpoint == nil || current == nil {
 		return nil, fmt.Errorf("reset resume requires checkpoint and current plan")
 	}
+	for _, plan := range []Plan{{Actions: checkpoint.Plan}, *current} {
+		if err := plan.Validate(); err != nil {
+			return nil, err
+		}
+		for _, action := range plan.Actions {
+			if action.Action != controlplane.PlanActionReset {
+				return nil, fmt.Errorf("reset resume plan contains non-reset action %s", action.Action)
+			}
+		}
+	}
 	fingerprint, err := planActionsSHA256(checkpoint.Plan)
 	if err != nil {
 		return nil, err
@@ -130,72 +140,33 @@ type resetNodeContext struct {
 	step        int
 }
 
-func (e *Executor) Reset(ctx context.Context, plan *Plan) error {
-	if err := ctx.Err(); err != nil {
+func (e *Executor) Reset(ctx context.Context, plan *Plan) (resetErr error) {
+	if err := e.preflightManagedBridges(ctx); err != nil {
 		return err
 	}
-	if err := plan.Validate(); err != nil {
-		return fmt.Errorf("validate reset plan: %w", err)
-	}
-	contexts := make([]*resetNodeContext, 0, len(plan.Actions))
-	for _, action := range plan.Actions {
-		if action.Action != controlplane.PlanActionReset {
-			return fmt.Errorf("reset plan contains non-reset action %q for %s", action.Action, action.Address)
-		}
-		prepared, err := e.buildResetNodeContext(ctx, action)
-		if err != nil {
-			return err
-		}
-		contexts = append(contexts, prepared)
-	}
-	if err := e.recorder.Begin("reset", plan); err != nil {
-		return err
-	}
-	var resetErr error
-	defer func() { e.recorder.Finish(resetErr) }()
-
-	for i := len(contexts) - 1; i >= 0; i-- {
-		item := contexts[i]
-		item.step = e.recorder.StepStart(item.action.Address.String(), controlplane.PlanActionReset)
-		if err := e.prepareResetNode(ctx, item); err != nil {
-			e.recorder.StepFailed(item.step, err)
-			resetErr = err
-			return err
-		}
-		if err := e.destroyResetNode(ctx, item); err != nil {
-			e.recorder.StepFailed(item.step, err)
-			resetErr = err
-			return fmt.Errorf("destroy reset %s: %w", item.action.Address, err)
-		}
-	}
-	for _, item := range contexts {
-		beforeApply := cloneResetStateResource(*item.current)
-		if err := e.applyResetNode(ctx, item); err != nil {
-			e.recorder.StepFailed(item.step, err)
-			resetErr = err
-			return err
-		}
-		if err := e.recordStepExternal(ctx, item.step, item.action.Address, controlplane.PlanActionReset); err != nil {
-			restoreResetStateResource(e.state, beforeApply)
-			item.current = e.state.FindResource(item.action.Address)
-			e.recorder.StepFailed(item.step, err)
-			resetErr = err
-			return err
-		}
-		item.current = e.state.FindResource(item.action.Address)
-		e.recorder.StepDone(item.step)
-	}
-	return nil
+	return e.convergeReset(ctx, plan)
 }
 
 func (e *Executor) destroyResetNode(ctx context.Context, item *resetNodeContext) error {
+	attachmentCtx := ctx
+	if len(item.current.Attachments) > 0 {
+		id, ok := substrate.OperationIdentityFromContext(ctx)
+		old := item.current
+		if !ok || id.Validate() != nil || old.Generation < 1 || id.Generation <= old.Generation || id.OwnerUID != old.OwnerUID || id.TopologyUID != old.OwnerUID || id.ResourceUID != old.ResourceUID || item.request.Current.Generation != old.Generation {
+			return fmt.Errorf("reset attachment deletion requires matching old and target generation identities")
+		}
+		// This reset was prepared/observed with the target identity. Its
+		// attachment cleanup addresses the recorded old generation only.
+		id.Generation = old.Generation
+		attachmentCtx = substrate.WithOperationIdentity(ctx, id)
+	}
 	for _, attachment := range item.current.Attachments {
 		request, err := attachmentRequestFromState(e.state, attachment)
 		if err != nil {
 			return err
 		}
 		err = e.recordSubstep(item.step, "delete_attachment", map[string]any{"name": attachment.Name}, func() error {
-			deleteErr := item.nicDriver.Delete(ctx, item.request.Current, request, attachment.DriverState)
+			deleteErr := item.nicDriver.Delete(attachmentCtx, item.request.Current, request, attachment.DriverState)
 			if driver.IsCategory(deleteErr, driver.ErrorNotFound) {
 				return nil
 			}
@@ -467,6 +438,18 @@ func (e *Executor) applyResetNode(ctx context.Context, item *resetNodeContext) e
 			return err
 		}
 	}
+	if e.activeReset != nil {
+		replacement := cloneResetStateResource(updated)
+		replacement.OwnerUID, replacement.ResourceUID, replacement.Generation = e.activeReset.OwnerUID, e.activeReset.ResourceUID, e.activeReset.Generation
+		e.activeReset.Replacement = &replacement
+		if err := e.actions.CommitActionOutcome(ctx, *e.activeReset, nil); err != nil {
+			return err
+		}
+		e.activeReset.Revision++
+	}
+	if err := e.configureNodeRoutes(ctx, item.step, item.node.Address, item.current.Driver, handle, item.config.Routes, &updated); err != nil {
+		return err
+	}
 	if len(item.config.Provisioners) > 0 {
 		connection, err := e.connectionForNode(ctx, item.nodeDriver, handle, item.config.Connections)
 		if err != nil {
@@ -511,7 +494,7 @@ func (e *Executor) applyResetNode(ctx context.Context, item *resetNodeContext) e
 		if decision.Decision != controlplane.RecoveryDecisionNoop {
 			return fmt.Errorf("final health did not converge: %s", decision.Reason)
 		}
-		status, reason, attachmentErr := observeAttachments(ctx, handle, &updated)
+		status, reason, attachmentErr := observeAttachments(ctx, handle, &updated, e.state)
 		if attachmentErr != nil {
 			return attachmentErr
 		}
@@ -524,6 +507,9 @@ func (e *Executor) applyResetNode(ctx context.Context, item *resetNodeContext) e
 	}
 	if err := e.recordSubstep(item.step, "cleanup_reset", nil, func() error { return item.resetDriver.CleanupReset(ctx, item.handle) }); err != nil {
 		return fmt.Errorf("cleanup reset %s: %w", item.action.Address, err)
+	}
+	if err := updated.ClearRecoveryRequirement(); err != nil {
+		return err
 	}
 	if err := updated.SetRuntimeValue("reset_handle", ""); err != nil {
 		return err

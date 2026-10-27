@@ -2,8 +2,8 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"io"
-	"time"
 
 	"github.com/coder/websocket"
 
@@ -23,8 +23,7 @@ type ExecutionBridge struct {
 }
 
 func NewExecutionBridge(cfg config.ServiceConfig) *ExecutionBridge {
-	s := NewServerWithConfig(cfg)
-	s.jobs = newJobsWithPolicy(s.runsDir, s.apiStore, false, cfg.RunClaimTTL(), cfg.RunExpiredPolicy())
+	s := newServerWithConfig(cfg, false)
 	return &ExecutionBridge{server: s}
 }
 
@@ -42,29 +41,33 @@ func (b *ExecutionBridge) LogWriter(runID string) io.Writer {
 	return b.server.jobs.logWriter(runID)
 }
 
-func (b *ExecutionBridge) LockTopology(topology string) func() {
-	return b.server.jobs.lockTopology(topology)
+func (b *ExecutionBridge) LockTopology(ctx context.Context, topology string) (func(), error) {
+	repo, err := b.server.actionRepository(topology)
+	if err != nil {
+		return nil, err
+	}
+	release, err := repo.LockExecution(ctx, topology)
+	if err != nil {
+		return nil, err
+	}
+	unlock, err := b.server.jobs.topologyLocks.LockContext(ctx, topology)
+	if err != nil {
+		release()
+		return nil, err
+	}
+	return func() { unlock(); release() }, nil
 }
 
-// Finish prepares the agent's completion receipt. The bridge shares the API
-// database for state/checkpoints, but it must never publish a canonical run
-// outcome there: only the authenticated completion endpoint owns that CAS.
 func (b *ExecutionBridge) Finish(run *controlplane.Run, err error) {
-	if run == nil {
-		return
-	}
-	jobs := b.server.jobs
-	jobs.mu.Lock()
-	run.MarkFinished(err, time.Now().UTC())
-	run.Inputs = nil
-	jobs.runs[run.ID] = run
-	delete(jobs.applyInputs, run.ID)
-	jobs.mu.Unlock()
-	jobs.logs.Close(run.ID)
+	b.server.jobs.finish(run, err)
 }
 
 func (b *ExecutionBridge) StateManager(topology string) (*state.Manager, error) {
 	return b.server.stateManager(topology)
+}
+
+func (b *ExecutionBridge) ActionRepository(topology string) (runtime.ActionRepository, error) {
+	return b.server.actionRepository(topology)
 }
 
 func (b *ExecutionBridge) HCLFile(topology string) string {
@@ -75,18 +78,26 @@ func (b *ExecutionBridge) HCLFileForRun(run *controlplane.Run) string {
 	if run != nil && run.SnapshotPath != "" {
 		return run.SnapshotPath
 	}
-	if run == nil {
-		return ""
+	return ""
+}
+
+// MaterializeRunRevision resolves an immutable global revision through the
+// canonical repository and pins it in the host workspace tree. Host
+// supervisors use this entry point instead of accepting a worker supplied
+// filesystem path.
+func (b *ExecutionBridge) MaterializeRunRevision(ctx context.Context, topology, revision string) (string, error) {
+	if b == nil || b.server == nil || topology == "" || revision == "" {
+		return "", fmt.Errorf("immutable run revision is required")
 	}
-	return b.HCLFile(run.Topology)
+	value, err := b.server.apiStore.GetGlobalRevision(ctx, revision)
+	if err != nil {
+		return "", err
+	}
+	return b.server.workspaceService().MaterializeRevision(topology, revision, value.Files)
 }
 
 func (b *ExecutionBridge) Topologies(ctx context.Context) []string {
-	mgr, err := b.server.stateManager("__list__")
-	if err != nil {
-		return nil
-	}
-	items, err := mgr.ListTopologies(ctx)
+	items, err := b.server.workspaceService().List(ctx)
 	if err != nil {
 		return nil
 	}
@@ -115,8 +126,15 @@ func (b *ExecutionBridge) ReconcileParentJournal(parent, run *controlplane.Run) 
 	return b.server.reconcileParentJournal(parent, run)
 }
 
-func (b *ExecutionBridge) Preflight(ctx context.Context, topology string, log io.Writer) error {
-	res, err := b.server.preflightTopology(topology)
+func (b *ExecutionBridge) Preflight(ctx context.Context, run *controlplane.Run, log io.Writer) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	path := agentexec.RunWorkspace(ctx, run)
+	if path == "" {
+		return fmt.Errorf("run preflight requires an immutable snapshot")
+	}
+	res, err := preflightFile(path)
 	if err != nil {
 		return err
 	}
@@ -129,14 +147,6 @@ func (b *ExecutionBridge) BuildResetPlan(g *graph.Graph, st *state.State, target
 }
 
 func (b *ExecutionBridge) BeforeReset(*runtime.Plan) error { return nil }
-
-func (b *ExecutionBridge) ResumeResetPlan(ctx context.Context, parent *controlplane.Run, current *runtime.Plan) (*runtime.Plan, error) {
-	cp, err := b.server.apiStore.LoadCheckpoint(ctx, parent.Topology, parent.ID)
-	if err != nil {
-		return nil, err
-	}
-	return runtime.ResumeResetPlan(cp, current)
-}
 
 func (b *ExecutionBridge) OpenConsole(ctx context.Context, sess controlplane.ConsoleSession, req controlplane.ConsoleRequest, ws *websocket.Conn) error {
 	mgr, err := b.StateManager(sess.Topology)

@@ -1,13 +1,10 @@
 package commands
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/spf13/cobra"
-
-	"github.com/oslab/sysbox/pkg/runtime"
 )
 
 var (
@@ -38,67 +35,8 @@ func runImport(cmd *cobra.Command, args []string) error {
 	}
 	externalID := args[1]
 
-	if addr.Type != "sysbox_node" && addr.Type != "sysbox_network" {
-		return fmt.Errorf("import only supported for sysbox_node and sysbox_network, got %q", addr.Type)
-	}
-
-	mgr, err := newManager()
-	if err != nil {
-		return err
-	}
-	if err := mgr.CheckMutationSafety(); err != nil {
-		return err
-	}
-	s, err := mgr.Load()
-	if err != nil {
-		return fmt.Errorf("load state: %w", err)
-	}
-
-	// Check that the resource doesn't already exist in state.
-	if r := s.FindResource(addr); r != nil {
-		return fmt.Errorf("resource %s already exists in state; remove it first", addr)
-	}
-
-	subName := flagImportSubstrate
-	if subName == "" {
-		// Try to infer substrate from resource type.
-		if addr.Type == "sysbox_network" {
-			subName = "network" // isolated networks
-		} else {
-			return fmt.Errorf("--substrate is required for sysbox_node import")
-		}
-	}
-
-	ctx := context.Background()
-
-	switch addr.Type {
-	case "sysbox_node":
-		handler, ok := runtime.GetResourceHandler(addr.Type)
-		if !ok {
-			return fmt.Errorf("resource handler %q not registered", addr.Type)
-		}
-		importer, ok := handler.(runtime.ResourceImporter)
-		if !ok {
-			return fmt.Errorf("resource %s does not support import", addr.Type)
-		}
-		resource, err := importer.Import(ctx, addr, subName, externalID)
-		if err != nil {
-			return fmt.Errorf("import: %w", err)
-		}
-		s.AddResource(resource)
-		fmt.Printf("Imported %s (id=%s)\n", addr, resource.ExternalID)
-
-	case "sysbox_network":
-		// For networks, ReadNode is not applicable; check the substrate
-		// for managed network support.
-		return fmt.Errorf("import for sysbox_network is not yet supported; use apply instead")
-
-	default:
-		return fmt.Errorf("import not supported for resource type %q", addr.Type)
-	}
-
-	if err := mgr.Save(s); err != nil {
-		return fmt.Errorf("save state: %w", err)
-	}
-	return nil
+	_ = addr
+	_ = externalID
+	_ = flagImportSubstrate
+	return fmt.Errorf("local import is removed; use the API adoption plan and confirm workflow")
 }

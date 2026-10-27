@@ -14,6 +14,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 )
@@ -32,13 +33,17 @@ type LocalOptions struct {
 	BeforeDestroy    func(*runtime.Plan) error
 	BeforeReset      func(*runtime.Plan) error
 	AfterRun         func(*controlplane.Run)
+	// PrepareExecution is a credential-owning local controller hook. It runs
+	// after the topology lock is acquired and before any runtime provider call.
+	PrepareExecution func(context.Context, *controlplane.Run) (context.Context, func(), error)
 	CheckpointStore  runtime.CheckpointStore
 }
 
 type LocalBridge struct {
-	opts LocalOptions
-	mu   sync.Mutex
-	runs map[string]*controlplane.Run
+	repositories map[string]*persistence.Repository
+	opts         LocalOptions
+	mu           sync.Mutex
+	runs         map[string]*controlplane.Run
 }
 
 func NewLocalBridge(opts LocalOptions) *LocalBridge {
@@ -52,7 +57,7 @@ func NewLocalBridge(opts LocalOptions) *LocalBridge {
 		opts.Log = os.Stdout
 	}
 	if opts.CheckpointStore == nil {
-		opts.CheckpointStore = localCheckpointStore{}
+		opts.CheckpointStore = localCheckpointStore{runsDir: opts.RunsDir}
 	}
 	return &LocalBridge{opts: opts, runs: map[string]*controlplane.Run{}}
 }
@@ -66,12 +71,35 @@ func (b *LocalBridge) AttachRun(run *controlplane.Run) {
 	b.mu.Unlock()
 }
 
+func (b *LocalBridge) PrepareExecution(ctx context.Context, run *controlplane.Run) (context.Context, func(), error) {
+	repo, err := b.repository(run.Topology)
+	if err != nil {
+		return ctx, nil, err
+	}
+	sources, err := repo.LoadGCSources(ctx, run.Topology)
+	if err != nil {
+		return ctx, nil, err
+	}
+	if len(sources) > 0 {
+		return ctx, nil, fmt.Errorf("enrolled GC topology requires configured host executor; local CLI publication is unsupported")
+	}
+
+	if b.opts.PrepareExecution == nil {
+		return ctx, func() {}, nil
+	}
+	return b.opts.PrepareExecution(ctx, run)
+}
+
 func (b *LocalBridge) LogWriter(string) io.Writer {
 	return b.opts.Log
 }
 
-func (b *LocalBridge) LockTopology(string) func() {
-	return func() {}
+func (b *LocalBridge) LockTopology(ctx context.Context, topology string) (func(), error) {
+	repo, err := b.repository(topology)
+	if err != nil {
+		return nil, err
+	}
+	return repo.LockExecution(ctx, topology)
 }
 
 func (b *LocalBridge) Finish(run *controlplane.Run, err error) {
@@ -89,6 +117,12 @@ func (b *LocalBridge) Finish(run *controlplane.Run, err error) {
 		run.Err = ""
 		run.Recoverable = false
 	}
+	if run.Op == "reset" {
+		if proofErr := b.recordResetReturn(run); proofErr != nil {
+			run.Status, run.Recoverable = controlplane.RunFailed, true
+			run.Err = fmt.Sprintf("%s; record reset return: %v", run.Err, proofErr)
+		}
+	}
 	b.mu.Lock()
 	b.runs[run.ID] = run
 	b.mu.Unlock()
@@ -98,22 +132,36 @@ func (b *LocalBridge) Finish(run *controlplane.Run, err error) {
 }
 
 func (b *LocalBridge) StateManager(topology string) (*state.Manager, error) {
-	if b.opts.BackendURL != "" {
-		backendURL := b.opts.BackendURL
-		if topology != "" {
-			backendURL = strings.ReplaceAll(backendURL, "{topology}", topology)
-		}
-		backend, err := state.ParseBackendURL(backendURL)
-		if err != nil {
-			return nil, fmt.Errorf("state backend: %w", err)
-		}
-		manager := state.NewManagerWithBackend(backend)
-		manager.AllowUnsafeMutation(b.opts.AllowUnsafeState)
-		return manager, nil
+	repo, err := b.repository(topology)
+	if err != nil {
+		return nil, err
 	}
-	manager := state.NewManager(b.opts.StatePath)
-	manager.AllowUnsafeMutation(b.opts.AllowUnsafeState)
-	return manager, nil
+	return state.NewManagerWithBackend(repo.StateBackend(topology)), nil
+}
+func (b *LocalBridge) ActionRepository(topology string) (runtime.ActionRepository, error) {
+	return b.repository(topology)
+}
+func (b *LocalBridge) repository(topology string) (*persistence.Repository, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if r := b.repositories[topology]; r != nil {
+		return r, nil
+	}
+	raw, path, err := persistence.ResolveLocation(b.opts.BackendURL, b.opts.StatePath, topology)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	r, err := persistence.OpenConfigured(ctx, raw, path)
+	if err != nil {
+		return nil, err
+	}
+	if b.repositories == nil {
+		b.repositories = map[string]*persistence.Repository{}
+	}
+	b.repositories[topology] = r
+	return r, nil
 }
 
 func (b *LocalBridge) HCLFile(string) string {
@@ -145,15 +193,52 @@ func (b *LocalBridge) CheckpointStore() runtime.CheckpointStore {
 	return b.opts.CheckpointStore
 }
 
-func (b *LocalBridge) ParentRun(context.Context, string) (*controlplane.Run, error) {
-	return nil, fmt.Errorf("parent runs require the API control plane")
+func (b *LocalBridge) ParentRun(ctx context.Context, id string) (*controlplane.Run, error) {
+	if id == "" {
+		return nil, fmt.Errorf("parent reset Run ID is required")
+	}
+	parent, err := b.loadResetReturn(id)
+	if err != nil {
+		return nil, err
+	}
+	if parent.ParentID != "" {
+		return parent, nil
+	} // ancestry resolver verifies every earlier return
+	repo, err := b.repository(b.opts.Topology)
+	if err != nil {
+		return nil, err
+	}
+	actions, err := repo.LoadActions(ctx, b.opts.Topology)
+	if err != nil {
+		return nil, err
+	}
+	var queued time.Time
+	var revision, topology string
+	found := false
+	for _, action := range actions {
+		if action.RunID != id {
+			continue
+		}
+		if !found {
+			queued, revision, topology, found = action.RunQueuedAt, action.RunRevision, action.Topology, true
+		} else if !queued.Equal(action.RunQueuedAt) || revision != action.RunRevision {
+			return nil, fmt.Errorf("parent reset Run incarnation is inconsistent")
+		}
+	}
+	if !found || queued.IsZero() {
+		return nil, fmt.Errorf("parent reset Run %q lacks durable incarnation", id)
+	}
+	if parent.Topology != topology || !parent.QueuedAt.Equal(queued) || parent.Revision != revision {
+		return nil, fmt.Errorf("parent reset return evidence has different incarnation")
+	}
+	return parent, nil
 }
 
 func (b *LocalBridge) ReconcileParentJournal(_, _ *controlplane.Run) error {
 	return fmt.Errorf("run resume requires the API control plane")
 }
 
-func (b *LocalBridge) Preflight(context.Context, string, io.Writer) error {
+func (b *LocalBridge) Preflight(context.Context, *controlplane.Run, io.Writer) error {
 	return nil
 }
 
@@ -227,14 +312,20 @@ func (b *LocalBridge) BeforeReset(plan *runtime.Plan) error {
 	return b.opts.BeforeReset(plan)
 }
 
-func (b *LocalBridge) ResumeResetPlan(context.Context, *controlplane.Run, *runtime.Plan) (*runtime.Plan, error) {
-	return nil, fmt.Errorf("local reset runs do not support parent-run resume")
-}
-
-type localCheckpointStore struct{}
+type localCheckpointStore struct{ runsDir string }
 
 func (localCheckpointStore) SaveCheckpoint(context.Context, string, string, runtime.OperationCheckpoint) error {
 	return nil
+}
+
+func (s localCheckpointStore) LoadCheckpoint(ctx context.Context, topology, runID string) (*runtime.OperationCheckpoint, error) {
+	if !localRunID.MatchString(topology) || !localRunID.MatchString(runID) {
+		return nil, fmt.Errorf("invalid local checkpoint identity")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return runtime.LoadCheckpointFile(filepath.Join(s.runsDir, topology, "runs", runID+".checkpoint.json"))
 }
 
 func splitAddr(addr string) (string, string, error) {
