@@ -1,0 +1,4 @@
+=== RUN   TestWindowsQGAWholeHostRestartRecoveryE2E
+    windows_task_e2e_test.go:241: whole execution host power loss: changed host/guest boots, retained unknown exit, confirmed stop, late old-boot rejection passed
+--- PASS: TestWindowsQGAWholeHostRestartRecoveryE2E (46.88s)
+PASS

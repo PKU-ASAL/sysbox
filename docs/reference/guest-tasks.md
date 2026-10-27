@@ -238,3 +238,53 @@ execution format 5 require explicit rebuilding of older data. SQL result and
 authority release are one transaction; file storage recovers an interrupted
 release from the completion proof without restoring private output or contacting
 the guest. Exact replay is idempotent and fenced from successor epochs.
+
+
+## Windows tasks over QGA
+
+The libvirt Windows connection carries the signed task protocol through QGA to
+`C:\ProgramData\Sysbox\guest-task\sysbox-windows-task.exe`. QGA readiness alone
+does not establish task readiness: a missing helper, mismatched scope, invalid
+issuer or unsafe ACL rejects the operation. There is no raw-command fallback.
+
+Build a portable amd64 helper bundle with
+`scripts/windows/task/build.sh /path/to/new-output-directory`. It contains the
+helper, installer and SHA256SUMS; no node identity or credentials are included. Provision each isolated node with
+`scripts/windows/task/install.ps1`, supplying the helper path, SHA256, issuer
+public key and canonical topology UID, resource UID and generation. Install as
+SYSTEM through an already trusted provisioning channel. The installer creates a
+non-administrator local worker and protects its credentials, helper and journal
+with SYSTEM/Administrators-only ACLs. Do not bake node identities or worker
+credentials into a shared image. An existing configuration is not overwritten;
+upgrades and generation changes require draining old tasks and explicitly
+provisioning the successor node. Retain old journals for unresolved outcomes.
+
+A detached supervisor creates the worker atomically inside a Windows Job Object;
+an independent guard enforces cancellation and monotonic expiry. Process creation
+time and the named Job Object establish identity, not a PID alone. Normal exit
+persists bounded output and exit status only after the whole process tree stops.
+A lost response is recovered through the original task ID and digest. Restarting
+QGA or losing a process handle is not proof of termination. A verified changed
+guest boot proves the old process stopped, but preserves an unknown exit result.
+The Windows boot token lives in a SYSTEM/Administrators-only volatile registry
+key. It survives helper and QGA restarts and disappears on kernel registry reload;
+an incomplete token initialization fails closed. Journals containing older or
+unknown boot-token formats block helper readiness; changing the helper format
+is never accepted as proof of a reboot. Such journals require independent
+fencing and explicit rebuilding. The firmware boot-environment
+GUID is deliberately not used because it remained constant across the tested
+Server 2025 cold boots. Windows versions without atomic Job Object process
+assignment fail closed.
+
+This adapter supports ordinary non-administrator commands and bounded protocol
+output reads. Its serialized call envelope is limited to 32 KiB, including
+base64 input and signed grant metadata; larger calls are rejected locally
+before helper execution. The generic Linux protocol input limit does not imply
+the same QGA capacity. Large-input chunked submission is not enabled. It does not enable privileged ETW installation, durable file
+publication, or file-based output capture. Those operations must not fall back
+to replayable SYSTEM commands. Existing raw QGA provisioning utilities are not
+part of the signed task recovery contract.
+
+Run `scripts/acceptance/windows_tasks.py --help` for the isolated Windows/QGA
+matrix. It requires an installed Windows Server image with QGA and nested KVM;
+portable unit tests and Windows cross-compilation do not replace this acceptance.

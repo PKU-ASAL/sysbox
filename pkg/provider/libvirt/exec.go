@@ -237,7 +237,8 @@ func (s *Substrate) OpenConsole(ctx context.Context, handle substrate.NodeHandle
 var _ substrate.ConsoleProvider = (*Substrate)(nil)
 
 // QGA calls always address the immutable domain UUID and validate its binding.
-// QGA does not claim durable task Start/Cancel capabilities.
+// Durable operations require the installed, scope-bound Windows task helper.
+// Missing or untrusted helpers fail closed; raw Exec is never their fallback.
 type qgaDomainConnection struct {
 	handle substrate.NodeHandle
 	qga    *qgaConnection

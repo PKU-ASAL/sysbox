@@ -1,0 +1,3 @@
+=== RUN   TestWindowsRetainedGuestRebootCompletionE2E
+--- PASS: TestWindowsRetainedGuestRebootCompletionE2E (15.03s)
+PASS

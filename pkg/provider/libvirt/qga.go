@@ -50,6 +50,11 @@ func (c *qgaConnection) call(ctx context.Context, command string, args any, resu
 	if err != nil {
 		return err
 	}
+	// virsh receives JSON as one argv entry. Stay below Linux's per-argument
+	// limit and reject locally instead of failing ambiguously after admission.
+	if len(encoded) > 64<<10 {
+		return fmt.Errorf("QGA request exceeds 64 KiB transport envelope")
+	}
 	// The operation's parent context remains the overall bound; control probes
 	// keep 10 seconds while status and file reads get longer budgets.
 	timeout := qgaCommandTimeout(command)

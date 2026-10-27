@@ -293,6 +293,7 @@ func helperTaskCall(ctx context.Context, conn substrate.Connection, call guestta
 // TaskClient uses a provider's guarded foreground connection to reach the
 // exact same installed helper as SSH. It does not detach a daemon exec handle.
 type TaskClient struct {
+	rpc      func(context.Context, guesttask.Call) (guesttask.Response, error)
 	conn     substrate.Connection
 	identity executionIdentity
 }
@@ -300,7 +301,16 @@ type TaskClient struct {
 func NewTaskClient(conn substrate.Connection, nodeID string, generation int64) *TaskClient {
 	return &TaskClient{conn: conn, identity: executionIdentity{nodeID: nodeID, generation: generation}}
 }
+
+// NewTaskRPCClient adapts an identity-guarded provider RPC (such as Windows
+// QGA) to the same durable task semantics used by SSH and vsock.
+func NewTaskRPCClient(nodeID string, generation int64, call func(context.Context, guesttask.Call) (guesttask.Response, error)) *TaskClient {
+	return &TaskClient{identity: executionIdentity{nodeID: nodeID, generation: generation}, rpc: call}
+}
 func (c *TaskClient) taskCall(ctx context.Context, call guesttask.Call) (guesttask.Response, error) {
+	if c.rpc != nil {
+		return c.rpc(ctx, call)
+	}
 	return helperTaskCall(ctx, c.conn, call)
 }
 func (c *TaskClient) Start(ctx context.Context, req substrate.ExecRequest) (substrate.ExecutionHandle, error) {
