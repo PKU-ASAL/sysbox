@@ -13,18 +13,22 @@
 // stays line-delimited and easy to debug.
 package vsockrpc
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"github.com/oslab/sysbox/pkg/substrate"
+)
 
 // VMConfig is the JSON schema written onto the per-VM config drive and
 // read by sysbox-init inside the guest. MUST be the single source of truth;
 // both pkg/provider/firecracker and cmd/sysbox-init reference this type.
 type VMConfig struct {
-	GuestGrantPublicKey []byte            `json:"guest_grant_public_key,omitempty"`
-	Hostname            string            `json:"hostname,omitempty"`
-	AuthorizedKeys      []string          `json:"authorized_keys,omitempty"`
-	Env                 map[string]string `json:"env,omitempty"`
-	VsockPort           uint32            `json:"vsock_port,omitempty"`
-	ChainInit           string            `json:"chain_init,omitempty"`
+	NodeIdentity        *substrate.OperationIdentity `json:"node_identity,omitempty"`
+	GuestGrantPublicKey []byte                       `json:"guest_grant_public_key,omitempty"`
+	Hostname            string                       `json:"hostname,omitempty"`
+	AuthorizedKeys      []string                     `json:"authorized_keys,omitempty"`
+	Env                 map[string]string            `json:"env,omitempty"`
+	VsockPort           uint32                       `json:"vsock_port,omitempty"`
+	ChainInit           string                       `json:"chain_init,omitempty"`
 }
 
 // DefaultPort is the vsock port the sysbox-init server listens on.

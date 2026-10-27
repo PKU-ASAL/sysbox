@@ -79,6 +79,15 @@ excluded during the explicit adoption operation; Sysbox serializes its own claim
 Windows QGA 的本地命令、文件传输及启动后网络配置保留 UUID 校验；
 远程 guest execution 仍要求持久 Start/Observe/Cancel 和签名停止证明，
 QGA 尚未实现该协议，因此远程 Windows ETW/file capture 不对外启用。
-Firecracker guest firewall 的旧版裸 nft 命令路径不具备策略代际、删除墓碑和
-原子替换证据，当前不注册 Policy 能力，调用旧适配器返回 unsupported。
-这两项不因历史 PR 合入 dev 而视为通过真实环境验收。
+Firecracker guest firewall 使用签名持久任务执行结构化策略操作，guest 内保存
+策略代际和删除墓碑，通过单个 nft transaction 替换规则。需要当前版本的
+sysbox-init、config drive 中的节点身份与授权公钥，以及支持 nftables 的内核
+和 `/usr/sbin/nft`。旧 guest 必须重建，不能仅更新宿主二进制后启用。
+普通任务仍以非特权身份运行；策略内置任务不接受任意程序、环境或工作目录。
+远程执行使用 owning-host Run child 调度；未配置签名授权的本地调用会被拒绝。
+
+缓存中的原始 `vmlinux-5.10.245` 不包含 Netfilter netlink，不能用于 guest
+firewall。可在构建 VM 中使用 `scripts/kernel/build-policy-kernel.sh` 和随附
+配置生成专用内核；输入源码必须提供已核验的 SHA256，输出保留配置、构建日志
+和摘要。guest rootfs 还须安装 nft 用户态程序。验收结果见本次适配 PR，Windows
+持久任务能力与 Firecracker 策略能力分别验收，不以历史 PR 已合并代替验收。

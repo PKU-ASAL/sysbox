@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"golang.org/x/sys/unix"
 	"io"
@@ -169,6 +171,18 @@ func RunWorker(root, cgroupRoot, id string) error {
 	out := &boundedFile{f: stdout, limit: int64(req.OutputLimit)}
 	errOut := &boundedFile{f: stderr, limit: int64(req.OutputLimit)}
 	cmd := exec.Command(req.Args[0], req.Args[1:]...)
+	if req.Args[0] == PolicyProgram {
+		if _, err := PolicyBuiltin(req); err != nil {
+			unlock()
+			return err
+		}
+		binary, err := os.Executable()
+		if err != nil {
+			unlock()
+			return err
+		}
+		cmd = exec.Command(binary, "--guest-policy")
+	}
 	cmd.Dir = req.WorkingDir
 	cmd.Env = os.Environ()
 	for key, value := range req.Environment {
@@ -183,6 +197,20 @@ func RunWorker(root, cgroupRoot, id string) error {
 	cmd.Stderr = errOut
 	cmd.WaitDelay = 100 * time.Millisecond
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, UseCgroupFD: true, CgroupFD: int(group.Fd()), Credential: &syscall.Credential{Uid: req.UserID, Gid: req.UserID, NoSetGroups: false}}
+	if req.Args[0] == PolicyProgram {
+		if _, err := PolicyBuiltin(req); err != nil {
+			unlock()
+			return err
+		}
+		raw, err := json.Marshal(req)
+		if err != nil {
+			unlock()
+			return err
+		}
+		cmd.Env = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin"}
+		cmd.Stdin = bytes.NewReader(raw)
+		cmd.SysProcAttr.Credential = nil
+	}
 	if remainingRecord(r) <= 0 {
 		r.Status = "cancelled"
 		r.CancelRequested = true
@@ -324,6 +352,21 @@ func (e *Engine) Handle(ctx context.Context, call Call) Response {
 		return response
 	}
 	switch call.Operation {
+	case "policy-observe":
+		p := call.PolicyQuery
+		if p == nil || e.NodeIdentity == nil || (p.Operation != "observe" && p.Operation != "discover") || p.Node.OwnerUID != e.NodeIdentity.OwnerUID || p.Node.TopologyUID != e.NodeIdentity.TopologyUID || p.Node.ResourceUID != e.NodeIdentity.ResourceUID || p.Node.Generation != e.NodeIdentity.Generation || e.PolicyRoot == "" {
+			err = ErrUnauthorized
+		} else {
+			var observed driver.RulesetObservation
+			observed, err = (&network.GuestPolicyEngine{Root: e.PolicyRoot}).Execute(ctx, *p)
+			if driver.IsCategory(err, driver.ErrorNotFound) {
+				response.PolicyAbsent = true
+				err = nil
+			} else if err == nil {
+				response.Policy = &observed
+			}
+		}
+
 	case "file-info":
 		response.BootID, err = BootID()
 	case "file-install":

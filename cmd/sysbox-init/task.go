@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"github.com/oslab/sysbox/pkg/guesttask"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 func taskEngine(operation string) (*guesttask.Engine, error) {
@@ -29,6 +30,14 @@ func taskEngine(operation string) (*guesttask.Engine, error) {
 		}
 	}
 	engine := &guesttask.Engine{Root: "/var/lib/sysbox/guest-tasks", CgroupRoot: cgroup, PublicKey: ed25519.PublicKey(key), WorkerBinary: binary}
+	engine.PolicyRoot = "/var/lib/sysbox/guest-policies"
+	if raw, err := os.ReadFile("/etc/sysbox/node-identity.json"); err == nil {
+		var node substrate.OperationIdentity
+		if err = json.Unmarshal(raw, &node); err != nil || node.Validate() != nil {
+			return nil, fmt.Errorf("invalid guest node identity")
+		}
+		engine.NodeIdentity = &node
+	}
 	if strings.HasPrefix(operation, "file-") && operation != "file-info" {
 		roots, err := loadInstallRoots("/etc/sysbox/install-roots.json")
 		if err != nil {
@@ -87,6 +96,13 @@ func runTaskMode() bool {
 		return false
 	}
 	switch os.Args[1] {
+	case "--guest-policy":
+		if err := runPolicyBuiltin(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return true
+
 	case "--ssh-service-install", "--ssh-service-recover":
 		operation := strings.TrimPrefix(os.Args[1], "--ssh-service-")
 		if err := manageSSHService(context.Background(), operation, os.Args[2:]); err != nil {
@@ -121,4 +137,34 @@ func runTaskMode() bool {
 		return true
 	}
 	return false
+}
+
+func runPolicyBuiltin() error {
+	if os.Geteuid() != 0 {
+		return fmt.Errorf("guest policy requires the installed privileged worker")
+	}
+	raw, err := io.ReadAll(io.LimitReader(os.Stdin, 2<<20))
+	if err != nil {
+		return err
+	}
+	var request guesttask.Request
+	if err = json.Unmarshal(raw, &request); err != nil {
+		return err
+	}
+	engine, err := taskEngine("policy-worker")
+	if err != nil {
+		return err
+	}
+	if engine.NodeIdentity == nil {
+		return fmt.Errorf("rebuild guest with node identity")
+	}
+	boot, err := guesttask.BootID()
+	if err != nil {
+		return err
+	}
+	result, err := guesttask.ExecutePolicyBuiltin(context.Background(), request, engine.PublicKey, boot, *engine.NodeIdentity, engine.PolicyRoot)
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(os.Stdout).Encode(result)
 }
