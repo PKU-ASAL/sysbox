@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
@@ -95,6 +97,7 @@ type Record struct {
 	Error                string                                    `json:"error,omitempty"`
 }
 type Call struct {
+	PolicyQuery  *network.GuestPolicyRequest               `json:"policy_query,omitempty"`
 	SSHQuery     *substrate.SSHAccessQuery                 `json:"ssh_query,omitempty"`
 	Cancellation *controlplane.SignedExecutionCancellation `json:"cancellation,omitempty"`
 	FileRequest  *substrate.FileInstallRequest             `json:"file_request,omitempty"`
@@ -119,6 +122,8 @@ type Call struct {
 	Limit        int                                       `json:"limit,omitempty"`
 }
 type Response struct {
+	Policy         *driver.RulesetObservation         `json:"policy,omitempty"`
+	PolicyAbsent   bool                               `json:"policy_absent,omitempty"`
 	SSHStop        *substrate.SSHAccessStop           `json:"ssh_stop,omitempty"`
 	SSHDiscovery   *substrate.SSHAccessDiscovery      `json:"ssh_discovery,omitempty"`
 	FileInspection *substrate.InstalledFileInspection `json:"file_inspection,omitempty"`

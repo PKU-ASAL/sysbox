@@ -39,7 +39,7 @@ func main() {
 	rootfsDir := cfg.Providers.Firecracker.Workdir
 	fcSub := fc.New(kernelPath, rootfsDir)
 	mustRegisterDriver(driver.Descriptor{
-		Name: "firecracker", Version: "1", Node: fcSub, NIC: fcSub,
+		Name: "firecracker", Version: "1", Node: fcSub, NIC: fcSub, Policy: fcSub,
 		Console: fcSub, GuestExec: fcSub, GuestFiles: fcSub, Artifact: fcSub,
 		NodeState:         fcSub,
 		Power:             fcSub,

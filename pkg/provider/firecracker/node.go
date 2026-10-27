@@ -299,9 +299,10 @@ func (s *Substrate) createNodeWithID(ctx context.Context, spec substrate.NodeSpe
 		sysboxInitEnabled = false
 	} else {
 		initCfg := vsockrpc.VMConfig{
-			Hostname:  guestHostname(spec.Name),
-			Env:       spec.Env,
-			ChainInit: pc.ChainInit,
+			NodeIdentity: &op,
+			Hostname:     guestHostname(spec.Name),
+			Env:          spec.Env,
+			ChainInit:    pc.ChainInit,
 		}
 		if s.grantPublicKeyFile != "" {
 			key, err := os.ReadFile(s.grantPublicKeyFile)

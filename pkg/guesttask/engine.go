@@ -16,6 +16,7 @@ import (
 
 	"github.com/gofrs/flock"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/substrate"
 	"golang.org/x/sys/unix"
 )
 
@@ -23,6 +24,8 @@ import (
 // administrator-owned directories; guest tasks cannot change their contents.
 // Every task gets a detached supervisor, independent of the RPC server.
 type Engine struct {
+	PolicyRoot          string
+	NodeIdentity        *substrate.OperationIdentity
 	AllowedInstallRoots []string
 	installHook         func(string) error
 	Root                string
@@ -139,6 +142,16 @@ func (e *Engine) Start(ctx context.Context, req Request) (Record, error) {
 	}
 	if err = verifyGrant(req.Grant, e.PublicKey, boot, time.Now()); err != nil {
 		return Record{}, err
+	}
+	if len(req.Args) > 0 && req.Args[0] == PolicyProgram {
+		policy, err := PolicyBuiltin(req)
+		if err != nil {
+			return Record{}, err
+		}
+		node := e.NodeIdentity
+		if node == nil || node.Validate() != nil || node.OwnerUID != policy.Node.OwnerUID || node.TopologyUID != policy.Node.TopologyUID || node.ResourceUID != policy.Node.ResourceUID || node.Generation != policy.Node.Generation {
+			return Record{}, ErrUnauthorized
+		}
 	}
 	digest, err := req.Digest()
 	if err != nil {

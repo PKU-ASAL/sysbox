@@ -95,6 +95,24 @@ func main() {
 	}
 
 	applyConfig(cfg)
+	if cfg.NodeIdentity != nil {
+		if err := cfg.NodeIdentity.Validate(); err != nil {
+			logf("invalid guest identity: %v", err)
+			os.Exit(1)
+		}
+		raw, err := json.Marshal(cfg.NodeIdentity)
+		if err == nil {
+			err = os.MkdirAll("/etc/sysbox", 0700)
+		}
+		if err == nil {
+			err = os.WriteFile("/etc/sysbox/node-identity.json", raw, 0600)
+		}
+		if err != nil {
+			logf("guest identity: %v", err)
+			os.Exit(1)
+		}
+	}
+
 	if len(cfg.GuestGrantPublicKey) > 0 {
 		if len(cfg.GuestGrantPublicKey) != ed25519.PublicKeySize {
 			logf("invalid guest grant trust key")
