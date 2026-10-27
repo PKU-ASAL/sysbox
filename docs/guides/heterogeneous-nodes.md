@@ -77,8 +77,12 @@ excluded during the explicit adoption operation; Sysbox serializes its own claim
 ### dev 集成能力边界
 
 Windows QGA 的本地命令、文件传输及启动后网络配置保留 UUID 校验；
-远程 guest execution 仍要求持久 Start/Observe/Cancel 和签名停止证明，
-QGA 尚未实现该协议，因此远程 Windows ETW/file capture 不对外启用。
+Windows QGA 持久任务通过逐节点安装的签名 helper 接入
+Start/Observe/Cancel、输出读取及续约，普通命令使用独立非管理员账户。
+必须提供规范节点身份、issuer 公钥和 helper SHA256，安装与升级边界见
+[guest tasks](../reference/guest-tasks.md#windows-tasks-over-qga)。
+本适配的 QGA 请求总长限制为 32 KiB，超限在执行前拒绝；
+特权 ETW 安装、持久文件发布及 file capture 仍不对外启用。
 Firecracker guest firewall 使用签名持久任务执行结构化策略操作，guest 内保存
 策略代际和删除墓碑，通过单个 nft transaction 替换规则。需要当前版本的
 sysbox-init、config drive 中的节点身份与授权公钥，以及支持 nftables 的内核

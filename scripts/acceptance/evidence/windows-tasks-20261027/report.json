@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "lab_id": "sysbox-p9-a52957f106d8",
+  "image": "/var/tmp/sysbox-windows-acceptance/member.qcow2",
+  "remote": "/var/tmp/sysbox-windows-tasks-9b0fd65b986f",
+  "status": "passed",
+  "resume_root": "/var/tmp/sysbox-windows-task-3160471015",
+  "artifacts": {
+    "sysbox-windows-task.exe": {
+      "sha256": "4bfc8bb6805a6b697b33c0365e79b253d60c95f3b929118fb2aee1c90d683aef"
+    },
+    "native.test.exe": {
+      "sha256": "bf8437c22f57245d1a55e36c6e4d6cd3c6f505ee6dcb425974a105b2039754a4"
+    },
+    "libvirt.test": {
+      "sha256": "747a806d904e4efcfbe406822881a22e4d151c6f900036438eed78ccdd9ca8ce"
+    },
+    "install.ps1": {
+      "sha256": "b65a70bf4d68b0bf7abb1b53d485c8e3f203db550f9f77446fb0c12991d69266"
+    }
+  },
+  "host_recovery_exit_code": 0,
+  "controller_note": "Continuation after ready log placed after return; checkpoint and prior test PASS verified before fence.",
+  "acceptance": "completed in two runs on the same retained Windows guest; first run passed native/guest-reboot assertions, then failed because host journal used /var/tmp; continuation used a private /var/lib journal and passed signed stop and whole-host recovery",
+  "source_iso_sha256": "7b052573ba7894c9924e3e87ba732ccd354d18cb75a883efa9b900ea125bfd51",
+  "builder_source": "feat/windows-server-2025-builders@c0654ce573c8d94aab37e26ed384dced2286cdf6",
+  "logs": {
+    "native-and-guest.log": "c863b2db9aeca6fe4b1d02583bcfc45b0879be8dc88763200c45f66b3d1315f7",
+    "signed-stop.log": "4cfa01453c221d5cc87a2fc1c70012f483104690be2a52da2b8e528f073b131d",
+    "whole-host-recovery.log": "869079a5b8f486609f9904bb4352e1482d48b99b35bf518ef29e89bf1c4e7fea"
+  }
+}

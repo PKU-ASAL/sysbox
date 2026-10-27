@@ -1,0 +1,23 @@
+=== RUN   TestWindowsQGADurableTaskFaultMatrixE2E
+    windows_task_e2e_test.go:116: === RUN   TestWindowsNativeDurableTaskFaultMatrix
+            native_e2e_windows_test.go:132: WINDOWS_REBOOT_TASK_READY
+            native_e2e_windows_test.go:134: native Windows normal/lost response/cold journal/supervisor crash/stale cancellation matrix passed
+        --- PASS: TestWindowsNativeDurableTaskFaultMatrix (5.79s)
+        === RUN   TestWindowsNativeBootIdentityStable
+        --- PASS: TestWindowsNativeBootIdentityStable (0.00s)
+        === RUN   TestWindowsNativeJobRequiresConfiguredRestrictedAccount
+        --- PASS: TestWindowsNativeJobRequiresConfiguredRestrictedAccount (0.00s)
+        === RUN   TestWindowsNativeSupervisorContract
+        --- PASS: TestWindowsNativeSupervisorContract (0.41s)
+        === RUN   TestWindowsNativeRejectsWeakFileACLBelowProtectedRoot
+        --- PASS: TestWindowsNativeRejectsWeakFileACLBelowProtectedRoot (0.40s)
+        PASS
+        
+    windows_task_e2e_test.go:155: 
+        	Error Trace:	/home/jiandong/workspace/oslab/sysarmor/sysfield-project/sysbox/pkg/provider/libvirt/windows_task_e2e_test.go:155
+        	Error:      	Received unexpected error:
+        	            	trusted path writable by worker group or others: /var/tmp
+        	Test:       	TestWindowsQGADurableTaskFaultMatrixE2E
+    windows_task_e2e_test.go:53: retained test VM UUID=7e3bc552-b73f-41e7-8754-36ca0e7a1ef1 state=/var/tmp/sysbox-windows-task-3160471015
+--- FAIL: TestWindowsQGADurableTaskFaultMatrixE2E (463.78s)
+FAIL
