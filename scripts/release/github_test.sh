@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 tmp="$(mktemp -d)"; trap 'rm -rf "${tmp}"' EXIT
 tag=v0.1.0
-dist="${tmp}/dist"; remote="${tmp}/remote"; mkdir -p "${dist}" "${remote}" "${tmp}/bin"
+dist="${tmp}/dist"; remote="${tmp}/remote"; mkdir -p "${remote}" "${tmp}/bin"
 commit="$(git -C "${repo_root}" rev-parse HEAD)"
 RELEASE_REPOSITORY=PKU-ASAL/sysbox "${repo_root}/scripts/release/build.sh" --tag "${tag}" --output "${dist}" --allow-untagged
 jq '.oci_digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' \
