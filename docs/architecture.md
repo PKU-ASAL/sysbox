@@ -306,11 +306,29 @@ revision、keyed Apply/Destroy、Run 查询、三值 conditions、cleanup-inspec
 - [x] `pkg/workspace` 统一 revision 物化、目录清单、placement 与 GC 发布保护；宿主与 API 共用。
 - [x] `pkg/hostexec` 承接宿主执行、Bridge、观察和恢复；`pkg/agentexec` 只保留通信与授权转发。生产依赖不允许宿主模块反向导入 API。
 - [x] 移除旧格式导入和测试专用本地执行的生产入口，统一当前格式的写入与校验，保留旧格式拒绝及证据保护。
-- [ ] 宿主在初始化 provider 前验证配置与身份，固定辅助程序/环境；Firecracker 拒绝共享宿主 netns，systemd 按必要权限运行。
+- [x] 宿主在初始化 provider 前验证配置与身份，固定辅助程序/环境；Firecracker 拒绝共享宿主 netns，systemd 声明必要权限上限。完整 systemd 部署仍需单独验收。
 - [ ] 验证事务、失败恢复、普通用户边界和真实 Docker/Firecracker/libvirt/Windows 适用路径；缺环境的项目明确记为未验收。
 - [ ] 整理本地提交，复核 origin/main，统一生成 Linux amd64/arm64 与 Windows 制品及来源摘要，执行重复构建与制品验收。
 
 每一项都保留原子写入、未知效果不重放和原始资源身份校验。任何环境切换在 CyberField 联调之后进行。
+
+### 当前验收记录（2026-10-29）
+
+代码结构与格式清理已经提交到本地 dev。API 不再实现 SQL 和宿主执行环境；
+生命周期数据只接受 format 16，API schema 为 15，不提供旧格式在线兼容。
+Agent 已去掉对宿主执行包的直接依赖，但仍通过共享包间接依赖部分执行代码，不能宣称二进制已完全拆开。
+
+| 范围 | 已验证内容 | 尚未覆盖 |
+| --- | --- | --- |
+| 存储与恢复 | 全仓 Go 测试、vet、相关 race；文件、SQLite、独立 PostgreSQL 的事务与恢复 | 不能代替全部真实 provider 故障矩阵 |
+| 普通用户与 Docker | 隔离 Docker 中 UID 32000 的部署、暂停、恢复、回收、重启和回执丢失恢复；实际文件安装 | 最终发布候选仍需核对制品来源 |
+| Firecracker | 真实 KVM 下的 jailer 隔离、named netns/TAP、重启恢复和冷清理；相同 systemd capability 上限及 NoNewPrivileges 下复测通过 | 完整 systemd 单元、arm64 宿主及最终发布 helper 的实机验收 |
+| Libvirt | 隔离 daemon 下的资源归属变更、丢失返回后的恢复和冷读取；真实无盘 VM 的网络身份检查、旧 generation 拒绝、暂停、恢复和回收 | 完整 guest 初始化、重置及部署隔离验收；测试容器关闭了 libvirt 私有 mount namespace，不证明该隔离配置可用 |
+| Windows | amd64 helper 与安装脚本纳入统一发布；PE、哈希、嵌入版本与来源检查 | 当前缺可用 Windows guest，真实任务矩阵未验收 |
+| 发布 | Linux amd64/arm64 与 Windows amd64 归档校验；重复构建一致；GitHub Release 模拟审计通过 | 未创建正式 tag，未推送或发布；源码变化后需重新构建 |
+
+发布测试的 Git 替身已修正：转发使用事先保存的真实 Git 绝对路径，避免清洁工作区检查递归调用自身。
+本轮只操作独立验收容器，没有更新 CyberField 服务或接管其现有资源。
 
 ## 怎样判断这轮重构完成
 
