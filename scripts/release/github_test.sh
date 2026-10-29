@@ -2,6 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+real_git="$(command -v git)"
 tmp="$(mktemp -d)"; trap 'rm -rf "${tmp}"' EXIT
 tag=v0.1.0
 dist="${tmp}/dist"; remote="${tmp}/remote"; mkdir -p "${remote}" "${tmp}/bin"
@@ -18,8 +19,8 @@ case " $* " in
   *" diff "*) exit 0 ;;
   *" rev-parse HEAD "*) printf '%s\n' "${FAKE_COMMIT}" ;;
   *" rev-parse "*"^{commit}"*) printf '%s\n' "${FAKE_COMMIT}" ;;
-  *" show -s --format=%ct HEAD "*) command git -C "${FAKE_REPO}" show -s --format=%ct HEAD ;;
-  *) command git -C "${FAKE_REPO}" "$@" ;;
+  *" show -s --format=%ct HEAD "*) "${REAL_GIT}" -C "${FAKE_REPO}" show -s --format=%ct HEAD ;;
+  *) "${REAL_GIT}" -C "${FAKE_REPO}" "$@" ;;
 esac
 EOF
 chmod +x "${tmp}/bin/git"
@@ -56,7 +57,7 @@ esac
 EOF
 chmod +x "${tmp}/bin/gh"
 
-common=(env GOCACHE="${GOCACHE:-/tmp/sysbox-gocache}" PATH="${tmp}/bin:${PATH}" GH_TOKEN=test FAKE_TAG="${tag}" FAKE_COMMIT="${commit}" FAKE_REPO="${repo_root}" FAKE_REMOTE="${remote}" FAKE_RELEASE="${tmp}/release-exists")
+common=(env GOCACHE="${GOCACHE:-/tmp/sysbox-gocache}" PATH="${tmp}/bin:${PATH}" REAL_GIT="${real_git}" GH_TOKEN=test FAKE_TAG="${tag}" FAKE_COMMIT="${commit}" FAKE_REPO="${repo_root}" FAKE_REMOTE="${remote}" FAKE_RELEASE="${tmp}/release-exists")
 "${common[@]}" "${repo_root}/scripts/release/github.sh" preflight --tag "${tag}" --repository PKU-ASAL/sysbox
 touch "${tmp}/release-exists"
 cp "${dist}/sysbox_${tag}_linux_amd64.tar.gz" "${remote}/"
