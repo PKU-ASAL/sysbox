@@ -66,17 +66,7 @@ func ApplyQuiescentLifecycleDelete(raw, authorityRaw []byte, topology string, ex
 			}
 		}
 		a.GCSources = nil
-		if len(a.IntentDispositions) > 0 {
-			a.Format = IntentDispositionFormatVersion
-		} else if len(a.AdoptionRecoveries) > 0 {
-			a.Format = AdoptionRecoveryFormatVersion
-		} else if len(a.OwnershipTargets) > 0 {
-			a.Format = OwnershipTargetFormatVersion
-		} else if len(a.OwnershipRetirements) > 0 {
-			a.Format = OwnershipRetirementFormatVersion
-		} else {
-			a.Format = FormatVersion
-		}
+
 	}
 	if err := resetAggregate(a); err != nil {
 		return nil, err

@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/persistence"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/persistence"
 )
 
 func failedDelivery(status string) bool {
@@ -16,7 +18,7 @@ func failedDelivery(status string) bool {
 // Retirement is persisted before reading authority. Grant issuance locks and
 // validates the same command, so no grant can appear after this retired command
 // is observed. Both current grants and stop history must be empty for this ID.
-func reconcileUnissuedNodeFailure(ctx context.Context, store apiStore, command controlplane.AgentCommand) error {
+func reconcileUnissuedNodeFailure(ctx context.Context, store controlstore.Store, command controlplane.AgentCommand) error {
 	if command.Type != "node_operation" || command.ActionID == "" || !failedDelivery(command.Status) {
 		return nil
 	}
@@ -38,7 +40,7 @@ func reconcileUnissuedNodeFailure(ctx context.Context, store apiStore, command c
 	if !hostNodeDeliveryOperation(op.Operation) {
 		return nil
 	}
-	history, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store}).HasCommandExecutionHistory(ctx, command.AgentID, command.ID)
+	history, err := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store}).HasCommandExecutionHistory(ctx, command.AgentID, command.ID)
 	if err != nil || history {
 		return err
 	}
@@ -59,26 +61,26 @@ func reconcileUnissuedNodeFailure(ctx context.Context, store apiStore, command c
 		return next, nil
 	}
 	switch s := store.(type) {
-	case *localAPIStore:
-		_, err = s.completeNodeOperation(ctx, command.AgentID, op.ID, nil, transition)
-	case *sqliteAPIStore:
-		_, err = s.completeNodeOperation(ctx, command.AgentID, op.ID, nil, transition)
-	case *postgresAPIStore:
-		_, err = s.completeNodeOperation(ctx, command.AgentID, op.ID, nil, transition)
+	case *controlstore.Local:
+		_, err = s.TransitionNodeOperation(ctx, command.AgentID, op.ID, nil, transition)
+	case *controlstore.SQLite:
+		_, err = s.TransitionNodeOperation(ctx, command.AgentID, op.ID, nil, transition)
+	case *controlstore.Postgres:
+		_, err = s.TransitionNodeOperation(ctx, command.AgentID, op.ID, nil, transition)
 	default:
 		err = persistence.ErrUnsupportedVersion
 	}
 	return err
 }
 
-func readFailureCommand(ctx context.Context, store apiStore, id string) (*persistence.CommandRecord, error) {
+func readFailureCommand(ctx context.Context, store controlstore.Store, id string) (*persistence.CommandRecord, error) {
 	switch s := store.(type) {
-	case *localAPIStore:
-		return (localCommandStorage{store: s}).ReadCommand(ctx, id)
-	case *sqliteAPIStore:
-		return (sqliteCommandStorage{store: s}).ReadCommand(ctx, id)
-	case *postgresAPIStore:
-		return (postgresCommandStorage{store: s}).ReadCommand(ctx, id)
+	case *controlstore.Local:
+		return (controlstore.LocalCommandStorage{Store: s}).ReadCommand(ctx, id)
+	case *controlstore.SQLite:
+		return (controlstore.SqliteCommandStorage{Store: s}).ReadCommand(ctx, id)
+	case *controlstore.Postgres:
+		return (controlstore.PostgresCommandStorage{Store: s}).ReadCommand(ctx, id)
 	default:
 		return nil, persistence.ErrUnsupportedVersion
 	}

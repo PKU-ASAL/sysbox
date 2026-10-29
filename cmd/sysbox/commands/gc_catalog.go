@@ -42,7 +42,7 @@ func collectCatalogIDs(ctx context.Context, location string) (activeIDs, error) 
 	if err != nil {
 		return active, err
 	}
-	repo, err := persistence.OpenImportSource(ctx, backend, "")
+	repo, err := persistence.OpenCatalogSource(ctx, backend, "")
 	if err != nil {
 		return active, err
 	}

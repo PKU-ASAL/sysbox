@@ -15,9 +15,6 @@ import (
 	"github.com/oslab/sysbox/pkg/state"
 )
 
-const LegacyAdoptionRecoveryFormatVersion = 13
-const AdoptionRecoveryFormatVersion = 14
-
 type AdoptionRecoveryRecord struct {
 	Actions     map[string]runtime.ActionRecord       `json:"actions,omitempty"`
 	Proof       controlplane.AdoptionDispositionProof `json:"proof"`
@@ -100,9 +97,7 @@ func ApplyFencedAdoption(raw, authorityRaw []byte, p controlplane.AdoptionDispos
 		action.DispositionID = p.Request.ID
 		a.Actions[id] = action
 	}
-	if a.Format != IntentDispositionFormatVersion {
-		a.Format = AdoptionRecoveryFormatVersion
-	}
+
 	a.Serial++
 	a.UpdatedAt = time.Now().UTC()
 	if err = validateAggregate(a, req.Topology); err != nil {
@@ -129,13 +124,9 @@ func (r *Repository) CommitFencedAdoption(ctx context.Context, p controlplane.Ad
 	})
 }
 func validateAdoptionRecoveries(a *aggregate) error {
-	if len(a.AdoptionRecoveries) > 0 && a.Format != IntentDispositionFormatVersion && a.Format != AdoptionRecoveryFormatVersion && a.Format != LegacyAdoptionRecoveryFormatVersion {
-		return ErrCorruptRecord
-	}
+
 	for id, r := range a.AdoptionRecoveries {
-		if (len(r.Actions) > 0 || r.Proof.Disposition() != "recover-owned") && a.Format != IntentDispositionFormatVersion && a.Format != AdoptionRecoveryFormatVersion {
-			return ErrCorruptRecord
-		}
+
 		for actionID, old := range r.Actions {
 			req := r.Proof.Adoption
 			addr, err := address.Parse(req.Address)

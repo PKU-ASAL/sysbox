@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
-
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
 )
@@ -32,7 +32,7 @@ func TestLocalObjectReaderRejectsIncompleteInventory(t *testing.T) {
 			case "bad-pattern":
 				pattern = filepath.Join(dir, "[")
 			}
-			items, err := readLocalObjects[controlplane.Agent](pattern)
+			items, err := controlstore.ReadLocalObjects[controlplane.Agent](pattern)
 			require.Error(t, err)
 			require.Empty(t, items, "partial inventory must not authorize mutation")
 			require.NotContains(t, err.Error(), "canary-secret")
@@ -41,7 +41,7 @@ func TestLocalObjectReaderRejectsIncompleteInventory(t *testing.T) {
 }
 
 func TestLocalObjectReaderMissingDirectoryIsEmpty(t *testing.T) {
-	items, err := readLocalObjects[controlplane.Agent](filepath.Join(t.TempDir(), "missing", "*.json"))
+	items, err := controlstore.ReadLocalObjects[controlplane.Agent](filepath.Join(t.TempDir(), "missing", "*.json"))
 	require.NoError(t, err)
 	require.Empty(t, items)
 }
@@ -49,25 +49,25 @@ func TestLocalObjectReaderMissingDirectoryIsEmpty(t *testing.T) {
 func TestLocalObjectReaderReportsDirectoryScanError(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "not-a-directory")
 	require.NoError(t, os.WriteFile(path, nil, 0600))
-	_, err := readLocalObjects[controlplane.Agent](filepath.Join(path, "*.json"))
+	_, err := controlstore.ReadLocalObjects[controlplane.Agent](filepath.Join(path, "*.json"))
 	require.Error(t, err, "directory scan failures must not become an empty inventory")
 }
 
 func TestLocalObjectAtomicReplacementWithConcurrentReaders(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "record.json")
 	type record struct{ Payload string }
-	require.NoError(t, writeLocalObject(path, record{Payload: strings.Repeat("a", 256*1024)}))
+	require.NoError(t, controlstore.WriteLocalObject(path, record{Payload: strings.Repeat("a", 256*1024)}))
 	var wg sync.WaitGroup
 	for worker := range 8 {
 		wg.Go(func() {
 			for range 30 {
 				if worker < 4 {
-					if err := writeLocalObject(path, record{Payload: strings.Repeat("b", 256*1024)}); err != nil {
+					if err := controlstore.WriteLocalObject(path, record{Payload: strings.Repeat("b", 256*1024)}); err != nil {
 						t.Error(err)
 						return
 					}
 				} else {
-					got, err := readLocalObject[record](path)
+					got, err := controlstore.ReadLocalObject[record](path)
 					if err != nil {
 						t.Error(err)
 						return
@@ -84,9 +84,9 @@ func TestLocalObjectAtomicReplacementWithConcurrentReaders(t *testing.T) {
 }
 
 func TestLocalRunHistoryRejectsCorruption(t *testing.T) {
-	store := &localAPIStore{runsDir: t.TempDir()}
+	store := &controlstore.Local{RunsDir: t.TempDir()}
 	require.NoError(t, store.SaveRun(context.Background(), controlplane.Run{ID: "run", Topology: "lab", Status: controlplane.RunRunning}))
-	path := filepath.Join(store.runsDir, "lab", "runs.jsonl")
+	path := filepath.Join(store.RunsDir, "lab", "runs.jsonl")
 	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0600)
 	require.NoError(t, err)
 	_, err = file.WriteString("{broken\n")
@@ -100,7 +100,7 @@ func TestLocalRunHistoryRejectsCorruption(t *testing.T) {
 }
 
 func TestLocalRunHistoryReadsLargeRecordsWithoutTruncating(t *testing.T) {
-	store := &localAPIStore{runsDir: t.TempDir()}
+	store := &controlstore.Local{RunsDir: t.TempDir()}
 	run := controlplane.Run{ID: "run", Topology: "lab", Status: controlplane.RunFailed, Err: strings.Repeat("x", 128*1024)}
 	require.NoError(t, store.SaveRun(context.Background(), run))
 	got, err := store.GetRun(context.Background(), run.ID)
@@ -109,8 +109,8 @@ func TestLocalRunHistoryReadsLargeRecordsWithoutTruncating(t *testing.T) {
 }
 
 func TestLocalCommandHistoryRejectsCorruption(t *testing.T) {
-	store := &localAPIStore{runsDir: t.TempDir()}
-	path := filepath.Join(store.runsDir, "_agents", "host", "command-events.jsonl")
+	store := &controlstore.Local{RunsDir: t.TempDir()}
+	path := filepath.Join(store.RunsDir, "_agents", "host", "command-events.jsonl")
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0700))
 	require.NoError(t, os.WriteFile(path, []byte(`{"command_id":"good"}`+"\n{broken\n"), 0600))
 	records, err := store.ListAgentCommandEvents(context.Background(), "host")
@@ -119,8 +119,8 @@ func TestLocalCommandHistoryRejectsCorruption(t *testing.T) {
 }
 
 func TestLocalCommandSaveDoesNotOverwriteCorruptRecord(t *testing.T) {
-	store := &localAPIStore{runsDir: t.TempDir()}
-	path := filepath.Join(store.runsDir, "_agents", "host", "commands", "cmd.json")
+	store := &controlstore.Local{RunsDir: t.TempDir()}
+	path := filepath.Join(store.RunsDir, "_agents", "host", "commands", "cmd.json")
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0700))
 	original := []byte(`{"status":`)
 	require.NoError(t, os.WriteFile(path, original, 0600))
@@ -132,10 +132,10 @@ func TestLocalCommandSaveDoesNotOverwriteCorruptRecord(t *testing.T) {
 }
 
 func TestLocalGuestCASDoesNotHideCorruption(t *testing.T) {
-	store := &localAPIStore{runsDir: t.TempDir()}
+	store := &controlstore.Local{RunsDir: t.TempDir()}
 	execution := controlplane.GuestExecution{ID: "exec", Version: 1, Topology: "lab", Status: controlplane.GuestExecutionQueued}
 	require.NoError(t, store.SaveGuestExecution(context.Background(), execution))
-	path := filepath.Join(store.runsDir, "_guest-executions", "exec.json")
+	path := filepath.Join(store.RunsDir, "_guest-executions", "exec.json")
 	require.NoError(t, os.WriteFile(path, []byte(`{broken`), 0600))
 	ok, err := store.CompareAndSwapGuestExecution(context.Background(), execution, 1)
 	require.False(t, ok)
@@ -144,33 +144,33 @@ func TestLocalGuestCASDoesNotHideCorruption(t *testing.T) {
 }
 
 func TestLocalRevisionReadErrorIsNotNotFound(t *testing.T) {
-	store := &localAPIStore{runsDir: t.TempDir()}
-	path := filepath.Join(store.runsDir, "global-revisions", "revision.json")
+	store := &controlstore.Local{RunsDir: t.TempDir()}
+	path := filepath.Join(store.RunsDir, "global-revisions", "revision.json")
 	require.NoError(t, os.MkdirAll(path, 0700))
 	_, err := store.GetGlobalRevision(context.Background(), "revision")
 	require.Error(t, err)
-	require.NotErrorIs(t, err, errGlobalRevisionNotFound)
+	require.NotErrorIs(t, err, controlstore.ErrRevisionNotFound)
 }
 
 func TestLocalRunDispatchDoesNotRecreateAfterCorruptHistory(t *testing.T) {
-	store := &localAPIStore{runsDir: t.TempDir()}
-	path := filepath.Join(store.runsDir, "lab", "runs.jsonl")
+	store := &controlstore.Local{RunsDir: t.TempDir()}
+	path := filepath.Join(store.RunsDir, "lab", "runs.jsonl")
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0700))
 	require.NoError(t, os.WriteFile(path, []byte(`{broken`), 0600))
-	_, _, err := store.CreateRunDispatch(context.Background(), RunDispatchRequest{
+	_, _, err := store.CreateRunDispatch(context.Background(), controlstore.RunDispatchRequest{
 		Run:         controlplane.Run{ID: "run", Topology: "lab"},
 		Command:     controlplane.AgentCommand{ID: "cmd", AgentID: "host"},
 		Fingerprint: "request",
 	})
 	require.Error(t, err, "a read failure does not authorize a fresh dispatch")
-	require.NoFileExists(t, filepath.Join(store.runsDir, "_run_requests", "run.json"))
+	require.NoFileExists(t, filepath.Join(store.RunsDir, "_run_requests", "run.json"))
 }
 
 func TestLocalNullRecordsAreCorrupt(t *testing.T) {
 	for _, raw := range []string{"null", "[]", "42"} {
 		t.Run(raw, func(t *testing.T) {
-			store := &localAPIStore{runsDir: t.TempDir()}
-			path := filepath.Join(store.runsDir, "_agents", "host", "commands", "cmd.json")
+			store := &controlstore.Local{RunsDir: t.TempDir()}
+			path := filepath.Join(store.RunsDir, "_agents", "host", "commands", "cmd.json")
 			require.NoError(t, os.MkdirAll(filepath.Dir(path), 0700))
 			require.NoError(t, os.WriteFile(path, []byte(raw), 0600))
 			err := store.SaveAgentCommand(context.Background(), controlplane.AgentCommand{ID: "cmd", AgentID: "host"})
@@ -178,19 +178,19 @@ func TestLocalNullRecordsAreCorrupt(t *testing.T) {
 			got, err := os.ReadFile(path)
 			require.NoError(t, err)
 			require.Equal(t, raw, string(got))
-			history := filepath.Join(store.runsDir, "lab", "runs.jsonl")
+			history := filepath.Join(store.RunsDir, "lab", "runs.jsonl")
 			require.NoError(t, os.MkdirAll(filepath.Dir(history), 0700))
 			require.NoError(t, os.WriteFile(history, []byte(raw+"\n"), 0600))
 			_, err = store.LoadRuns(context.Background())
-			require.ErrorIs(t, err, errCorruptLocalRecord)
+			require.ErrorIs(t, err, controlstore.ErrCorruptLocalRecord)
 		})
 	}
 }
 
 func TestLocalRunReaderWaitsForCommittedAppend(t *testing.T) {
-	store := &localAPIStore{runsDir: t.TempDir()}
+	store := &controlstore.Local{RunsDir: t.TempDir()}
 	require.NoError(t, store.SaveRun(context.Background(), controlplane.Run{ID: "first", Topology: "lab", Status: controlplane.RunQueued}))
-	path := filepath.Join(store.runsDir, "lab", "runs.jsonl")
+	path := filepath.Join(store.RunsDir, "lab", "runs.jsonl")
 	writerLock := flock.New(path + ".lock")
 	require.NoError(t, writerLock.Lock())
 	t.Cleanup(func() { _ = writerLock.Unlock() })
@@ -213,10 +213,10 @@ func TestLocalRunReaderWaitsForCommittedAppend(t *testing.T) {
 }
 
 func TestLocalRunHistoryRejectsUncommittedTail(t *testing.T) {
-	store := &localAPIStore{runsDir: t.TempDir()}
-	path := filepath.Join(store.runsDir, "lab", "runs.jsonl")
+	store := &controlstore.Local{RunsDir: t.TempDir()}
+	path := filepath.Join(store.RunsDir, "lab", "runs.jsonl")
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0700))
 	require.NoError(t, os.WriteFile(path, []byte(`{"id":"tail"}`), 0600))
 	_, err := store.LoadRuns(context.Background())
-	require.ErrorIs(t, err, errCorruptLocalRecord)
+	require.ErrorIs(t, err, controlstore.ErrCorruptLocalRecord)
 }

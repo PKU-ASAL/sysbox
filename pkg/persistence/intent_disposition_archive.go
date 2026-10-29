@@ -205,19 +205,15 @@ func prepareIntentDispositionLifecycle(authorityRaw, lifecycleRaw []byte, d cont
 	}
 	a.IntentDispositions[d.ID] = IntentDispositionArchive{Decision: d, Run: DurableRun(run), Actions: archive, Request: f.Request, Fence: *f.Receipt, Observation: *observation.Recovery, HostKey: append([]byte(nil), key...), CommittedAt: decidedAt}
 	migrateIntentRecoveryRequirements(a, d.ID)
-	a.Format = IntentDispositionFormatVersion
+
 	if err = validateAggregate(a, d.Topology); err != nil {
 		return nil, err
 	}
 	return json.Marshal(a)
 }
 
-const IntentDispositionFormatVersion = 15
-
 func validateIntentDispositionArchives(a *aggregate) error {
-	if len(a.IntentDispositions) > 0 && a.Format != IntentDispositionFormatVersion {
-		return ErrCorruptRecord
-	}
+
 	for id, record := range a.IntentDispositions {
 		d := record.Decision
 		if id != d.ID || d.FenceID != record.Request.ID || d.JournalSHA256 != record.Request.JournalSHA256 || d.RunID != record.Request.RunID || d.Topology != record.Request.Topology || record.CommittedAt.IsZero() || record.CommittedAt.Before(record.Observation.ObservedAt) || record.Observation.ObservedAt.Before(record.Fence.ObservedAt) || record.Observation.TopologyUID != record.Request.Grant.Scope.TopologyUID || record.Run.AgentID != record.Request.Grant.AgentID || uint64(record.Run.Attempt) != record.Request.Grant.Attempt || controlplane.VerifyHostFenceReceipt(record.Request, record.Fence) != nil {

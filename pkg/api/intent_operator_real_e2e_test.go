@@ -22,14 +22,15 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/stretchr/testify/require"
-
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/stretchr/testify/require"
+
 	dockerprovider "github.com/oslab/sysbox/pkg/provider/docker"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
@@ -218,7 +219,7 @@ resource "sysbox_node" "node" {
 	require.NoError(t, s.apiStore.SaveRun(ctx, original))
 	command := controlplane.AgentCommand{ID: "old-command-" + suffix, AgentID: agentID, Type: "run_assigned", Run: &original, ActionID: original.ID, TopologyUID: st.TopologyUID, ExpectedSerial: st.Meta.Serial, Attempt: 1, LeaseOwner: "interrupted", LeaseUntil: time.Now().Add(10 * time.Minute), Status: controlplane.AgentCommandStatusLeased}
 	require.NoError(t, s.apiStore.SaveAgentCommand(ctx, command))
-	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
 	session, err := authority.OpenSession(ctx, agentID, "original-process", "")
 	require.NoError(t, err)
 	grantSource, err := s.sourceGrant(ctx, agentID, ExecutionGrantRequest{SessionID: session.ID, Attempt: 1, LeaseOwner: "interrupted", BootID: oldBoot}, &persistence.CommandRecord{Command: command})

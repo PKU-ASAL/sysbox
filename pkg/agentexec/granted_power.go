@@ -4,10 +4,11 @@ import (
 	"context"
 	"crypto/ed25519"
 	"fmt"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/hostsupervisor"
 	"os"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/hostsupervisor"
 )
 
 // Remote power operations never reconstruct provider credentials in the Agent.
@@ -15,7 +16,7 @@ func executeGrantedNodeOperation(ctx context.Context, opts Options, cmd controlp
 	op := cmd.Operation
 	op.Status = controlplane.NodeOperationStatusRunning
 	op.StartedAt = time.Now().UTC()
-	op.Audit = append(op.Audit, nodeOperationEvent(op, "start", op.Status, "node operation started"))
+	op.Audit = append(op.Audit, controlplane.NodeOperationEvent(op, "start", op.Status, "node operation started"))
 	var err error
 	if cmd.Operation.Operation == "adoption_inspect" {
 		err = runGrantedInspection(ctx, opts, cmd)
@@ -36,7 +37,7 @@ func executeGrantedNodeOperation(ctx context.Context, opts Options, cmd controlp
 		op.Status = controlplane.NodeOperationStatusDone
 		op.Err = ""
 	}
-	op.Audit = append(op.Audit, nodeOperationEvent(op, "complete", op.Status, op.Err))
+	op.Audit = append(op.Audit, controlplane.NodeOperationEvent(op, "complete", op.Status, op.Err))
 	return op
 }
 

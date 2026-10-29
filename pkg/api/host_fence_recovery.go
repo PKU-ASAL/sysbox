@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
@@ -69,12 +70,12 @@ func hostFenceJournal(run controlplane.Run, serial int64, actions []runtime.Acti
 
 func (s *Server) fenceCommandStorage() (persistence.CommandStorage, error) {
 	switch store := s.apiStore.(type) {
-	case *localAPIStore:
-		return localCommandStorage{store: store}, nil
-	case *sqliteAPIStore:
-		return sqliteCommandStorage{store: store}, nil
-	case *postgresAPIStore:
-		return postgresCommandStorage{store: store}, nil
+	case *controlstore.Local:
+		return controlstore.LocalCommandStorage{Store: store}, nil
+	case *controlstore.SQLite:
+		return controlstore.SqliteCommandStorage{Store: store}, nil
+	case *controlstore.Postgres:
+		return controlstore.PostgresCommandStorage{Store: store}, nil
 	default:
 		return nil, persistence.ErrUnsupportedVersion
 	}
@@ -123,7 +124,7 @@ func (s *Server) fenceRecoveryPlan(ctx context.Context, fence persistence.HostFe
 	} else {
 		plan.HostProcessExclusion = "verified"
 	}
-	grants, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).ListActiveGrants(ctx)
+	grants, err := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore}).ListActiveGrants(ctx)
 	if err != nil {
 		return plan, nil, 0, err
 	}
@@ -222,7 +223,7 @@ func (s *Server) fenceRecoveryPlan(ctx context.Context, fence persistence.HostFe
 		plan.Blockers = append(plan.Blockers, "owning_agent_observation_required")
 		return plan, run, st.Meta.Serial, nil
 	}
-	if validatePathSegment(observation, "command") != nil {
+	if controlstore.ValidatePathSegment(observation, "command") != nil {
 		return plan, nil, 0, persistence.ErrInvalidRecord
 	}
 	storage, err := s.fenceCommandStorage()
@@ -305,7 +306,7 @@ func fenceObservationMatches(record *persistence.CommandRecord, req controlplane
 		return false
 	}
 	c := record.Command
-	return c.ExpectedSerial == serial && persistence.SameRunIncarnation(*c.Run, run) && c.Run.Attempt == run.Attempt && c.Run.LeaseOwner == run.LeaseOwner
+	return c.ExpectedSerial == serial && controlplane.SameRunIncarnation(*c.Run, run) && c.Run.Attempt == run.Attempt && c.Run.LeaseOwner == run.LeaseOwner
 }
 func fenceObservationReportMatches(fence persistence.HostFenceRecord, run controlplane.Run, serial int64, actions []runtime.ActionRecord, report *controlplane.RunRecoveryReport) bool {
 	if fence.Receipt == nil || report == nil || report.Mode != controlplane.RunRecoveryObserve || report.RunID != run.ID || report.AgentID != fence.Request.Grant.AgentID || report.TopologyUID != fence.Request.Grant.Scope.TopologyUID || report.StateSerial != serial || !report.QueuedAt.Equal(run.QueuedAt) || report.Revision != run.Revision || report.RunAttempt != run.Attempt || report.RunLeaseOwner != run.LeaseOwner || report.ObservedAt.Before(fence.Receipt.ObservedAt) || report.ObservedAt.After(time.Now().UTC().Add(controlplane.ExecutionGrantMaxClockSkew)) || len(report.Resources) != len(actions) {

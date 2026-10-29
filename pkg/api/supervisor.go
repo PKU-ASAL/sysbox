@@ -8,35 +8,22 @@ import (
 	"sync"
 	"time"
 
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/model"
 )
 
 type Supervisor struct {
 	server   *Server
 	interval time.Duration
-	policy   SupervisorPolicy
+	policy   controlstore.SupervisorPolicy
 	stop     chan struct{}
 	once     sync.Once
 }
 
-type SupervisorPolicy string
-
 const (
-	SupervisorPolicyObserveOnly    SupervisorPolicy = "observe_only"
-	SupervisorPolicyRestartOnCrash SupervisorPolicy = "restart_on_crash"
+	SupervisorPolicyObserveOnly    controlstore.SupervisorPolicy = "observe_only"
+	SupervisorPolicyRestartOnCrash controlstore.SupervisorPolicy = "restart_on_crash"
 )
-
-type HealthSnapshot struct {
-	Topology  string               `json:"topology"`
-	Observed  time.Time            `json:"observed_at"`
-	Health    model.TopologyHealth `json:"health"`
-	Policy    SupervisorPolicy     `json:"policy"`
-	AutoHeal  bool                 `json:"auto_heal"`
-	Action    string               `json:"action,omitempty"`
-	RunID     string               `json:"run_id,omitempty"`
-	Recovered []string             `json:"recovered_runs,omitempty"`
-	LastError string               `json:"last_error,omitempty"`
-}
 
 func newSupervisor(s *Server, interval time.Duration) *Supervisor {
 	return &Supervisor{
@@ -154,7 +141,7 @@ func (s *Supervisor) ScanTopology(ctx context.Context, topology string) error {
 			return err
 		}
 	}
-	snap := HealthSnapshot{
+	snap := controlstore.HealthSnapshot{
 		Topology: topology,
 		Observed: time.Now().UTC(),
 		Health:   s.server.authoritativeTopologyHealth(ctx, topology, st),
@@ -177,7 +164,7 @@ func (s *Supervisor) ScanTopology(ctx context.Context, topology string) error {
 
 // reconcileRecoverable only observes already authorized durable actions. It
 // never replays checkpoint patches or starts provider/guest operations.
-func (s *Supervisor) reconcileRecoverable(ctx context.Context, topology string, snap *HealthSnapshot) {
+func (s *Supervisor) reconcileRecoverable(ctx context.Context, topology string, snap *controlstore.HealthSnapshot) {
 	runs := s.server.jobs.recoverableRuns(topology)
 	if len(runs) == 0 {
 		return
@@ -199,7 +186,7 @@ func (s *Supervisor) reconcileRecoverable(ctx context.Context, topology string, 
 	}
 }
 
-func (s *Supervisor) maybeRepair(topology string, snap *HealthSnapshot) {
+func (s *Supervisor) maybeRepair(topology string, snap *controlstore.HealthSnapshot) {
 	if s.policy != SupervisorPolicyRestartOnCrash {
 		snap.Action = "observe"
 		return
@@ -222,15 +209,15 @@ func (s *Server) healthSnapshotFile(topology string) string {
 	return filepath.Join(s.runsDir, topology, "health.json")
 }
 
-func (s *Server) saveHealthSnapshot(topology string, snap HealthSnapshot) error {
+func (s *Server) saveHealthSnapshot(topology string, snap controlstore.HealthSnapshot) error {
 	return s.apiStore.SaveHealth(context.Background(), topology, snap)
 }
 
-func (s *Server) loadHealthSnapshot(topology string) (*HealthSnapshot, error) {
+func (s *Server) loadHealthSnapshot(topology string) (*controlstore.HealthSnapshot, error) {
 	return s.apiStore.LoadHealth(context.Background(), topology)
 }
 
-func supervisorPolicyFromConfig(raw string) SupervisorPolicy {
+func supervisorPolicyFromConfig(raw string) controlstore.SupervisorPolicy {
 	switch raw {
 	case string(SupervisorPolicyRestartOnCrash):
 		return SupervisorPolicyRestartOnCrash

@@ -4,41 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"path/filepath"
-	"regexp"
-	"strings"
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/workspace"
 )
 
 // maxRevisionBytes caps the project tree accepted by POST /v1/revisions.
 const maxRevisionBytes = 8 << 20
-
-// relPathSegment matches a single safe path segment within a project file path.
-// Unlike validatePathSegment (which guards topology/node/id names and forbids
-// dots), project files legitimately contain dots ("main.hcl",
-// "playbook.tar.gz"), so this alphabet is wider. validateRelPath rejects "."
-// and ".." segments outright before this regex is consulted.
-var relPathSegment = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
-
-// validateRelPath rejects any path that could escape the project root. Every
-// segment must be non-empty, not "." or "..", free of backslashes, and not an
-// absolute path.
-func validateRelPath(p string) error {
-	if p == "" || filepath.IsAbs(p) || strings.ContainsRune(p, '\\') {
-		return fmt.Errorf("invalid project path %q", p)
-	}
-	for _, seg := range strings.Split(p, "/") {
-		if seg == "" || seg == "." || seg == ".." {
-			return fmt.Errorf("invalid project path %q", p)
-		}
-		if !relPathSegment.MatchString(seg) {
-			return fmt.Errorf("invalid project path %q", p)
-		}
-	}
-	return nil
-}
 
 // handlePublishRevision stores a content-addressed project directory tree and
 // returns its digest. Publishing the same tree twice yields the same revision,
@@ -67,7 +40,7 @@ func (s *Server) handlePublishRevision(w http.ResponseWriter, r *http.Request) {
 	files := make(map[string][]byte, len(req.Files))
 	size := 0
 	for p, c := range req.Files {
-		if err := validateRelPath(p); err != nil {
+		if err := workspace.ValidateRelPath(p); err != nil {
 			writeError(w, http.StatusBadRequest, err)
 			return
 		}

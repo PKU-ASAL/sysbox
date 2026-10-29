@@ -9,6 +9,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/runtime"
@@ -18,7 +19,7 @@ import (
 // GET /v1/topologies/{topology}/resources
 func (s *Server) handleListResources(w http.ResponseWriter, r *http.Request) {
 	topology := r.PathValue("topology")
-	if err := validatePathSegment(topology, "topology"); err != nil {
+	if err := controlstore.ValidatePathSegment(topology, "topology"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -182,7 +183,7 @@ func topologyHealthFromResources(resources []model.ResourceHealth) model.Topolog
 
 func (s *Server) handleTopologyStatusStream(w http.ResponseWriter, r *http.Request) {
 	topology := r.PathValue("topology")
-	if err := validatePathSegment(topology, "topology"); err != nil {
+	if err := controlstore.ValidatePathSegment(topology, "topology"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -199,7 +200,7 @@ func (s *Server) handleTopologyStatusStream(w http.ResponseWriter, r *http.Reque
 func (s *Server) handleGetResourceHealth(w http.ResponseWriter, r *http.Request) {
 	topology := r.PathValue("topology")
 	resource := r.PathValue("resource")
-	if err := validatePathSegment(topology, "topology"); err != nil {
+	if err := controlstore.ValidatePathSegment(topology, "topology"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -225,10 +226,10 @@ func validateResourceSegment(resource string) error {
 	if !ok || typ == "" || name == "" {
 		return fmt.Errorf("invalid resource %q: expected type.name", resource)
 	}
-	if err := validatePathSegment(typ, "resource type"); err != nil {
+	if err := controlstore.ValidatePathSegment(typ, "resource type"); err != nil {
 		return err
 	}
-	return validatePathSegment(name, "resource name")
+	return controlstore.ValidatePathSegment(name, "resource name")
 }
 
 func findResourceByID(st *state.State, id string) (*state.Resource, error) {

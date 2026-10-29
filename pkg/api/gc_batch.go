@@ -4,9 +4,11 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"fmt"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/persistence"
 	"net/http"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/persistence"
 )
 
 type gcBatchRequest struct {
@@ -18,7 +20,7 @@ type gcBatchResponse struct {
 
 func (s *Server) handleGCBatch(w http.ResponseWriter, r *http.Request) {
 	topology, key := r.PathValue("topology"), r.Header.Get("Idempotency-Key")
-	if err := validatePathSegment(topology, "topology"); err != nil {
+	if err := controlstore.ValidatePathSegment(topology, "topology"); err != nil {
 		writeError(w, 400, err)
 		return
 	}
@@ -41,7 +43,7 @@ func (s *Server) handleGCBatch(w http.ResponseWriter, r *http.Request) {
 	}
 	unlock := s.jobs.lockTopology(topology)
 	defer unlock()
-	placement, err := s.workspaceService().loadPlacement(topology)
+	placement, err := s.workspaceService().LoadPlacement(topology)
 	if err != nil || placement == nil {
 		writeError(w, 409, fmt.Errorf("GC requires owning placement: %v", err))
 		return

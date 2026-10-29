@@ -11,12 +11,13 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 )
 
 func (s *Server) handleGC(w http.ResponseWriter, r *http.Request) {
 	topology := r.PathValue("topology")
-	if err := validatePathSegment(topology, "topology"); err != nil {
+	if err := controlstore.ValidatePathSegment(topology, "topology"); err != nil {
 		writeError(w, 400, err)
 		return
 	}
@@ -38,7 +39,7 @@ func (s *Server) handleGC(w http.ResponseWriter, r *http.Request) {
 	}
 	unlock := s.jobs.lockTopology(topology)
 	defer unlock()
-	placement, err := s.workspaceService().loadPlacement(topology)
+	placement, err := s.workspaceService().LoadPlacement(topology)
 	if err != nil || placement == nil {
 		writeError(w, 409, fmt.Errorf("GC requires durable owning-agent placement: %v", err))
 		return
@@ -120,7 +121,7 @@ func (s *Server) reconcileGCOutbox(ctx context.Context, topology string) error {
 
 func (s *Server) handleGCReferences(w http.ResponseWriter, r *http.Request) {
 	topology := r.PathValue("topology")
-	if err := validatePathSegment(topology, "topology"); err != nil {
+	if err := controlstore.ValidatePathSegment(topology, "topology"); err != nil {
 		writeError(w, 400, err)
 		return
 	}

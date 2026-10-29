@@ -5,13 +5,14 @@ import (
 	"testing"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
 )
 
 func TestConsoleWithoutGrantCanFinishWhileAgentIsOffline(t *testing.T) {
 	for _, cancelled := range []bool{true, false} {
-		eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+		eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 			ctx := context.Background()
 			sess, cmd := consoleDispatchFixture()
 			sess.CommandID = cmd.ID

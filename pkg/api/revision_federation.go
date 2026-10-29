@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/revisiongate"
 )
@@ -44,6 +45,7 @@ func federationToken(path string) ([]byte, error) {
 	}
 	return raw, nil
 }
+
 func (s *Server) handleFederatedRetirement(w http.ResponseWriter, r *http.Request) {
 	var input revisionFederationRequest
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32768))
@@ -99,7 +101,7 @@ func (s *Server) retireSQLConsumers(ctx context.Context, root string, ids []stri
 	if input.Registry == "" {
 		return fmt.Errorf("revision_registry_id required")
 	}
-	if err := writeLocalObjectWithoutGate(filepath.Join(root, request+".intent"), input); err != nil {
+	if err := controlstore.WriteLocalObjectWithoutGate(filepath.Join(root, request+".intent"), input); err != nil {
 		return err
 	}
 	names := make([]string, 0, len(consumers))
@@ -115,59 +117,7 @@ func (s *Server) retireSQLConsumers(ctx context.Context, root string, ids []stri
 	}
 	return nil
 }
-func writeLocalObjectWithoutGate(path string, value any) error {
-	raw, err := json.Marshal(value)
-	if err != nil {
-		return err
-	}
-	return publishLocalObject(path, raw)
-}
 
 func (s *Server) enrolledSQLConsumers(root string) (map[string]config.RevisionSQLConsumer, error) {
-	return enrollSQLConsumers(s.cfg, root)
-}
-
-func enrollSQLConsumers(cfg config.ServiceConfig, root string) (map[string]config.RevisionSQLConsumer, error) {
-	path := filepath.Join(root, ".sql-consumers.json")
-	anchor := filepath.Join(filepath.Dir(root), ".sysbox-sql-consumers.required")
-	raw, err := os.ReadFile(path)
-	exists := err == nil
-	if os.IsNotExist(err) {
-		if _, e := os.Lstat(anchor); !os.IsNotExist(e) {
-			return nil, fmt.Errorf("SQL consumer enrollment evidence lost")
-		}
-		if len(cfg.RevisionSQLConsumers) == 0 {
-			return nil, nil
-		}
-	} else if err != nil {
-		return nil, err
-	}
-	type enrolled struct {
-		Registry  string                                `json:"registry"`
-		Consumers map[string]config.RevisionSQLConsumer `json:"consumers"`
-	}
-	prior := enrolled{}
-	if exists {
-		if json.Unmarshal(raw, &prior) != nil || prior.Consumers == nil || prior.Registry != cfg.RevisionRegistryID {
-			return nil, fmt.Errorf("SQL consumer enrollment changed")
-		}
-	}
-	for id, old := range prior.Consumers {
-		current, ok := cfg.RevisionSQLConsumers[id]
-		if !ok || old != current {
-			return nil, fmt.Errorf("SQL consumer %s missing or changed", id)
-		}
-	}
-	if len(cfg.RevisionSQLConsumers) > 0 {
-		if cfg.RevisionRegistryID == "" {
-			return nil, fmt.Errorf("registry ID required for SQL federation")
-		}
-		if err = writeLocalObjectWithoutGate(path, enrolled{Registry: cfg.RevisionRegistryID, Consumers: cfg.RevisionSQLConsumers}); err != nil {
-			return nil, err
-		}
-		if err = writeLocalObjectWithoutGate(anchor, map[string]string{"catalog": root}); err != nil {
-			return nil, err
-		}
-	}
-	return cfg.RevisionSQLConsumers, nil
+	return controlstore.EnrollSQLConsumers(s.cfg, root)
 }

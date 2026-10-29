@@ -9,14 +9,16 @@ import (
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
+	"github.com/oslab/sysbox/pkg/workspace"
 )
 
 type NodeOperationService struct {
-	workspace   *WorkspaceService
+	workspace   *workspace.Catalog
 	scheduler   *SchedulerService
 	operations  *nodeOperationStore
 	wakeCommand func(string, controlplane.AgentCommand) error
@@ -97,7 +99,7 @@ func (s *NodeOperationService) enqueue(ctx context.Context, topologyUID string, 
 	return op, nil
 }
 
-func newNodeOperationService(workspace *WorkspaceService, scheduler *SchedulerService, operations *nodeOperationStore, wakeCommand func(string, controlplane.AgentCommand) error) *NodeOperationService {
+func newNodeOperationService(workspace *workspace.Catalog, scheduler *SchedulerService, operations *nodeOperationStore, wakeCommand func(string, controlplane.AgentCommand) error) *NodeOperationService {
 	return &NodeOperationService{
 		workspace:   workspace,
 		scheduler:   scheduler,
@@ -116,8 +118,8 @@ func (s *NodeOperationService) Lifecycle(ctx context.Context, topology, name, op
 		}
 	}
 
-	if s.workspace.lockAdmission != nil {
-		unlock := s.workspace.lockAdmission(topology)
+	if s.workspace.LockAdmission != nil {
+		unlock := s.workspace.LockAdmission(topology)
 		defer unlock()
 	}
 	id := ""
@@ -201,7 +203,7 @@ func (s *NodeOperationService) SSHAccess(ctx context.Context, topology string, n
 	if req.User != "" {
 		return controlplane.NodeOperation{}, fmt.Errorf("invalid SSH request: user is selected from canonical node configuration")
 	}
-	if err := validatePathSegment(node, "node"); err != nil {
+	if err := controlstore.ValidatePathSegment(node, "node"); err != nil {
 		return controlplane.NodeOperation{}, err
 	}
 	// Validate public payload before reading state. This placeholder is used
@@ -287,7 +289,7 @@ func (s *NodeOperationService) Import(ctx context.Context, topology string, req 
 	if req.Type != "sysbox_node" {
 		return controlplane.NodeOperation{}, fmt.Errorf("import only supports sysbox_node, got %q", req.Type)
 	}
-	if err := validatePathSegment(req.Name, "name"); err != nil {
+	if err := controlstore.ValidatePathSegment(req.Name, "name"); err != nil {
 		return controlplane.NodeOperation{}, err
 	}
 	if req.ID == "" {

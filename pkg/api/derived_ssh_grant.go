@@ -5,11 +5,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/persistence"
-	"github.com/oslab/sysbox/pkg/substrate"
 	"net/http"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 // Derived SSH mutations share the parent's command, but own a distinct digest,
@@ -40,7 +42,7 @@ func (s *Server) handleDeriveSSHExecutionGrant(w http.ResponseWriter, r *http.Re
 		return
 	}
 	parent := request.Parent
-	if err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).ObserveTime(r.Context()); err != nil {
+	if err := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore}).ObserveTime(r.Context()); err != nil {
 		writeError(w, agentRepositoryErrorStatus(err), err)
 		return
 	}
@@ -98,7 +100,7 @@ func (s *Server) handleDerivedSSHCompletion(w http.ResponseWriter, r *http.Reque
 	sum := sha256.Sum256(raw)
 	// The ledger checks the exact issued grant including ParentEpoch. Historical
 	// signed completion remains admissible after expiry; it grants no new effect.
-	err = persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).AcceptHostStop(r.Context(), g, hex.EncodeToString(sum[:]))
+	err = persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore}).AcceptHostStop(r.Context(), g, hex.EncodeToString(sum[:]))
 	if err != nil {
 		writeError(w, agentRepositoryErrorStatus(err), err)
 		return

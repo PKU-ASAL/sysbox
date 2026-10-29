@@ -7,15 +7,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
-
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/substrate"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGuestExecutionCreateValidatesRequest(t *testing.T) {
-	svc := newGuestExecutionService(&localAPIStore{runsDir: t.TempDir()}, nil, nil)
+	svc := newGuestExecutionService(&controlstore.Local{RunsDir: t.TempDir()}, nil, nil)
 	for _, tc := range []struct {
 		name string
 		req  controlplane.GuestExecutionRequest
@@ -35,7 +35,7 @@ func TestGuestExecutionCreateValidatesRequest(t *testing.T) {
 }
 
 func TestGuestExecutionCreateRejectsUnsupportedCaptureBound(t *testing.T) {
-	svc := newGuestExecutionService(&localAPIStore{runsDir: t.TempDir()}, nil, nil)
+	svc := newGuestExecutionService(&controlstore.Local{RunsDir: t.TempDir()}, nil, nil)
 	_, err := svc.Create(context.Background(), "lab", "windows", "host-a", controlplane.GuestExecutionRequest{
 		Argv: []string{"powershell.exe", "-NoProfile"}, OutputLimitBytes: 8 << 20,
 	})
@@ -44,7 +44,7 @@ func TestGuestExecutionCreateRejectsUnsupportedCaptureBound(t *testing.T) {
 
 func TestGuestExecutionLifecyclePreservesNonZeroExit(t *testing.T) {
 	ctx := substrate.WithOperationIdentity(context.Background(), substrate.OperationIdentity{ActionID: "guest", OwnerUID: "owner", TopologyUID: "owner", ResourceUID: "node", Generation: 1})
-	store := &localAPIStore{runsDir: t.TempDir()}
+	store := &controlstore.Local{RunsDir: t.TempDir()}
 	svc := newGuestExecutionServiceFromStore(store, nil, nil)
 	exec, err := svc.Create(ctx, "lab", "web", "host-a", controlplane.GuestExecutionRequest{Argv: []string{"sh", "-c", "exit 7"}, TimeoutSeconds: 30})
 	require.NoError(t, err)
@@ -73,7 +73,7 @@ func TestGuestExecutionLifecyclePreservesNonZeroExit(t *testing.T) {
 func TestGuestExecutionCancelPersistsIntentWithoutTerminalTransition(t *testing.T) {
 	ctx := context.Background()
 	var cancelTarget string
-	store := &localAPIStore{runsDir: t.TempDir()}
+	store := &controlstore.Local{RunsDir: t.TempDir()}
 	svc := newGuestExecutionService(store, func(_ context.Context, _ string, cmd controlplane.AgentCommand) (controlplane.AgentCommand, error) {
 		if cmd.Type == "cancel_command" {
 			cancelTarget = cmd.Operation.ExternalID
@@ -94,7 +94,7 @@ func TestGuestExecutionCancelPersistsIntentWithoutTerminalTransition(t *testing.
 
 func TestGuestExecutionStoreRetainsPrivateDispatchData(t *testing.T) {
 	ctx := context.Background()
-	store := &localAPIStore{runsDir: t.TempDir()}
+	store := &controlstore.Local{RunsDir: t.TempDir()}
 	want := controlplane.GuestExecution{
 		ID: "exec-1", Version: 1, Topology: "lab", Node: "web", AgentID: "host-a",
 		Status:  controlplane.GuestExecutionQueued,
@@ -109,7 +109,7 @@ func TestGuestExecutionStoreRetainsPrivateDispatchData(t *testing.T) {
 
 func TestExpiredGuestExecutionDropsPrivatePayload(t *testing.T) {
 	now := time.Now().UTC()
-	store := &localAPIStore{runsDir: t.TempDir()}
+	store := &controlstore.Local{RunsDir: t.TempDir()}
 	svc := newGuestExecutionService(store, nil, func() time.Time { return now })
 	want := controlplane.GuestExecution{ID: "expired", Version: 1, Topology: "lab", Status: controlplane.GuestExecutionCompleted, Request: controlplane.GuestExecutionRequest{Argv: []string{"secret"}}, Result: controlplane.GuestExecutionResult{Stdout: "secret"}, ExpiresAt: now.Add(-time.Second)}
 	require.NoError(t, store.SaveGuestExecution(context.Background(), want))
@@ -123,7 +123,7 @@ func TestGuestExecutionCreatePublishesPrivateRequestSeparately(t *testing.T) {
 	ctx := context.Background()
 	want := controlplane.GuestExecutionRequest{Argv: []string{"env"}, Environment: map[string]string{"TOKEN": "secret"}}
 	var published controlplane.AgentCommand
-	svc := newGuestExecutionService(&localAPIStore{runsDir: t.TempDir()}, func(_ context.Context, _ string, cmd controlplane.AgentCommand) (controlplane.AgentCommand, error) {
+	svc := newGuestExecutionService(&controlstore.Local{RunsDir: t.TempDir()}, func(_ context.Context, _ string, cmd controlplane.AgentCommand) (controlplane.AgentCommand, error) {
 		published = cmd
 		return cmd, nil
 	}, nil)
@@ -141,7 +141,7 @@ func TestGuestExecutionCreatePublishesPrivateRequestSeparately(t *testing.T) {
 
 func TestGuestExecutionOutboxCommitSurvivesNotificationFailure(t *testing.T) {
 	ctx := context.Background()
-	store := &localAPIStore{runsDir: t.TempDir()}
+	store := &controlstore.Local{RunsDir: t.TempDir()}
 	var queued controlplane.AgentCommand
 	svc := newGuestExecutionServiceWithOutbox(store, func(_ context.Context, _ string, cmd controlplane.AgentCommand) (controlplane.AgentCommand, error) {
 		return cmd, errors.New("agent disconnected")
@@ -170,7 +170,7 @@ func TestGuestExecutionOutboxCommitSurvivesNotificationFailure(t *testing.T) {
 
 func TestGuestExecutionUsesStoreOutboxWhenAvailable(t *testing.T) {
 	ctx := context.Background()
-	store := &localAPIStore{runsDir: t.TempDir()}
+	store := &controlstore.Local{RunsDir: t.TempDir()}
 	svc := newGuestExecutionServiceWithOutbox(store, func(context.Context, string, controlplane.AgentCommand) (controlplane.AgentCommand, error) {
 		return controlplane.AgentCommand{}, errors.New("notification unavailable")
 	}, func(ctx context.Context, execution controlplane.GuestExecution, command controlplane.AgentCommand) (controlplane.GuestExecution, error) {

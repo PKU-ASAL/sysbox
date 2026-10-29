@@ -3,9 +3,10 @@ package persistence
 import (
 	"context"
 	"encoding/json"
-	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestQuiescentDeleteReleasesOnlyFullyRetiredSourceDomains(t *testing.T) {
@@ -38,8 +39,8 @@ func TestQuiescentDeleteReleasesOnlyFullyRetiredSourceDomains(t *testing.T) {
 			var next []byte
 			err = r.update(ctx, "lab", func(a *aggregate) error {
 				if scenario == "completed-admission" {
-					a.GCReferenceFormat = a.Format
-					a.Format = GCAdmissionFormatVersion
+
+					a.Format = FormatVersion
 				}
 				raw, err := json.Marshal(a)
 				if err != nil {

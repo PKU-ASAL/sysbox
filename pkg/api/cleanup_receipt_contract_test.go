@@ -2,14 +2,16 @@ package api
 
 import (
 	"context"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/persistence"
-	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/stretchr/testify/require"
 )
 
-func claimedReceiptRun(t *testing.T, s apiStore, id string) *controlplane.Run {
+func claimedReceiptRun(t *testing.T, s controlstore.Store, id string) *controlplane.Run {
 	t.Helper()
 	ctx := context.Background()
 	run := controlplane.Run{ID: id, Topology: id, Op: "destroy", Operation: "destroy", AgentID: "owner", Status: controlplane.RunAssigned, QueuedAt: time.Now().UTC().Add(-time.Second), Revision: "revision"}
@@ -23,7 +25,7 @@ func receiptFor(run controlplane.Run) *controlplane.CleanupReceipt {
 	return &controlplane.CleanupReceipt{Version: 1, Topology: run.Topology, TopologyUID: "topology-uid", AgentID: run.AgentID, RunID: run.ID, QueuedAt: run.QueuedAt, Revision: run.Revision, Attempt: run.Attempt, LeaseOwner: run.LeaseOwner, StateSerial: 3, ObservedAt: time.Now().UTC(), Empty: true}
 }
 func TestCleanupReceiptAtomicCompletionAndReplay(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		run := claimedReceiptRun(t, store, "receipt")
 		f := prepareHostRunFixture(t, stateDeleteTestServer(t, store), *run, "topology-uid")
 		result := *run
@@ -43,7 +45,7 @@ func TestCleanupReceiptAtomicCompletionAndReplay(t *testing.T) {
 	})
 }
 func TestCleanupReceiptRejectsForgedBindingAndAllowsExpiredLease(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		run := claimedReceiptRun(t, store, "binding")
 		f := prepareHostRunFixture(t, stateDeleteTestServer(t, store), *run, "topology-uid")
@@ -75,7 +77,7 @@ func TestCleanupReceiptRejectsForgedBindingAndAllowsExpiredLease(t *testing.T) {
 	})
 }
 func TestCleanupReceiptCannotBeForgedThroughSaveOrLateCompletion(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		run := claimedReceiptRun(t, store, "ordinary")
 		forged := *run
@@ -95,7 +97,7 @@ func TestCleanupReceiptCannotBeForgedThroughSaveOrLateCompletion(t *testing.T) {
 	})
 }
 func TestCleanupReceiptRequiresSuccessfulWholeDestroyAndRejectsRestartInjection(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		run := claimedReceiptRun(t, store, "result")
 		f := prepareHostRunFixture(t, stateDeleteTestServer(t, store), *run, "topology-uid")

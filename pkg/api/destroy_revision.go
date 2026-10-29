@@ -3,11 +3,12 @@ package api
 import (
 	"context"
 	"fmt"
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
 )
 
 func (s *RunService) pinDestroyRevision(ctx context.Context, run *controlplane.Run) error {

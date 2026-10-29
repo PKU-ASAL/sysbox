@@ -8,6 +8,7 @@ import (
 	"sort"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/guesttask"
 	"github.com/oslab/sysbox/pkg/persistence"
 )
@@ -32,7 +33,7 @@ func (s *Server) handleGuestTaskStops(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, persistence.ErrInvalidRecord)
 		return
 	}
-	grants, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).ListActiveGrants(r.Context())
+	grants, err := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore}).ListActiveGrants(r.Context())
 	if err != nil {
 		writeError(w, agentRepositoryErrorStatus(err), err)
 		return
@@ -86,7 +87,7 @@ func (s *Server) handleGuestTaskStops(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		x, err := s.apiStore.GetGuestExecution(r.Context(), g.ActionID)
-		if err != nil || x.AgentID != id || x.CommandID != g.CommandID || validatePathSegment(x.Topology, "topology") != nil || validatePathSegment(x.Node, "node") != nil {
+		if err != nil || x.AgentID != id || x.CommandID != g.CommandID || controlstore.ValidatePathSegment(x.Topology, "topology") != nil || controlstore.ValidatePathSegment(x.Node, "node") != nil {
 			page.Issues = append(page.Issues, controlplane.GuestTaskStopIssue{Epoch: g.Epoch, ActionID: g.ActionID})
 			continue
 		}

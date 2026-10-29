@@ -3,6 +3,7 @@ package persistence
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -365,4 +366,12 @@ func TestConcurrentRepositoryIntentsHaveOneWinner(t *testing.T) {
 		}
 	}
 	require.Equal(t, 1, won)
+}
+
+func TestLegacyAggregateVersionsAreRejectedWithoutImport(t *testing.T) {
+	for _, version := range []int{1, 2, 3, 4, 5} {
+		raw := []byte(fmt.Sprintf(`{"format":%d}`, version))
+		_, err := decodeAggregate(raw)
+		require.ErrorIs(t, err, ErrUnsupportedVersion)
+	}
 }

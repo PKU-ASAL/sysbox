@@ -3,13 +3,15 @@ package api
 import (
 	"fmt"
 	"net/http"
+
+	"github.com/oslab/sysbox/pkg/controlstore"
 )
 
 // Cancellation requests target the original command. They never manufacture a
 // terminal Run or a host stop receipt; callers must query the resulting state.
 func (s *Server) handleCancelRun(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if err := validatePathSegment(id, "id"); err != nil {
+	if err := controlstore.ValidatePathSegment(id, "id"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -27,6 +29,6 @@ func (s *Server) handleCancelRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r.SetPathValue("agent", run.AgentID)
-	r.SetPathValue("command", runCommandID(*run))
+	r.SetPathValue("command", controlstore.RunCommandID(*run))
 	s.handleCancelAgentCommand(w, r)
 }

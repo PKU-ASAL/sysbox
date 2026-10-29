@@ -7,6 +7,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 )
 
 // Agent authentication grants access only to its operational protocol. It
@@ -40,7 +41,7 @@ func (s *Server) authenticateAgentProtocol(w http.ResponseWriter, r *http.Reques
 		return false
 	}
 	id := r.Header.Get(agent.HeaderAgentID)
-	if id == "" || validatePathSegment(id, "agent") != nil {
+	if id == "" || controlstore.ValidatePathSegment(id, "agent") != nil {
 		return false
 	}
 	stored, err := s.apiStore.GetAgent(r.Context(), id)

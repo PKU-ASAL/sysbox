@@ -2,9 +2,10 @@ package persistence
 
 import (
 	"crypto/ed25519"
+	"time"
+
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/runtime"
-	"time"
 )
 
 // ValidateFencedIntentDisposition authenticates the canonical stop/observation
@@ -34,7 +35,7 @@ func ValidateFencedIntentDisposition(raw []byte, d controlplane.IntentDispositio
 	}
 	c := observation.Command
 	r := observation.Recovery
-	if !observation.Retired || c.Status != controlplane.AgentCommandStatusCompleted || c.Type != controlplane.RunRecoveryCommand || c.RecoveryMode != controlplane.RunRecoveryObserve || c.ActionID != f.Request.ID || c.AgentID != g.AgentID || c.TopologyUID != g.Scope.TopologyUID || c.ExpectedSerial != serial || c.Run == nil || !SameRunIncarnation(*c.Run, run) || c.Run.Attempt != run.Attempt || c.Run.LeaseOwner != run.LeaseOwner || r == nil || r.CommandID != c.ID || r.TopologyUID != g.Scope.TopologyUID || validateRecoveryReport(c, r) != nil {
+	if !observation.Retired || c.Status != controlplane.AgentCommandStatusCompleted || c.Type != controlplane.RunRecoveryCommand || c.RecoveryMode != controlplane.RunRecoveryObserve || c.ActionID != f.Request.ID || c.AgentID != g.AgentID || c.TopologyUID != g.Scope.TopologyUID || c.ExpectedSerial != serial || c.Run == nil || !controlplane.SameRunIncarnation(*c.Run, run) || c.Run.Attempt != run.Attempt || c.Run.LeaseOwner != run.LeaseOwner || r == nil || r.CommandID != c.ID || r.TopologyUID != g.Scope.TopologyUID || validateRecoveryReport(c, r) != nil {
 		return ErrConflict
 	}
 	digest, err := f.Request.Digest()

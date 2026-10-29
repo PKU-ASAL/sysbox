@@ -9,16 +9,17 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
 )
 
 func TestCommandRepositoryDispatchRejectsExistingCommandID(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, s controlstore.Store) {
 		ctx := context.Background()
 		require.NoError(t, s.SaveAgentCommand(ctx, controlplane.AgentCommand{ID: "reserved-command", AgentID: "agent", Type: "node_operation"}))
 		run := controlplane.Run{ID: "new-run", Topology: "lab", AgentID: "agent", Status: controlplane.RunAssigned}
-		_, created, err := s.CreateRunDispatch(ctx, RunDispatchRequest{Run: run, Command: controlplane.AgentCommand{TopologyUID: "owner", ID: "reserved-command", AgentID: "agent", Type: "run_assigned", Run: &run}, Fingerprint: "new"})
+		_, created, err := s.CreateRunDispatch(ctx, controlstore.RunDispatchRequest{Run: run, Command: controlplane.AgentCommand{TopologyUID: "owner", ID: "reserved-command", AgentID: "agent", Type: "run_assigned", Run: &run}, Fingerprint: "new"})
 		require.Error(t, err)
 		require.False(t, created)
 		_, err = s.GetRun(ctx, run.ID)
@@ -27,7 +28,7 @@ func TestCommandRepositoryDispatchRejectsExistingCommandID(t *testing.T) {
 }
 
 func TestRunCommandCanonicalIdentitySurvivesStorageAndLease(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, s controlstore.Store) {
 		ctx := context.Background()
 		cmd := controlplane.AgentCommand{ID: "run-command", AgentID: "agent", Type: "run_assigned", Status: controlplane.AgentCommandStatusQueued, TopologyUID: "canonical-topology", ActionID: "run", ExpectedSerial: 7}
 		require.NoError(t, s.SaveAgentCommand(ctx, cmd))
@@ -47,10 +48,10 @@ func TestRunCommandCanonicalIdentitySurvivesStorageAndLease(t *testing.T) {
 func TestSQLiteCommandRepositoryRejectsCorruptSnapshot(t *testing.T) {
 	for _, mutation := range []string{"record_json=X'6e756c6c'", "record_json=X'5b5d'", "lease_until='not-a-date'", "attempt=99", "execution_payload=X'7b'"} {
 		t.Run(mutation, func(t *testing.T) {
-			s := &sqliteAPIStore{dbPath: filepath.Join(t.TempDir(), "commands.db")}
+			s := &controlstore.SQLite{DbPath: filepath.Join(t.TempDir(), "commands.db")}
 			ctx := context.Background()
 			require.NoError(t, s.SaveAgentCommand(ctx, controlplane.AgentCommand{ID: "command", AgentID: "agent", Type: "node_operation"}))
-			db, err := s.open()
+			db, err := s.OpenDB()
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = db.Close() })
 			_, err = db.ExecContext(ctx, "UPDATE sysbox_agent_commands SET "+mutation+" WHERE id='command'")
@@ -65,7 +66,7 @@ func TestSQLiteCommandRepositoryRejectsCorruptSnapshot(t *testing.T) {
 }
 
 func TestCommandRepositoryRoundTripsNonUTCTimestamps(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, s controlstore.Store) {
 		ctx := context.Background()
 		stamp := time.Date(2026, 9, 30, 16, 0, 0, 123456789, time.FixedZone("local", 8*60*60))
 		cmd := controlplane.AgentCommand{ID: "timezone", AgentID: "agent", Type: "node_operation", Status: controlplane.AgentCommandStatusCompleted, CreatedAt: stamp, Delivered: stamp, AckedAt: stamp, EndedAt: stamp, LeaseOwner: "worker", LeaseUntil: stamp, Attempt: 1}
@@ -80,10 +81,10 @@ func TestCommandRepositoryRoundTripsNonUTCTimestamps(t *testing.T) {
 }
 
 func TestLocalCommandRepositoryIgnoresUnrelatedStandaloneCorruption(t *testing.T) {
-	store := &localAPIStore{runsDir: t.TempDir()}
+	store := &controlstore.Local{RunsDir: t.TempDir()}
 	ctx := context.Background()
 	require.NoError(t, store.SaveAgentCommand(ctx, controlplane.AgentCommand{ID: "mine", AgentID: "healthy", Type: "node_operation"}))
-	path := filepath.Join(store.runsDir, "_agents", "broken", "commands", "bad.json")
+	path := filepath.Join(store.RunsDir, "_agents", "broken", "commands", "bad.json")
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0700))
 	require.NoError(t, os.WriteFile(path, []byte("{broken"), 0600))
 	got, err := store.ListAgentCommands(ctx, "healthy")
@@ -97,17 +98,17 @@ func TestLocalCommandRepositoryIgnoresUnrelatedStandaloneCorruption(t *testing.T
 }
 
 func TestCommandRepositoryExistingRunDispatchDoesNotCreateCommand(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, s controlstore.Store) {
 		ctx := context.Background()
 		original := controlplane.Run{ID: "original", Topology: "lab", AgentID: "agent", Status: controlplane.RunAssigned}
-		first := RunDispatchRequest{Run: original, Command: controlplane.AgentCommand{TopologyUID: "owner", ID: "shared-command", AgentID: "agent", Type: "run_assigned", Run: &original}, Fingerprint: "original"}
+		first := controlstore.RunDispatchRequest{Run: original, Command: controlplane.AgentCommand{TopologyUID: "owner", ID: "shared-command", AgentID: "agent", Type: "run_assigned", Run: &original}, Fingerprint: "original"}
 		_, _, err := s.CreateRunDispatch(ctx, first)
 		require.NoError(t, err)
 		existing := original
 		existing.ID = "existing"
 		existing.Topology = "other-lab"
 		require.NoError(t, s.SaveRun(ctx, existing))
-		_, created, err := s.CreateRunDispatch(ctx, RunDispatchRequest{Run: existing, Command: first.Command, Fingerprint: "existing"})
+		_, created, err := s.CreateRunDispatch(ctx, controlstore.RunDispatchRequest{Run: existing, Command: first.Command, Fingerprint: "existing"})
 		require.NoError(t, err)
 		require.False(t, created)
 		commands, err := s.ListAgentCommands(ctx, "agent")
@@ -118,7 +119,7 @@ func TestCommandRepositoryExistingRunDispatchDoesNotCreateCommand(t *testing.T) 
 }
 
 func TestCommandRepositoryPreservesImmutablePayload(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, s controlstore.Store) {
 		ctx := context.Background()
 		cmd := controlplane.AgentCommand{TopologyUID: "owner", ID: "command", AgentID: "agent", Type: "run_assigned", Status: controlplane.AgentCommandStatusQueued, Run: &controlplane.Run{ID: "run", Topology: "lab", Revision: "pinned", Status: controlplane.RunAssigned}}
 		require.NoError(t, s.SaveAgentCommand(ctx, cmd))
@@ -138,11 +139,11 @@ func TestCommandRepositoryPreservesImmutablePayload(t *testing.T) {
 }
 
 func TestCommandRepositoryRetirementPreventsDispatchResurrection(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, s controlstore.Store) {
 		ctx := context.Background()
 		run := controlplane.Run{ID: "bundled", Topology: "lab", AgentID: "agent", Status: controlplane.RunAssigned}
 		cmd := controlplane.AgentCommand{TopologyUID: "owner", ID: "bundle-command", AgentID: "agent", Type: "run_assigned", Run: &run}
-		request := RunDispatchRequest{Run: run, Command: cmd, Fingerprint: "request"}
+		request := controlstore.RunDispatchRequest{Run: run, Command: cmd, Fingerprint: "request"}
 		_, created, err := s.CreateRunDispatch(ctx, request)
 		require.NoError(t, err)
 		require.True(t, created)
@@ -160,7 +161,7 @@ func TestCommandRepositoryRetirementPreventsDispatchResurrection(t *testing.T) {
 	})
 }
 func TestCommandRepositoryConcurrentLeaseHasSingleWinner(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, s controlstore.Store) {
 		ctx := context.Background()
 		cmd := controlplane.AgentCommand{TopologyUID: "owner", ID: "contended", AgentID: "agent", Type: "run_assigned"}
 		require.NoError(t, s.SaveAgentCommand(ctx, cmd))
@@ -190,7 +191,7 @@ func TestCommandRepositoryConcurrentLeaseHasSingleWinner(t *testing.T) {
 	})
 }
 func TestCommandRepositoryRejectsStaleLeaseWriter(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, s controlstore.Store) {
 		ctx := context.Background()
 		old := controlplane.AgentCommand{ID: "stale", AgentID: "agent", Type: "node_operation", Status: controlplane.AgentCommandStatusLeased, LeaseOwner: "old", LeaseUntil: time.Now().Add(-time.Minute), Attempt: 1}
 		require.NoError(t, s.SaveAgentCommand(ctx, old))
@@ -211,7 +212,7 @@ func TestCommandRepositoryRejectsStaleLeaseWriter(t *testing.T) {
 }
 
 type failingCommandSave struct {
-	apiStore
+	controlstore.Store
 	failure error
 }
 
@@ -219,7 +220,7 @@ func (s failingCommandSave) PrepareAgentCommandDelivery(context.Context, control
 	return nil, s.failure
 }
 func TestCommandDeliveryRejectsCancelledLease(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		cmd := controlplane.AgentCommand{ID: "cancel-before-send", AgentID: "agent", Type: "node_operation"}
 		require.NoError(t, store.SaveAgentCommand(ctx, cmd))
@@ -237,7 +238,7 @@ func TestCommandDeliveryStopsBeforeSocketWriteOnPersistenceFailure(t *testing.T)
 	require.ErrorIs(t, service.writeCommand(context.Background(), nil, controlplane.AgentCommand{ID: "command", AgentID: "agent"}), failure)
 }
 func TestCommandRepositoryRetriesExpiredDeliveryLease(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, s controlstore.Store) {
 		ctx := context.Background()
 		cmd := controlplane.AgentCommand{TopologyUID: "owner", ID: "expired", AgentID: "agent", Type: "run_assigned", Status: controlplane.AgentCommandStatusLeased, LeaseOwner: "old", LeaseUntil: time.Now().UTC().Add(-time.Minute), Attempt: 1}
 		require.NoError(t, s.SaveAgentCommand(ctx, cmd))
@@ -249,7 +250,7 @@ func TestCommandRepositoryRetriesExpiredDeliveryLease(t *testing.T) {
 	})
 }
 func TestCommandRepositoryRejectsInvalidLeaseAndReplacement(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, s controlstore.Store) {
 		ctx := context.Background()
 		cmd := controlplane.AgentCommand{TopologyUID: "owner", ID: "lease", AgentID: "agent", Type: "run_assigned", Status: controlplane.AgentCommandStatusQueued}
 		require.NoError(t, s.SaveAgentCommand(ctx, cmd))

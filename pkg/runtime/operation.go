@@ -3,11 +3,12 @@ package runtime
 import (
 	"context"
 	"fmt"
-	"github.com/oslab/sysbox/pkg/address"
 	"io"
 	"maps"
 	"path/filepath"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/address"
 
 	"github.com/hashicorp/hcl/v2"
 

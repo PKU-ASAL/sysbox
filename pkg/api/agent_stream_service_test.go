@@ -10,13 +10,14 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/stretchr/testify/require"
 )
 
 func TestAgentCommandStreamRejectsForeignEventIdentity(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	store := &localAPIStore{runsDir: t.TempDir()}
+	store := &controlstore.Local{RunsDir: t.TempDir()}
 	cmd := controlplane.AgentCommand{ID: "foreign-command", AgentID: "victim", Type: "node_operation", Status: controlplane.AgentCommandStatusQueued}
 	require.NoError(t, store.SaveAgentCommand(ctx, cmd))
 	service := AgentStreamService{agentService: &AgentService{store: store}}

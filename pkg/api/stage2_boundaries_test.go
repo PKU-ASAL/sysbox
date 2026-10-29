@@ -12,6 +12,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/stretchr/testify/require"
@@ -45,8 +46,8 @@ func TestStage2RevisionDeletionRejectsFileScopedAndBulkRequests(t *testing.T) {
 }
 
 func TestStage2RevisionDeletionRetainsSnapshotAndHistoricalRun(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
-		if _, local := store.(*localAPIStore); local {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
+		if _, local := store.(*controlstore.Local); local {
 			return
 		} // file refusal covered separately
 		ctx := context.Background()

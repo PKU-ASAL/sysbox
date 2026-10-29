@@ -3,11 +3,10 @@ package persistence
 import (
 	"context"
 	"encoding/json"
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"time"
-)
 
-const GCAdmissionFormatVersion = 12
+	"github.com/oslab/sysbox/pkg/controlplane"
+)
 
 func (r *Repository) ClaimGCExecution(ctx context.Context, topology string, c controlplane.GCCandidate, g controlplane.ExecutionGrant) error {
 	digest, err := c.Digest()
@@ -27,10 +26,7 @@ func claimGCExecution(a *aggregate, c controlplane.GCCandidate, g controlplane.E
 	if !ok || !reservation.Pending() || reservation.Candidate != c || reservation.AgentID != g.AgentID || reservation.AdmissionDigest != "" || nextGC(a) != g.CommandID {
 		return ErrConflict
 	}
-	if a.Format != GCAdmissionFormatVersion && a.Format != IntentDispositionFormatVersion && a.Format != AdoptionRecoveryFormatVersion && a.Format != LegacyAdoptionRecoveryFormatVersion {
-		a.GCReferenceFormat = a.Format
-		a.Format = GCAdmissionFormatVersion
-	}
+
 	reservation.AdmissionDigest = evidenceHash(g)
 	a.GC[g.CommandID] = reservation
 	return nil

@@ -18,12 +18,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
-
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/substrate"
+	"github.com/stretchr/testify/require"
 )
 
 type evaluationReadSourceStub struct {
@@ -531,7 +531,7 @@ func TestEvaluationHandlerIsStrictAndHasNoDurableWrites(t *testing.T) {
 		Protocol: controlplane.AgentProtocolVersion, Capabilities: capabilities, LastHeartbeat: time.Now().UTC(),
 		AuthSecret: "PRIVATE_AGENT_SECRET",
 	}))
-	session, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: server.apiStore}).OpenSession(context.Background(), "host-a", "evaluation-process", "")
+	session, err := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: server.apiStore}).OpenSession(context.Background(), "host-a", "evaluation-process", "")
 	require.NoError(t, err)
 	require.NoError(t, server.apiStore.SaveAgentInventory(context.Background(), controlplane.AgentInventory{
 		AgentID: "host-a", SessionID: session.ID, Sequence: 1, Capabilities: capabilities, Status: "fresh", ObservedAt: time.Now().UTC(),

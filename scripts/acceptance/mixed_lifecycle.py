@@ -57,7 +57,7 @@ def verify_translated_sources(observations, expected):
 
 def release_inputs(metadata_path, binary, helper):
     metadata = json.loads(Path(metadata_path).read_text())
-    targets = [target for target in metadata['targets'] if target['architecture'] == 'amd64']
+    targets = [target for target in metadata['targets'] if target['os'] == 'linux' and target['architecture'] == 'amd64']
     if len(targets) != 1 or not metadata.get('commit'):
         raise ValueError('one amd64 release target and commit required')
     for path, key in ((binary, 'sysbox_sha256'), (helper, 'sysbox_init_sha256')):

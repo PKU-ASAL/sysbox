@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 )
 
@@ -17,7 +18,7 @@ type gcSourcePublication struct {
 
 func (s *Server) handleGCSources(w http.ResponseWriter, r *http.Request) {
 	topology := r.PathValue("topology")
-	if err := validatePathSegment(topology, "topology"); err != nil {
+	if err := controlstore.ValidatePathSegment(topology, "topology"); err != nil {
 		writeError(w, 400, err)
 		return
 	}
@@ -36,7 +37,7 @@ func (s *Server) handleGCSources(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGCSourcePublication(w http.ResponseWriter, r *http.Request) {
 	topology, source := r.PathValue("topology"), r.PathValue("source")
 	for name, value := range map[string]string{"topology": topology, "source": source} {
-		if err := validatePathSegment(value, name); err != nil {
+		if err := controlstore.ValidatePathSegment(value, name); err != nil {
 			writeError(w, 400, err)
 			return
 		}

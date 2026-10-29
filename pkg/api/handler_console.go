@@ -11,19 +11,19 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/model"
 )
 
 func (s *Server) handleCreateConsoleSession(w http.ResponseWriter, r *http.Request) {
 	topology := r.PathValue("topology")
 	node := r.PathValue("node")
-	if err := validatePathSegment(topology, "topology"); err != nil {
+	if err := controlstore.ValidatePathSegment(topology, "topology"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if err := validatePathSegment(node, "node"); err != nil {
+	if err := controlstore.ValidatePathSegment(node, "node"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -66,7 +66,7 @@ func consoleHealthReason(resource model.ResourceHealth) string {
 
 func (s *Server) handleGetConsoleSession(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("session")
-	if err := validatePathSegment(id, "session"); err != nil {
+	if err := controlstore.ValidatePathSegment(id, "session"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -80,7 +80,7 @@ func (s *Server) handleGetConsoleSession(w http.ResponseWriter, r *http.Request)
 
 func (s *Server) handleCancelConsoleSession(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("session")
-	if err := validatePathSegment(id, "session"); err != nil {
+	if err := controlstore.ValidatePathSegment(id, "session"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -96,8 +96,8 @@ func writeConsoleSessionError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, errConsoleAccessDenied):
 		writeError(w, http.StatusForbidden, errConsoleAccessDenied)
-	case errors.Is(err, errConsoleSessionNotFound):
-		writeError(w, http.StatusNotFound, errConsoleSessionNotFound)
+	case errors.Is(err, controlstore.ErrConsoleSessionNotFound):
+		writeError(w, http.StatusNotFound, controlstore.ErrConsoleSessionNotFound)
 	default:
 		writeError(w, http.StatusServiceUnavailable, errors.New("console session unavailable; retry the same session"))
 	}
@@ -109,7 +109,7 @@ func (s *Server) handleAttachConsoleSession(w http.ResponseWriter, r *http.Reque
 
 func (s *Server) handleAgentAttachConsole(w http.ResponseWriter, r *http.Request) {
 	agentID := r.PathValue("agent")
-	if err := validatePathSegment(agentID, "agent"); err != nil {
+	if err := controlstore.ValidatePathSegment(agentID, "agent"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -132,7 +132,7 @@ func (s *Server) handleAgentAttachConsole(w http.ResponseWriter, r *http.Request
 
 func (s *Server) attachConsolePeer(w http.ResponseWriter, r *http.Request, side string) {
 	id := r.PathValue("session")
-	if err := validatePathSegment(id, "session"); err != nil {
+	if err := controlstore.ValidatePathSegment(id, "session"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}

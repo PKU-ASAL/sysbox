@@ -8,13 +8,14 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 )
 
 // derivedGuestStorage revalidates the original command while holding the same
 // durable lock as the authority ledger. Neither deriving nor renewing a child
 // may outlive the command that authorized its parent.
-func (s *Server) derivedGuestStorage(ctx context.Context, parent controlplane.SignedExecutionGrant) apiExecutionGrantStorage {
+func (s *Server) derivedGuestStorage(ctx context.Context, parent controlplane.SignedExecutionGrant) controlstore.AuthorityStorage {
 	g := parent.Grant
 	return s.commandGrantStorage(g.CommandID, func(record *persistence.CommandRecord) error {
 		if record == nil {
@@ -51,7 +52,7 @@ func (s *Server) handleRenewDerivedGuestExecutionGrant(w http.ResponseWriter, r 
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).ObserveTime(r.Context()); err != nil {
+	if err := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore}).ObserveTime(r.Context()); err != nil {
 		writeError(w, agentRepositoryErrorStatus(err), err)
 		return
 	}
@@ -80,7 +81,7 @@ func (s *Server) authorizeDerivedGuestGrant(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusConflict, persistence.ErrConflict)
 		return
 	}
-	base := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	base := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
 	parent, err := base.InspectGrant(r.Context(), child.AgentID, controlplane.ExecutionScope{TopologyUID: child.Scope.TopologyUID})
 	if err != nil || parent == nil || parent.Epoch != child.ParentEpoch {
 		writeError(w, http.StatusConflict, persistence.ErrConflict)

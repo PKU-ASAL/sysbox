@@ -6,18 +6,20 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
-	"github.com/oslab/sysbox/pkg/agent"
-	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/hostsupervisor"
-	"github.com/oslab/sysbox/pkg/persistence"
-	"github.com/stretchr/testify/require"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/agent"
+	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/hostsupervisor"
+	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGrantSigningKeyIsLoadedFromOperatorConfig(t *testing.T) {
@@ -159,18 +161,18 @@ func TestCommandGrantDerivesScopeAndRejectsRetiredCommand(t *testing.T) {
 	nextRequest := signed.Grant
 	nextRequest.ActionID = "successor"
 	nextRequest.ExpiresAt = time.Time{}
-	next, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).Issue(ctx, nextRequest, time.Minute)
+	next, err := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore}).Issue(ctx, nextRequest, time.Minute)
 	require.NoError(t, err)
 	require.Greater(t, next.Epoch, signed.Grant.Epoch)
 	w = post("/v1/hosts/host-a/execution-grants/stopped", stop)
 	require.Equal(t, 200, w.Code, w.Body.String())
-	require.NoError(t, persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).Authorize(ctx, *next))
+	require.NoError(t, persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore}).Authorize(ctx, *next))
 }
 
 func TestExecutionAuthorityBackendsSerializeCommandAndGrant(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
-		r := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		r := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		s, err := r.OpenSession(ctx, "agent", "boot", "")
 		require.NoError(t, err)
 		cmd := controlplane.AgentCommand{ID: "command", AgentID: "agent", Type: "test", Status: controlplane.AgentCommandStatusQueued}
@@ -178,7 +180,7 @@ func TestExecutionAuthorityBackendsSerializeCommandAndGrant(t *testing.T) {
 		lease, ok, err := store.AcquireAgentCommandLease(ctx, "agent", "command", "worker", time.Minute)
 		require.NoError(t, err)
 		require.True(t, ok)
-		storage := apiExecutionGrantStorage{store: store, commandID: cmd.ID, validate: func(record *persistence.CommandRecord) error {
+		storage := controlstore.AuthorityStorage{Store: store, CommandID: cmd.ID, Validate: func(record *persistence.CommandRecord) error {
 			if record == nil || record.Retired || record.Command.Attempt != lease.Attempt {
 				return persistence.ErrConflict
 			}
@@ -193,7 +195,7 @@ func TestExecutionAuthorityBackendsSerializeCommandAndGrant(t *testing.T) {
 		require.ErrorIs(t, reopened.Authorize(ctx, *g), persistence.ErrConflict)
 		// Command retirement must not drop the authority epoch or falsely prove
 		// its in-flight effects stopped. Takeover still requires a host receipt.
-		base := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		base := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		replacement := *g
 		replacement.ActionID = "next"
 		_, err = base.Issue(ctx, replacement, time.Minute)
@@ -207,11 +209,11 @@ func TestExecutionAuthorityBackendsSerializeCommandAndGrant(t *testing.T) {
 }
 
 func TestGrantScopeComesFromImmutableDispatchNotNestedStateLoad(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		s := &Server{apiStore: store}
 		cmd := controlplane.AgentCommand{ID: "command", AgentID: "agent", Type: "guest_execution", Status: "running", TopologyUID: "topology-uid", ResourceUID: "node-uid", Generation: 2, ActionID: "action", LeaseOwner: "worker", Attempt: 1, LeaseUntil: time.Now().Add(time.Minute), Execution: &controlplane.GuestExecution{ID: "operation", Topology: "lab", Node: "web"}, ExecutionRequest: controlplane.GuestExecutionRequest{Argv: []string{"true"}}}
 		require.NoError(t, store.SaveAgentCommand(context.Background(), cmd))
-		r := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store, commandID: cmd.ID, validate: func(record *persistence.CommandRecord) error {
+		r := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store, CommandID: cmd.ID, Validate: func(record *persistence.CommandRecord) error {
 			g, err := s.sourceGrant(context.Background(), "agent", ExecutionGrantRequest{SessionID: "session", Attempt: 1, LeaseOwner: "worker"}, record)
 			if err == nil {
 				require.Equal(t, "topology-uid", g.Scope.TopologyUID)
@@ -232,7 +234,7 @@ func TestRunGrantDerivesGuestGrantThroughDurableAuthority(t *testing.T) {
 	secret := "derive-secret"
 	require.NoError(t, s.apiStore.SaveAgent(context.Background(), controlplane.Agent{ID: "agent", AuthSecret: secret, SecretHash: agent.SecretHash(secret)}))
 	ctx := context.Background()
-	repo := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	repo := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
 	session, err := repo.OpenSession(ctx, "agent", "host-process", "")
 	require.NoError(t, err)
 	run := controlplane.Run{ID: "run", Topology: "lab", Revision: "revision", Op: "apply", Status: controlplane.RunAssigned, AgentID: "agent", Attempt: 1, LeaseOwner: "worker", LeaseUntil: time.Now().Add(2 * time.Minute)}
@@ -274,7 +276,7 @@ func TestGCGrantBindsCandidateAndSession(t *testing.T) {
 	secret := "gc-secret"
 	require.NoError(t, s.apiStore.SaveAgent(context.Background(), controlplane.Agent{ID: "host-a", AuthSecret: secret, SecretHash: agent.SecretHash(secret)}))
 	ctx := context.Background()
-	session, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).OpenSession(ctx, "host-a", "guest-process", "")
+	session, err := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore}).OpenSession(ctx, "host-a", "guest-process", "")
 	require.NoError(t, err)
 	manager, err := s.stateManager("lab")
 	require.NoError(t, err)

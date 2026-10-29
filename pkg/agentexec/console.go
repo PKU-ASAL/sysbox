@@ -3,6 +3,7 @@ package agentexec
 import (
 	"context"
 	"encoding/json"
+
 	"github.com/coder/websocket"
 )
 

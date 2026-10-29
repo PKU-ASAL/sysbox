@@ -98,10 +98,9 @@ func OpenConfigured(ctx context.Context, backendURL, statePath string) (*Reposit
 	return openConfigured(ctx, backendURL, statePath, true)
 }
 
-// OpenImportSource opens existing storage without schema bootstrap. Planning an
-// explicit import must not create a missing database or initialize its tables.
-// Only ImportFormat4 may perform the subsequent explicitly requested conversion.
-func OpenImportSource(ctx context.Context, backendURL, statePath string) (*Repository, error) {
+// OpenCatalogSource opens an existing catalog without schema bootstrap. Read
+// only inventory must not create a missing database or initialize its tables.
+func OpenCatalogSource(ctx context.Context, backendURL, statePath string) (*Repository, error) {
 	return openConfigured(ctx, backendURL, statePath, false)
 }
 

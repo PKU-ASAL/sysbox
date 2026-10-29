@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -233,14 +232,12 @@ func TestCLIWaitReportsMissingTransientInputs(t *testing.T) {
 	require.ErrorContains(t, cmd.ExecuteContext(ctx), "original key and inputs")
 }
 
-func TestHostSupervisorUsesExplicitConfigForProviderInitialization(t *testing.T) {
-	sentinel := errors.New("stop before serving")
-	oldConfig := supervisorConfigFile
-	oldArgs := os.Args
-	t.Cleanup(func() { os.Args = oldArgs; supervisorConfigFile = oldConfig; rootCmd.SetArgs(nil) })
-	rootCmd.SetArgs([]string{"host-supervisor", "--config", "/etc/test-host/config.yaml"})
-	var selected string
-	err := ExecuteContextWithProviders(context.Background(), func(path string) error { selected = path; return sentinel })
-	require.ErrorIs(t, err, sentinel)
-	require.Equal(t, "/etc/test-host/config.yaml", selected)
+func TestHostSupervisorRejectsUntrustedConfigBeforeProviderInitialization(t *testing.T) {
+	oldConfig, oldIdentity := supervisorConfigFile, supervisorIdentityFile
+	t.Cleanup(func() { supervisorConfigFile, supervisorIdentityFile = oldConfig, oldIdentity; rootCmd.SetArgs(nil) })
+	rootCmd.SetArgs([]string{"host-supervisor", "--config", "/nonexistent-sysbox-host/config.yaml"})
+	called := false
+	err := ExecuteContextWithProviders(context.Background(), func(string) error { called = true; return nil })
+	require.Error(t, err)
+	require.False(t, called)
 }

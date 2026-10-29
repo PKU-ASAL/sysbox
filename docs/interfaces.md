@@ -118,18 +118,17 @@ VM `source` 可为本地路径或 URL；`pull_source` 提供同字节的远端�
 
 | 数据层 | 当前格式 / 来源 | 升级规则 |
 |---|---|---|
-| API SQLite / PostgreSQL | schema 14，[api_store.go](../pkg/api/api_store.go) | 空库初始化/当前版本重开；旧 API 表不自动迁移 |
-| Lifecycle aggregate | 基线 6；GC source 7、退休 8、GC disposition 9、ownership 10/11、GC admission 12、adoption recovery 13/14、intent disposition 15 | [repository.go](../pkg/persistence/repository.go)校验可读集合；按功能写入更高格式，旧 writer 不得混写 |
+| API SQLite / PostgreSQL | schema 15，[api_store.go](../pkg/controlstore/store.go) | 空库初始化/当前版本重开；旧 API 表不自动迁移 |
+| Lifecycle aggregate | format 16 | 只接受当前格式；旧数据归档并重建，不在线导入 |
 | Execution authority | 基线 5；GC disposition 6、adoption disposition 7、intent disposition 8 | [authority_validation.go](../pkg/persistence/authority_validation.go)校验；不能仅看基线常量 |
 | Guest task | record 2；Linux RPC 1、scope 2/3 | 旧 helper 不支持的新 scope 必须拒绝，不能修改 version 绕过 |
 | Host task | 独立宿主任务记录版本 | 以 [task.go](../pkg/hostsupervisor/task.go) 校验为准，不与 guest record 混用 |
-| Firecracker / 网络 ownership | manifest v2、网络 anchor v2 与 attachment target identity | 缺 ownership 不能自动猜测或补齐 |
+| Firecracker / 网络 ownership | manifest v3、网络 anchor v2 与 attachment target identity | 缺 ownership 不能自动猜测或补齐 |
 
-版本各自属于不同故障域，不能合并成一个总数字。当前实现仍接受若干演进格式；
-目标“运行期单一格式 + 离线迁移”尚未实现，本次文档不能移除已有 reader 的事实。
+版本各自属于不同故障域，不能合并成一个总数字。生命周期已统一为 format 16；执行授权记录仍有自己的版本校验，不能手改字段绕过。
 
-`state import-format4` / `state import-format5` 是显式离线转换：停旧 writer、预览、校验源 SHA-256、归档后提交。
-转换元数据不执行 provider 恢复，不解除 unknown、不证明外部资源 absent。具体参数见 CLI help 与下方 CLI 参考。
+旧 aggregate format 4/5 只读时直接拒绝；升级流程先停止旧 writer、归档原始数据，再按当前格式重新部署。
+归档不解除 unknown、不证明外部资源 absent。先用原版本确认并清理旧资源，再部署新版本。
 同步升级 API、Agent、supervisor、CLI 和 guest helper；无法迁移的旧现场使用原 binary/原证据进行独立处置。
 
 恢复原则：固定 revision/Run incarnation → 读取原 journal → 验证停止/授权 → 观察精确身份 → 提交共享状态转换。
@@ -383,7 +382,7 @@ provider 不修改系统祖先 cgroup 的控制器设置。每次启动建立独
 Stop 会强制停止并等待整个 VMM cgroup 清空，不等价于 guest 内的正常关机。
 
 VMM 的 PID、mount、IPC、UTS namespace 隔离，权限与 seccomp 在启动后检查。
-网络继续遵守拓扑的既有 TAP/bridge namespace：隔离网络进入其 namespace；宿主 Docker bridge 对接仍使用宿主网络 namespace。
+Firecracker 附件必须位于受管理的 named network namespace；宿主 Docker bridge 组合在附件创建和启动前拒绝。未连接网络的 VMM 使用独立 network namespace。
 没有网络挂载的 VM 使用新的网络 namespace。jailer 不代替网络策略，也不把宿主 bridge 变成独立的网络隔离域。
 启动准备中断可直接清理；已经启动但回复丢失时，用 cgroup、进程、jail root 和 API socket 证据恢复原 VMM。
 
@@ -644,13 +643,11 @@ resource_uid、generation、inventory_digest。摘要来自 canonical lifecycle 
 API 与执行宿主必须消费同一 canonical reservation。宿主失联或未知删除结果保持冻结，
 不能用新 key 绕过。已有 owning-host inventory 与批量 GC 路径；真实验收范围与当前发布状态见架构文档。
 
-<a id="cli-显式导入-aggregate-format-5"></a>
-### 显式导入 aggregate format 5
+<a id="cli-旧 aggregate 升级"></a>
+### 旧 aggregate 升级
 
-`sysbox state import-format5` 默认只预览。确认旧 writer 全部停止后，使用
-`--apply --offline --source-sha256 <预览摘要> --archive <原文归档路径>` 提交。
-转换保留资源、未知 action 和 reset continuation，不证明旧 provider 请求已经停止。
-format 6 添加持久 GC reservation；旧 writer 必须保持停止，不能手改 version。
+旧 aggregate format 4/5/更早版本不进入当前程序的执行或读取路径。升级前停止旧 writer，保留原始数据库、journal 和 provider 证据；确认资源已清理后，用当前版本从空 catalog 重新部署。
+禁止手改 format/version 字段，也不能把归档内容直接写回当前 catalog。
 
 <a id="cli-owning-agent-adoption-inspection"></a>
 ### Owning-agent adoption inspection
@@ -700,7 +697,7 @@ The API `GET /v1/topologies/{name}/recovery/intent-only` exposes a read-only
 historical disposition report with journal hashes and evidence blockers. It does
 not authorize forced success or arbitrary old-request replay.
 
-`sysbox state audit-intents <aggregate.json>` reads a legacy format4/5/6 aggregate or host-effect-v2 ledger
+`sysbox state audit-intents <aggregate.json>` reads an archived aggregate or host-effect-v2 ledger
 without opening its backend, migrating it or changing version fields. It emits
 source and per-record SHA256 plus minimal action identifiers; provider-private
 state and credentials are not returned. Keep the original source alongside the
@@ -1253,14 +1250,12 @@ POST /v1/policies
 <a id="http-api-guest-completion-evidence-format"></a>
 #### Guest completion evidence format
 
-Lifecycle aggregates start at format 6 for GC reservations and immutable reset continuation
-receipts; additional features transition to formats 7–15 (see the storage contract above). Format 4 is rejected by normal lifecycle access. The explicit
-`sysbox state import-format4` tool previews by default; applying requires stopped
-writers, an exact source digest and a durable original-byte archive. Preserve
-checkpoints/configuration separately. Import converts metadata only and does
-not authorize provider recovery; never edit version fields manually.
+Lifecycle aggregates use format 16 for all supported operations. Earlier formats are
+rejected by normal lifecycle access and have no import command. Preserve their
+original bytes separately, then rebuild a fresh current catalog; never edit version
+fields manually.
 
-The current API schema is 14. Host completion of a standalone guest task stores
+The current API schema is 15. Host completion of a standalone guest task stores
 its terminal result together with an immutable grant identity and receipt hash;
 SQL backends commit result and authority release together. The file backend
 replays that durable proof after an interrupted publication. Old execution
@@ -1611,7 +1606,7 @@ and block new reservations. A reservation pins its immutable directory through
 signed deletion completion, so expiry during deletion does not strand recovery.
 All publication writes share the reservation transaction lock.
 
-First enrollment explicitly upgrades that aggregate to format 7; other format 6
+Enrollment records its source in the current format 16; other
 aggregates remain unchanged. Older writers reject the enrolled aggregate.
 Current source registration is not rewound by snapshot restore; retained
 snapshots also protect their source references. Metadata DELETE refuses enrolled

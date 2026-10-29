@@ -2,26 +2,11 @@ package api
 
 import (
 	"context"
+
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/guesttask"
 	"github.com/oslab/sysbox/pkg/persistence"
 )
-
-// Called under the same authority lock as cancellation and grant mutation.
-func (b apiExecutionGrantStorage) checkConsoleSource(record *persistence.CommandRecord, read func(string) (*controlplane.ConsoleSession, error)) error {
-	if b.lifecycle == nil || record == nil || record.Command.Type != "session_open" || b.sourceErr != nil && *b.sourceErr != nil {
-		return nil
-	}
-	c := record.Command
-	if c.Session == nil {
-		return b.rejectGrantSource(persistence.ErrConflict)
-	}
-	s, err := read(c.Session.ID)
-	if err == nil && (s == nil || persistence.ValidateConsoleSessionCAS(*c.Session, *s) != nil || s.TopologyUID != c.TopologyUID || s.ResourceUID != c.ResourceUID || s.Generation != c.Generation || s.HostCompletion != "" || s.Status != controlplane.ConsoleSessionStatusQueued && s.Status != controlplane.ConsoleSessionStatusRunning) {
-		err = persistence.ErrConflict
-	}
-	return b.rejectGrantSource(err)
-}
 
 func (s *Server) consoleTaskStop(ctx context.Context, cmd controlplane.AgentCommand, g controlplane.ExecutionGrant) (controlplane.GuestTaskStop, error) {
 	var zero controlplane.GuestTaskStop

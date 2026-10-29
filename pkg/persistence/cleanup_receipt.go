@@ -10,7 +10,7 @@ import (
 // topology destroy. Placement and subsequent-admission invalidation belong to
 // the caller; a receipt alone never establishes current deletion eligibility.
 func ValidateCleanupReceipt(run controlplane.Run, receipt *controlplane.CleanupReceipt) error {
-	NormalizeRun(&run)
+	controlplane.NormalizeRun(&run)
 	if receipt == nil || receipt.Version != 1 || !receipt.Empty || strings.TrimSpace(receipt.TopologyUID) == "" || receipt.StateSerial <= 0 {
 		return ErrConflict
 	}

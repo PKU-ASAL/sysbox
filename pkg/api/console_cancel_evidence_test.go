@@ -9,12 +9,13 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
 )
 
 func TestConsoleCancellationRequestDoesNotProveStop(t *testing.T) {
-	store := &localAPIStore{runsDir: t.TempDir()}
+	store := &controlstore.Local{RunsDir: t.TempDir()}
 	hub := newConsoleSessionHub(store)
 	sess := createConsoleForTest(t, hub)
 	hub.Update(sess.ID, func(s *controlplane.ConsoleSession) {
@@ -40,7 +41,7 @@ func TestConsoleCancellationRequestDoesNotProveStop(t *testing.T) {
 func TestConsoleCancelHTTPDistinguishesUnavailableFromMissing(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
 	sess := createConsoleForTest(t, s.consoles)
-	s.consoles.store = failingConsoleSave{apiStore: s.apiStore}
+	s.consoles.store = failingConsoleSave{Store: s.apiStore}
 	s.consoleSvc = &ConsoleService{consoles: s.consoles, authorize: s.authorizeConsole, wakeCommand: func(string, controlplane.AgentCommand) error {
 		t.Fatal("failed persistence must not wake")
 		return nil
@@ -52,7 +53,7 @@ func TestConsoleCancelHTTPDistinguishesUnavailableFromMissing(t *testing.T) {
 	missing := httptest.NewRecorder()
 	s.ServeHTTP(missing, httptest.NewRequest("POST", "/v1/sessions/absent/cancel", nil))
 	require.Equal(t, 404, missing.Code)
-	s.consoles.store = failingConsoleSave{apiStore: s.apiStore}
+	s.consoles.store = failingConsoleSave{Store: s.apiStore}
 	storageFailure := httptest.NewRecorder()
 	s.ServeHTTP(storageFailure, httptest.NewRequest("POST", "/v1/sessions/"+sess.ID+"/cancel", nil))
 	require.Equal(t, 503, storageFailure.Code)
@@ -60,7 +61,7 @@ func TestConsoleCancelHTTPDistinguishesUnavailableFromMissing(t *testing.T) {
 }
 
 type delayedConsoleSave struct {
-	apiStore
+	controlstore.Store
 	entered, release chan struct{}
 	once             sync.Once
 }
@@ -69,21 +70,21 @@ func (s *delayedConsoleSave) SaveConsoleSession(ctx context.Context, x controlpl
 	if x.Status == controlplane.ConsoleSessionStatusRunning {
 		s.once.Do(func() { close(s.entered); <-s.release })
 	}
-	return s.apiStore.SaveConsoleSession(ctx, x)
+	return s.Store.SaveConsoleSession(ctx, x)
 }
 
 func (s *delayedConsoleSave) CompareAndSwapConsoleSession(ctx context.Context, old, next controlplane.ConsoleSession) error {
 	if next.Status == controlplane.ConsoleSessionStatusRunning {
 		s.once.Do(func() { close(s.entered); <-s.release })
 	}
-	return s.apiStore.CompareAndSwapConsoleSession(ctx, old, next)
+	return s.Store.CompareAndSwapConsoleSession(ctx, old, next)
 }
 
 func TestConsoleCancellationCannotBeOverwrittenByEarlierUpdate(t *testing.T) {
-	store := &localAPIStore{runsDir: t.TempDir()}
+	store := &controlstore.Local{RunsDir: t.TempDir()}
 	hub := newConsoleSessionHub(store)
 	sess := createConsoleForTest(t, hub)
-	delay := &delayedConsoleSave{apiStore: store, entered: make(chan struct{}), release: make(chan struct{})}
+	delay := &delayedConsoleSave{Store: store, entered: make(chan struct{}), release: make(chan struct{})}
 	hub.store = delay
 	var once sync.Once
 	release := func() { once.Do(func() { close(delay.release) }) }
@@ -117,7 +118,7 @@ func TestConsoleCancellationCannotBeOverwrittenByEarlierUpdate(t *testing.T) {
 	require.NotEqual(t, "mutated", again.Audit[0].Message)
 }
 
-type failingConsoleSave struct{ apiStore }
+type failingConsoleSave struct{ controlstore.Store }
 
 func (s failingConsoleSave) CreateConsoleDispatch(context.Context, controlplane.ConsoleSession, controlplane.AgentCommand) error {
 	return errors.New("storage unavailable")
@@ -136,10 +137,10 @@ func (s failingConsoleSave) CancelConsoleSession(context.Context, controlplane.C
 }
 
 func TestConsoleCancelDoesNotAcknowledgeFailedPersistence(t *testing.T) {
-	store := &localAPIStore{runsDir: t.TempDir()}
+	store := &controlstore.Local{RunsDir: t.TempDir()}
 	hub := newConsoleSessionHub(store)
 	sess := createConsoleForTest(t, hub)
-	hub.store = failingConsoleSave{apiStore: store}
+	hub.store = failingConsoleSave{Store: store}
 	require.Error(t, hub.Cancel(context.Background(), sess.ID, "requested", requestSubject{User: "user"}))
 	current, err := hub.Snapshot(sess.ID)
 	require.NoError(t, err)
@@ -172,7 +173,7 @@ func TestConsoleTransportLossCannotManufactureCompletion(t *testing.T) {
 }
 
 func TestConsoleDeliveryCannotConfirmCancellationRequest(t *testing.T) {
-	store := &localAPIStore{runsDir: t.TempDir()}
+	store := &controlstore.Local{RunsDir: t.TempDir()}
 	hub := newConsoleSessionHub(store)
 	sess := createConsoleForTest(t, hub)
 	require.NoError(t, hub.Cancel(context.Background(), sess.ID, "requested", requestSubject{User: "user"}))
@@ -191,7 +192,7 @@ func TestConsoleDeliveryCannotConfirmCancellationRequest(t *testing.T) {
 }
 
 func TestConsoleCancelWakeFailureRetainsCommittedOutbox(t *testing.T) {
-	store := &localAPIStore{runsDir: t.TempDir()}
+	store := &controlstore.Local{RunsDir: t.TempDir()}
 	hub := newConsoleSessionHub(store)
 	sess := createConsoleForTest(t, hub)
 	failure := errors.New("dispatch unavailable")
@@ -220,7 +221,7 @@ func TestConsoleCancelWakeFailureRetainsCommittedOutbox(t *testing.T) {
 }
 
 func TestConsoleCancellationRetriesReuseDurableCommand(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		hub := newConsoleSessionHub(store)
 		sess, err := hub.Create(ctx, "lab", "node", "agent", controlplane.ConsoleRequest{})
@@ -259,7 +260,7 @@ func TestConsoleCancellationRetriesReuseDurableCommand(t *testing.T) {
 }
 
 func TestConsoleCancellationConcurrentFirstEnqueueIsIdempotent(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		hub := newConsoleSessionHub(store)
 		sess, err := hub.Create(ctx, "lab", "node", "agent", controlplane.ConsoleRequest{})

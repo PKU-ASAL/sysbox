@@ -10,17 +10,16 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 )
 
 type consoleSessionHub struct {
 	mu       sync.RWMutex
 	sessions map[string]*consoleSessionState
-	store    apiStore
+	store    controlstore.Store
 	initErr  error
 }
-
-var errConsoleSessionNotFound = errors.New("session not found")
 
 type consoleSessionState struct {
 	session controlplane.ConsoleSession
@@ -35,11 +34,11 @@ type wsPeer struct {
 	conn *websocket.Conn
 }
 
-func newConsoleSessionHub(store apiStore) *consoleSessionHub {
+func newConsoleSessionHub(store controlstore.Store) *consoleSessionHub {
 	return newConsoleSessionHubWithRecovery(store, true)
 }
 
-func newConsoleSessionHubWithRecovery(store apiStore, recoverInterrupted bool) *consoleSessionHub {
+func newConsoleSessionHubWithRecovery(store controlstore.Store, recoverInterrupted bool) *consoleSessionHub {
 	h := &consoleSessionHub{sessions: map[string]*consoleSessionState{}, store: store}
 	if store != nil {
 		items, err := store.ListConsoleSessions(context.Background(), "")
@@ -63,7 +62,7 @@ func newConsoleSessionHubWithRecovery(store apiStore, recoverInterrupted bool) *
 	return h
 }
 
-func recoverConsoleObservation(store consoleStore, sess controlplane.ConsoleSession) (controlplane.ConsoleSession, error) {
+func recoverConsoleObservation(store controlstore.ConsoleStore, sess controlplane.ConsoleSession) (controlplane.ConsoleSession, error) {
 	for attempt := 0; attempt < 3; attempt++ {
 		if sess.Status != controlplane.ConsoleSessionStatusQueued && sess.Status != controlplane.ConsoleSessionStatusRunning {
 			return sess, nil
@@ -161,7 +160,7 @@ func (h *consoleSessionHub) Get(id string) (*consoleSessionState, error) {
 	defer h.mu.RUnlock()
 	st := h.sessions[id]
 	if st == nil {
-		return nil, errConsoleSessionNotFound
+		return nil, controlstore.ErrConsoleSessionNotFound
 	}
 	return st, nil
 }
@@ -178,7 +177,7 @@ func (h *consoleSessionHub) Snapshot(id string) (controlplane.ConsoleSession, er
 			return controlplane.ConsoleSession{}, err
 		}
 		if current == nil {
-			return controlplane.ConsoleSession{}, errConsoleSessionNotFound
+			return controlplane.ConsoleSession{}, controlstore.ErrConsoleSessionNotFound
 		}
 		if old := h.sessions[id]; old != nil {
 			old.session = cloneConsoleSession(*current)
@@ -188,7 +187,7 @@ func (h *consoleSessionHub) Snapshot(id string) (controlplane.ConsoleSession, er
 	}
 	st := h.sessions[id]
 	if st == nil {
-		return controlplane.ConsoleSession{}, errConsoleSessionNotFound
+		return controlplane.ConsoleSession{}, controlstore.ErrConsoleSessionNotFound
 	}
 	return cloneConsoleSession(st.session), nil
 }
@@ -214,7 +213,7 @@ func (h *consoleSessionHub) Update(id string, fn func(*controlplane.ConsoleSessi
 	defer h.mu.Unlock()
 	st := h.sessions[id]
 	if st == nil {
-		return errConsoleSessionNotFound
+		return controlstore.ErrConsoleSessionNotFound
 	}
 	if h.store == nil {
 		return errors.New("console persistence unavailable")
@@ -243,7 +242,7 @@ func (h *consoleSessionHub) Cancel(ctx context.Context, id, reason string, subj 
 	defer h.mu.Unlock()
 	st := h.sessions[id]
 	if st == nil {
-		return errConsoleSessionNotFound
+		return controlstore.ErrConsoleSessionNotFound
 	}
 	sess := st.session
 	if sess.Status != controlplane.ConsoleSessionStatusClosed && sess.Status != controlplane.ConsoleSessionStatusFailed && sess.Status != controlplane.ConsoleSessionStatusCancelled && sess.Status != controlplane.ConsoleSessionStatusDenied && sess.Status != controlplane.ConsoleSessionStatusCancelling {

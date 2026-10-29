@@ -5,9 +5,10 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"sort"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
 )
 
 // AgentStorage owns physical atomicity, not registration or liveness policy.

@@ -2,8 +2,9 @@ package persistence
 
 import (
 	"context"
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"sort"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
 )
 
 // AuthorityInspection is one coherent ledger view, including revoked/expired

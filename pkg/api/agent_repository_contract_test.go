@@ -3,13 +3,15 @@ package api
 import (
 	"context"
 	"errors"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/stretchr/testify/require"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/stretchr/testify/require"
 )
 
 func TestAgentReregistrationPreservesControlPolicy(t *testing.T) {
@@ -32,7 +34,7 @@ func TestAgentReregistrationPreservesControlPolicy(t *testing.T) {
 
 func TestGuestRoutingDoesNotReportAgentStoreFailureAsMissingTarget(t *testing.T) {
 	s := guestExecutionTestServer(t)
-	s.agentService().store = failingAgentReads{apiStore: s.apiStore, failure: errors.New("agent storage unavailable")}
+	s.agentService().store = failingAgentReads{Store: s.apiStore, failure: errors.New("agent storage unavailable")}
 	for _, request := range []struct{ method, path, body string }{{http.MethodPost, "/v1/topologies/lab/nodes/web/executions", `{"argv":["true"]}`}, {http.MethodPut, "/v1/topologies/lab/nodes/web/files?path=/tmp/test&mode=0600", "content"}} {
 		req := httptest.NewRequest(request.method, request.path, strings.NewReader(request.body))
 		req.Header.Set("X-Sysbox-Roles", "admin")
@@ -62,7 +64,7 @@ func TestAgentReregistrationRequiresActualCredentialForProtectedIdentity(t *test
 }
 
 func TestAgentRepositoryUpdatesCompleteRecord(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, s controlstore.Store) {
 		ctx := context.Background()
 		agent := controlplane.Agent{ID: "agent", Name: "old", Status: controlplane.AgentStatusOnline, AuthSecret: "old-secret", SecretHash: "old-hash"}
 		require.NoError(t, s.SaveAgent(ctx, agent))
@@ -79,7 +81,7 @@ func TestAgentRepositoryUpdatesCompleteRecord(t *testing.T) {
 }
 
 type failingAgentReads struct {
-	apiStore
+	controlstore.Store
 	failure error
 }
 
@@ -102,7 +104,7 @@ func TestAgentRepositoryFailureCannotAuthorizeCachedAgent(t *testing.T) {
 }
 
 type staleAgentInventory struct {
-	apiStore
+	controlstore.Store
 	snapshot controlplane.Agent
 }
 
@@ -110,14 +112,14 @@ func (s staleAgentInventory) ListAgents(context.Context) ([]controlplane.Agent, 
 	return []controlplane.Agent{s.snapshot}, nil
 }
 func TestAgentOfflineObservationCannotOverwriteFreshHeartbeat(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, s controlstore.Store) {
 		now := time.Now().UTC()
 		fresh := controlplane.Agent{ID: "agent", Status: controlplane.AgentStatusOnline, LastHeartbeat: now, Version: "fresh"}
 		require.NoError(t, s.SaveAgent(context.Background(), fresh))
 		stale := fresh
 		stale.LastHeartbeat = now.Add(-time.Hour)
 		stale.Version = "stale"
-		service := AgentService{store: staleAgentInventory{apiStore: s, snapshot: stale}, agentOfflineTTL: func() time.Duration { return time.Minute }}
+		service := AgentService{store: staleAgentInventory{Store: s, snapshot: stale}, agentOfflineTTL: func() time.Duration { return time.Minute }}
 		service.MarkStaleOffline(context.Background(), now)
 		got, err := s.GetAgent(context.Background(), fresh.ID)
 		require.NoError(t, err)

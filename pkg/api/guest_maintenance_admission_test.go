@@ -7,14 +7,15 @@ import (
 	"testing"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
 )
 
 func TestGuestDispatchCannotEnterFrozenTopology(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
-		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		barrier, err := authority.BeginMaintenance(ctx, "restore", "owner", "plan")
 		require.NoError(t, err)
 		for _, kind := range []string{"execution", "file", "node"} {
@@ -60,9 +61,9 @@ func TestGuestDispatchCannotEnterFrozenTopology(t *testing.T) {
 }
 
 func TestGuestAdmissionAndMaintenanceSerializePublication(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
-		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		for attempt := 0; attempt < 8; attempt++ {
 			id := fmt.Sprintf("request-%d", attempt)
 			x := controlplane.GuestExecution{ID: id, CommandID: "cmd-" + id, AgentID: "agent", Topology: "lab", Node: "node", Version: 1, Status: controlplane.GuestExecutionQueued, Request: controlplane.GuestExecutionRequest{Argv: []string{"true"}}}

@@ -5,14 +5,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
-
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
+	"github.com/stretchr/testify/require"
 )
 
 func TestInventoryMembershipIsOwnedByCurrentFirecrackerState(t *testing.T) {
@@ -87,7 +87,7 @@ func TestAgentRestartInvalidatesFirecrackerResourceHealth(t *testing.T) {
 	}
 	require.NoError(t, saveConsistencyProjection(t, s, ctx, proj))
 	require.Equal(t, model.ResourceHealthHealthy, s.authoritativeTopologyHealth(ctx, "lab", st).Status)
-	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
 	old, err := authority.ReadObservation(ctx, "host-a", "projection/lab")
 	require.NoError(t, err)
 	next, err := authority.OpenSession(ctx, "host-a", "replacement", old.SessionID)
@@ -121,7 +121,7 @@ func TestLibvirtTopologyHealthUsesAgentProjection(t *testing.T) {
 
 func saveConsistencyProjection(t *testing.T, s *Server, ctx context.Context, p controlplane.ResourceProjection) error {
 	t.Helper()
-	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
 	if p.AgentID == "" {
 		p.AgentID = "host-a"
 	}

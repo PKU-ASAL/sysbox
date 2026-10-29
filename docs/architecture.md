@@ -85,9 +85,9 @@ Guest 初始化、文件安装和检查继续支持，调用独立的 guest 能�
 | Windows QGA | libvirt → 固定 helper → Job Object | 非管理员任务、boot/epoch、ACL；raw provisioning 不享有同等保证 |
 | Firecracker | provider → jailer → 降权 VMM | manifest v3、jail/进程/cgroup 身份、UID 占用与完整回收；网络沿用拓扑的 namespace |
 
-对应入口：[CLI Apply](../cmd/sysbox/commands/apply_cmd.go)、[执行桥](../pkg/agentexec/executor.go)、
+对应入口：[CLI Apply](../cmd/sysbox/commands/apply_cmd.go)、[执行桥](../pkg/hostexec/executor.go)、
 [宿主组装](../cmd/sysbox/commands/supervisor_cmd.go)、[console](../pkg/agentexec/granted_console.go)、
-[检查执行](../pkg/agentexec/guest_operation.go)、[宿主 SSH](../pkg/agentexec/host_executor.go)。
+[检查执行](../pkg/hostexec/guest_operation.go)、[宿主 SSH](../pkg/hostexec/host_executor.go)。
 
 当前 [Compose Agent](../deploy/docker/compose.agent.yml)以 UID 32000 运行，不挂 Docker socket、不共享 host PID，所有 capability 清空。
 API 签发密钥、host 签名密钥和 guest 验证公钥各有用途；进程分开但共享所有密钥/数据库写权限不构成安全边界。
@@ -105,7 +105,7 @@ API 签发密钥、host 签名密钥和 guest 验证公钥各有用途；进程�
 
 - 从 原 controlplane/plan.go（现 [model/plan.go](../pkg/model/plan.go)）提取规划所用的资源动作类型到 `pkg/model`，更新直接消费者；API wire 类型在边界转换。
 - 整理 [runtime/executor.go](../pkg/runtime/executor.go)、[plan.go](../pkg/runtime/plan.go)、[convergence.go](../pkg/runtime/convergence.go)、[action.go](../pkg/runtime/action.go)：显式注入 provider registry、repository、日志与 secret resolver。
-- 把 [agentexec/executor.go](../pkg/agentexec/executor.go)里加载配置、规划、执行所需逻辑归回引擎入口；claim、dispatch、API completion 留在外层。
+- 把 [agentexec/executor.go](../pkg/hostexec/executor.go)里加载配置、规划、执行所需逻辑归回引擎入口；claim、dispatch、API completion 留在外层。
 - 引擎使用 operation ID、revision、资源范围和期限；不接收整个 controlplane.Run，不通过构造 API Server 获得存储。
 - 更新 [architecture_test.go](../pkg/runtime/architecture_test.go)，逐步禁止 runtime/model 导入 API、agentexec、具体 provider、数据库驱动和调度对象。
 
@@ -133,8 +133,8 @@ API 签发密钥、host 签名密钥和 guest 验证公钥各有用途；进程�
 **目标：只有一份操作受理、一份资源执行和一个最终结果来源。**
 
 提取 `internal/host` 的提交、查询、取消、持久去重。重整
-[LocalBridge](../pkg/agentexec/local_bridge.go)、[HostRunExecutor](../pkg/agentexec/host_executor.go)、
-[API ExecutionBridge](../pkg/api/execution_bridge.go)及宿主启动组装。
+[LocalBridge](../pkg/hostexec/local_bridge_fixture_test.go)、[HostRunExecutor](../pkg/hostexec/host_executor.go)、
+[API ExecutionBridge](../pkg/hostexec/environment_execution_bridge.go)及宿主启动组装。
 宿主运行引擎不再通过 NewExecutionBridge 构造 API Server；HTTP adapter 和 CLI 都调用宿主操作接口。
 
 保留受限 executor 的权限校验和实际效果记录；从宿主初始化中移除与资源执行无关的 API 服务依赖。
@@ -159,7 +159,7 @@ API 签发密钥、host 签名密钥和 guest 验证公钥各有用途；进程�
 隔离 Docker 真实链路通过完成回复丢失后的 API/Agent/supervisor 重建、冷 Reset continuation、签名 Destroy 与无 force metadata 删除。
 这是同进程测试重建配合真实 Docker 的证据，不等于真实宿主断电或新部署权限边界的验收。
 
-尚未完成：把执行存储与操作准入从 api 包归到独立模块，以及部分维护命令的入口收敛。生命周期与 console 主干已统一；部署权限仍需逐项验证，本批不等于权限隔离完成。
+后续收尾已把执行存储与操作准入移到 controlstore，工作区移到 workspace，宿主执行移到 hostexec。实际部署权限验收见第四批。
 
 退出测试覆盖取消时仍在写入的回调、等待中的准入、授权检查、监听失败、已完成但尚未上报的结果，以及断开客户端后继续执行。
 等待本地处理结束不代表远端资源已经停止；没有停止证据的操作仍保持未知状态。provider 若不响应取消，正常退出会继续等待其本地调用返回，不能提前关闭存储。
@@ -231,7 +231,7 @@ manifest 留在 root 管理目录，不能置于 VMM 可写的 jail 中。正式
 已接通 jailer 唯一启动入口；停止使用 cgroup.kill 并等待清空，每次启动创建新的 cgroup 内核对象。
 UID 先占用再授予 TAP 访问，释放前撤销残留 TAP 权限。启动准备中断可直接清理，未知启动可恢复原进程。
 宿主支持范围固定为配套的 Firecracker/jailer 1.15.1 和具备 cgroup.kill 的 cgroup-v2 环境；不自动降级。
-VMM 的 PID/mount/IPC/UTS namespace 隔离，网络沿用既有拓扑：隔离 bridge 使用其 netns，宿主 Docker bridge 仍使用宿主 netns。
+VMM 的 PID/mount/IPC/UTS/network namespace 均与宿主隔离；连接网络必须使用 named netns，宿主 Docker bridge 组合明确拒绝。
 因此 jailer 已补上 VMM 降权与文件/进程隔离，但尚不等于全部网络或宿主准备操作的隔离完成。
 旧 manifest v2 拒绝读取；不在线接管旧直启进程。
 真实 KVM 验证已通过启动、隔离凭据检查、暂停恢复、停止重启、冷销毁、TAP 通信、丢回执恢复、Reset 与旧 generation 拒绝。
@@ -297,6 +297,20 @@ revision、keyed Apply/Destroy、Run 查询、三值 conditions、cleanup-inspec
 同一提交构建 CLI、API、宿主与 guest 制品；隔离环境先完成 Docker、Firecracker、libvirt 与 Windows 适用测试，
 再跑 CyberField 发布 → 激活 → 初始化/flag → Ready → Reset → 清理，并测试请求丢失和组件重启。
 最后按确认的部署范围停旧服务、清旧资源、归档旧数据、部署新版本。不做旧运行环境在线接管。
+
+## 联调前收尾计划（2026-10-29）
+
+按已确认的顺序完成结构、兼容清理、宿主边界、发布验收，再进入 CyberField 联调。
+
+- [x] `pkg/controlstore` 承接文件/SQLite/PostgreSQL 的完整存储、准入和恢复事务；API 只调用共同操作。
+- [x] `pkg/workspace` 统一 revision 物化、目录清单、placement 与 GC 发布保护；宿主与 API 共用。
+- [x] `pkg/hostexec` 承接宿主执行、Bridge、观察和恢复；`pkg/agentexec` 只保留通信与授权转发。生产依赖不允许宿主模块反向导入 API。
+- [x] 移除旧格式导入和测试专用本地执行的生产入口，统一当前格式的写入与校验，保留旧格式拒绝及证据保护。
+- [ ] 宿主在初始化 provider 前验证配置与身份，固定辅助程序/环境；Firecracker 拒绝共享宿主 netns，systemd 按必要权限运行。
+- [ ] 验证事务、失败恢复、普通用户边界和真实 Docker/Firecracker/libvirt/Windows 适用路径；缺环境的项目明确记为未验收。
+- [ ] 整理本地提交，复核 origin/main，统一生成 Linux amd64/arm64 与 Windows 制品及来源摘要，执行重复构建与制品验收。
+
+每一项都保留原子写入、未知效果不重放和原始资源身份校验。任何环境切换在 CyberField 联调之后进行。
 
 ## 怎样判断这轮重构完成
 

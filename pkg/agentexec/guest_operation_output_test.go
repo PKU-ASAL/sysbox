@@ -4,6 +4,8 @@ import (
 	"encoding/base64"
 	"strings"
 	"testing"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
 )
 
 func TestGuestOutputBudgetKeepsDefaultAndExplicitBound(t *testing.T) {
@@ -12,9 +14,9 @@ func TestGuestOutputBudgetKeepsDefaultAndExplicitBound(t *testing.T) {
 		limit, want int
 		truncated   bool
 	}{
-		{0, guestOutputLimit, true}, {5 << 20, 5 << 20, true}, {1024, 1024, true},
+		{0, controlplane.GuestOutputLimit, true}, {5 << 20, 5 << 20, true}, {1024, 1024, true},
 	} {
-		result := encodeGuestOutputWithLimit(input, "", tc.limit)
+		result := controlplane.EncodeGuestOutputWithLimit(input, "", tc.limit)
 		raw, err := base64.StdEncoding.DecodeString(result.Stdout)
 		if err != nil || len(raw) != tc.want || result.Truncated != tc.truncated {
 			t.Fatalf("limit %d: bytes=%d truncated=%v err=%v", tc.limit, len(raw), result.Truncated, err)

@@ -10,16 +10,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
-
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/stretchr/testify/require"
 )
 
-func observationTestSession(t *testing.T, store apiStore, agent string) string {
+func observationTestSession(t *testing.T, store controlstore.Store, agent string) string {
 	t.Helper()
-	s, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store}).OpenSession(context.Background(), agent, "test-process", "")
+	s, err := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store}).OpenSession(context.Background(), agent, "test-process", "")
 	require.NoError(t, err)
 	return s.ID
 }
@@ -79,9 +79,9 @@ func bindObservationTestBody(t *testing.T, s *Server, id string, body *bytes.Buf
 }
 
 func TestObservationStoresRejectOldSessionAndSequence(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
-		repo := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		repo := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		s, err := repo.OpenSession(ctx, "agent", "one", "")
 		require.NoError(t, err)
 		inv := controlplane.AgentInventory{AgentID: "agent", SessionID: s.ID, Sequence: 2, ObservedAt: time.Now()}

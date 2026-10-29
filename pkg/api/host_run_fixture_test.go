@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
@@ -40,7 +41,7 @@ func prepareHostRunFixture(t *testing.T, server *Server, run controlplane.Run, t
 	server.grantHostKeys[run.AgentID] = public
 	command := controlplane.AgentCommand{ID: "host-command-" + run.ID, AgentID: run.AgentID, Type: "run_assigned", Status: controlplane.AgentCommandStatusDelivered, Run: &run, TopologyUID: topologyUID, ActionID: run.ID, Attempt: 1, LeaseOwner: "delivery-worker", LeaseUntil: time.Now().Add(time.Minute)}
 	require.NoError(t, server.apiStore.SaveAgentCommand(ctx, command))
-	repo := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: server.apiStore})
+	repo := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: server.apiStore})
 	session, err := repo.OpenSession(ctx, run.AgentID, "host-result", "")
 	require.NoError(t, err)
 	req := hostsupervisor.RunRequest{RunID: run.ID, Topology: run.Topology, TopologyUID: topologyUID, Revision: run.Revision, ActionID: command.ActionID, Action: run.Operation, Target: run.Target}

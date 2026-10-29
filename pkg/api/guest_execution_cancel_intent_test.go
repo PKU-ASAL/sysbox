@@ -7,12 +7,13 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
 )
 
 func TestGuestExecutionCancellationNotificationFailureKeepsCommittedOutbox(t *testing.T) {
-	store := &localAPIStore{runsDir: t.TempDir()}
+	store := &controlstore.Local{RunsDir: t.TempDir()}
 	svc := newGuestExecutionService(store, nil, nil)
 	x, err := svc.Create(context.Background(), "lab", "node", "agent", controlplane.GuestExecutionRequest{Argv: []string{"sleep", "10"}})
 	require.NoError(t, err)
@@ -48,7 +49,7 @@ func TestGuestExecutionCancellationNotificationFailureKeepsCommittedOutbox(t *te
 }
 
 func TestGuestExecutionCancellationRecoversOutboxAndPreservesLease(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		svc := newGuestExecutionService(store, nil, nil)
 		x, err := svc.Create(ctx, "lab", "node", "agent", controlplane.GuestExecutionRequest{Argv: []string{"sleep", "10"}})
@@ -101,7 +102,7 @@ func TestGuestExecutionCancellationRecoversOutboxAndPreservesLease(t *testing.T)
 }
 
 func TestGuestExecutionCancellationDoesNotReplaceRealCompletion(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		x := controlplane.GuestExecution{ID: "operation", CommandID: "source", Version: 1, Topology: "lab", Node: "node", AgentID: "agent", Status: "running", CreatedAt: time.Now().UTC()}
 		require.NoError(t, store.SaveGuestExecution(ctx, x))
@@ -122,22 +123,22 @@ func TestGuestExecutionCancellationDoesNotReplaceRealCompletion(t *testing.T) {
 }
 
 func TestGuestCancellationSQLSchemaRequiresRebuild(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		switch s := store.(type) {
-		case *sqliteAPIStore:
-			db, err := s.open()
+		case *controlstore.SQLite:
+			db, err := s.OpenDB()
 			require.NoError(t, err)
 			_, err = db.ExecContext(ctx, "UPDATE sysbox_api_schema_migrations SET version=12 WHERE name='api'")
 			require.NoError(t, err)
-			_, err = (&sqliteAPIStore{dbPath: s.dbPath}).open()
+			_, err = (&controlstore.SQLite{DbPath: s.DbPath}).OpenDB()
 			require.ErrorIs(t, err, persistence.ErrUnsupportedVersion)
-		case *postgresAPIStore:
-			pool, err := s.poolFor(ctx)
+		case *controlstore.Postgres:
+			pool, err := s.PoolFor(ctx)
 			require.NoError(t, err)
 			_, err = pool.Exec(ctx, "UPDATE sysbox_api_schema_migrations SET version=12 WHERE name='api'")
 			require.NoError(t, err)
-			_, err = (&postgresAPIStore{dsn: s.dsn}).poolFor(ctx)
+			_, err = (&controlstore.Postgres{DSN: s.DSN}).PoolFor(ctx)
 			require.ErrorIs(t, err, persistence.ErrUnsupportedVersion)
 		}
 	})

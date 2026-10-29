@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
@@ -92,7 +93,7 @@ func (s *Server) handlePutGuestFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	meta := guestFilePayload{AgentID: agentID, ExpiresAt: time.Now().UTC().Add(15 * time.Minute)}
-	if err := writeLocalObject(filepath.Join(dir, id+".json"), meta); err != nil {
+	if err := controlstore.WriteLocalObject(filepath.Join(dir, id+".json"), meta); err != nil {
 		_ = os.Remove(filepath.Join(dir, id))
 		writeError(w, 500, err)
 		return

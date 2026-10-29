@@ -4,16 +4,18 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/stretchr/testify/require"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRunDispatchSeparatesRestartedIncarnations(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, s controlstore.Store) {
 		ctx := context.Background()
 		run := controlplane.Run{ID: "reused", Topology: "lab", Operation: "apply", Op: "apply", OperationKey: "key", Revision: "rev", Status: controlplane.RunQueued, QueuedAt: time.Now().UTC()}
 		require.NoError(t, s.SaveRun(ctx, run))
@@ -53,8 +55,8 @@ func TestRunDispatchSeparatesRestartedIncarnations(t *testing.T) {
 	})
 }
 
-func incarnationDispatch(run controlplane.Run) RunDispatchRequest {
-	return RunDispatchRequest{Run: run, Fingerprint: runAssignmentFingerprint(run), Command: controlplane.AgentCommand{TopologyUID: "owner", ID: runCommandID(run), AgentID: run.AgentID, Type: "run_assigned", Status: controlplane.AgentCommandStatusQueued, Protocol: controlplane.AgentProtocolVersion, Run: &run}}
+func incarnationDispatch(run controlplane.Run) controlstore.RunDispatchRequest {
+	return controlstore.RunDispatchRequest{Run: run, Fingerprint: runAssignmentFingerprint(run), Command: controlplane.AgentCommand{TopologyUID: "owner", ID: controlstore.RunCommandID(run), AgentID: run.AgentID, Type: "run_assigned", Status: controlplane.AgentCommandStatusQueued, Protocol: controlplane.AgentProtocolVersion, Run: &run}}
 }
 
 func TestClaimEndpointRejectsMissingAndOldIncarnation(t *testing.T) {

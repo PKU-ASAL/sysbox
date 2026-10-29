@@ -4,11 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/gofrs/flock"
 	"os"
 	"path/filepath"
 	"syscall"
 	"time"
+
+	"github.com/gofrs/flock"
 )
 
 type CacheGCDisposition struct {

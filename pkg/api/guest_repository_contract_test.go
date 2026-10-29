@@ -6,19 +6,20 @@ import (
 	"testing"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
 )
 
 type guestMetadataStore interface {
-	guestExecutionPersistence
-	guestFileOperationPersistence
-	guestAcceptancePersistence
+	controlstore.GuestExecutionPersistence
+	controlstore.GuestFileOperationPersistence
+	controlstore.GuestAcceptancePersistence
 }
 
 func TestSQLiteGuestExecutionDispatchIsAtomic(t *testing.T) {
-	s := &sqliteAPIStore{dbPath: filepath.Join(t.TempDir(), "api.db"), runsDir: t.TempDir()}
-	db, err := s.open()
+	s := &controlstore.SQLite{DbPath: filepath.Join(t.TempDir(), "api.db"), RunsDir: t.TempDir()}
+	db, err := s.OpenDB()
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 	ctx := context.Background()
@@ -39,11 +40,11 @@ func eachGuestMetadataStore(t *testing.T, run func(*testing.T, guestMetadataStor
 	for _, kind := range []string{"local", "sqlite"} {
 		t.Run(kind, func(t *testing.T) {
 			if kind == "local" {
-				run(t, &localAPIStore{runsDir: t.TempDir()})
+				run(t, &controlstore.Local{RunsDir: t.TempDir()})
 				return
 			}
-			s := &sqliteAPIStore{dbPath: filepath.Join(t.TempDir(), "api.db"), runsDir: t.TempDir()}
-			db, err := s.open()
+			s := &controlstore.SQLite{DbPath: filepath.Join(t.TempDir(), "api.db"), RunsDir: t.TempDir()}
+			db, err := s.OpenDB()
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, db.Close()) })
 			run(t, s)

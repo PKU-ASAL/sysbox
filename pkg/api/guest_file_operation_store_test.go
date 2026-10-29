@@ -5,16 +5,16 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/stretchr/testify/require"
-
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGuestFileOperationStoresPersistPrivateBindingAndCAS(t *testing.T) {
 	ctx := context.Background()
-	stores := map[string]guestFileOperationPersistence{
-		"local":  &localAPIStore{runsDir: t.TempDir()},
-		"sqlite": &sqliteAPIStore{dbPath: filepath.Join(t.TempDir(), "api.db"), runsDir: t.TempDir()},
+	stores := map[string]controlstore.GuestFileOperationPersistence{
+		"local":  &controlstore.Local{RunsDir: t.TempDir()},
+		"sqlite": &controlstore.SQLite{DbPath: filepath.Join(t.TempDir(), "api.db"), RunsDir: t.TempDir()},
 	}
 	for name, store := range stores {
 		t.Run(name, func(t *testing.T) {

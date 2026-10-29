@@ -1,9 +1,10 @@
 package runtime
 
 import (
-	"github.com/stretchr/testify/require"
 	"reflect"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestHandlersCannotExecuteCheckpointRecovery(t *testing.T) {

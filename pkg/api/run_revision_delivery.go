@@ -2,10 +2,11 @@ package api
 
 import (
 	"encoding/json"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/persistence"
 	"net/http"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/persistence"
 )
 
 // Revision delivery is scoped to the currently claimed execution, not a
@@ -35,7 +36,7 @@ func (s *Server) handleRunRevision(w http.ResponseWriter, r *http.Request) {
 		writeError(w, agentRepositoryErrorStatus(err), err)
 		return
 	}
-	if run.AgentID != agentID || run.Status != controlplane.RunRunning || !run.LeaseUntil.After(time.Now().UTC()) || run.LeaseOwner == "" || run.LeaseOwner != proof.LeaseOwner || run.Attempt != proof.Attempt || !persistence.SameRunIncarnation(*run, proof) {
+	if run.AgentID != agentID || run.Status != controlplane.RunRunning || !run.LeaseUntil.After(time.Now().UTC()) || run.LeaseOwner == "" || run.LeaseOwner != proof.LeaseOwner || run.Attempt != proof.Attempt || !controlplane.SameRunIncarnation(*run, proof) {
 		writeError(w, 409, persistence.ErrConflict)
 		return
 	}

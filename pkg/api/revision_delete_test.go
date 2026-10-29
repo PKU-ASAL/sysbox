@@ -9,12 +9,13 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
 )
 
 func TestGlobalRevisionDeleteHTTPFencesRunAdmission(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		files := map[string][]byte{"field.sysbox.hcl": []byte("unused")}
@@ -30,7 +31,7 @@ func TestGlobalRevisionDeleteHTTPFencesRunAdmission(t *testing.T) {
 		body, _ := json.Marshal(map[string]any{"revision": id, "older_than": time.Now().UTC()})
 		w := httptest.NewRecorder()
 		s.ServeHTTP(w, httptest.NewRequest("POST", "/v1/revisions/delete", strings.NewReader(string(body))))
-		if _, local := store.(*localAPIStore); local {
+		if _, local := store.(*controlstore.Local); local {
 			require.Equal(t, 200, w.Code, w.Body.String())
 			require.Error(t, store.SaveRun(ctx, controlplane.Run{ID: "late", Topology: "lab", Revision: id, Status: controlplane.RunQueued, QueuedAt: time.Now()}))
 			return

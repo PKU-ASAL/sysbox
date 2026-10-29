@@ -4,10 +4,11 @@ package firecracker
 
 import (
 	"context"
-	"github.com/oslab/sysbox/pkg/substrate"
-	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/substrate"
+	"github.com/stretchr/testify/require"
 )
 
 func TestFirecrackerRealGCExactOwnerAndSurvivorE2E(t *testing.T) {

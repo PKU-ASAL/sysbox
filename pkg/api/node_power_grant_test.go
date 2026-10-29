@@ -6,17 +6,19 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
-	"github.com/oslab/sysbox/pkg/agent"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/persistence"
-	"github.com/stretchr/testify/require"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/agent"
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNodePowerGrantBindsPersistedOperationAndLiveSession(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		s.agentSvc = newAgentService(s)
@@ -24,7 +26,7 @@ func TestNodePowerGrantBindsPersistedOperationAndLiveSession(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, s.ConfigureExecutionGrantSigner(key))
 		require.NoError(t, store.SaveAgent(ctx, controlplane.Agent{ID: "agent", AuthSecret: "secret", SecretHash: agent.SecretHash("secret")}))
-		repo := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		repo := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		session, err := repo.OpenSession(ctx, "agent", "first", "")
 		require.NoError(t, err)
 		op, command := nodeDispatchFixture()
@@ -107,7 +109,7 @@ func TestSourceGrantNeverSignsImportOrWorkerSelectedExternalID(t *testing.T) {
 }
 
 func TestPowerHostCompletionSurvivesDeliveryLeaseReplacement(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		pub, key, err := ed25519.GenerateKey(rand.Reader)
@@ -118,7 +120,7 @@ func TestPowerHostCompletionSurvivesDeliveryLeaseReplacement(t *testing.T) {
 		old, ok, err := store.AcquireAgentCommandLease(ctx, cmd.AgentID, cmd.ID, "first", time.Nanosecond)
 		require.NoError(t, err)
 		require.True(t, ok)
-		repo := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		repo := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		session, err := repo.OpenSession(ctx, cmd.AgentID, "process", "")
 		require.NoError(t, err)
 		req, err := controlplane.FromNodeOperationCommand(*old)

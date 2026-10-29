@@ -2,14 +2,16 @@ package api
 
 import (
 	"context"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGuestDispatchRecoversAndRetiresWithoutNotification(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, s controlstore.Store) {
 		ctx := context.Background()
 		x := controlplane.GuestExecution{ID: "recovery", CommandID: "delivery", AgentID: "agent", Topology: "lab", Node: "node", Version: 1, Status: controlplane.GuestExecutionQueued, Request: controlplane.GuestExecutionRequest{Argv: []string{"true"}}}
 		c := controlplane.AgentCommand{TopologyUID: "owner", ID: x.CommandID, AgentID: x.AgentID, Type: "guest_execution", Status: "queued", Protocol: controlplane.AgentProtocolVersion, Execution: &x, ExecutionRequest: x.Request}
@@ -25,7 +27,7 @@ func TestGuestDispatchRecoversAndRetiresWithoutNotification(t *testing.T) {
 	})
 }
 func TestGuestDispatchSeedSurvivesOperationCAS(t *testing.T) {
-	s := &localAPIStore{runsDir: t.TempDir()}
+	s := &controlstore.Local{RunsDir: t.TempDir()}
 	ctx := context.Background()
 	x := controlplane.GuestExecution{ID: "recovery", CommandID: "delivery", AgentID: "agent", Topology: "lab", Node: "node", Version: 1, Status: "queued", Request: controlplane.GuestExecutionRequest{Argv: []string{"true"}}}
 	c := controlplane.AgentCommand{TopologyUID: "owner", ID: x.CommandID, AgentID: x.AgentID, Type: "guest_execution", Status: "queued", Protocol: controlplane.AgentProtocolVersion, Execution: &x, ExecutionRequest: x.Request}

@@ -2,9 +2,10 @@ package persistence
 
 import (
 	"context"
+	"testing"
+
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestResetReplacementPreservesOldEvidenceUntilCompletion(t *testing.T) {

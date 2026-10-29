@@ -6,13 +6,15 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/workspace"
 )
 
 type SchedulerService struct {
 	jobs      *Jobs
 	agents    *AgentService
 	publish   func(context.Context, string, controlplane.AgentCommand) (controlplane.AgentCommand, error)
-	placement *WorkspaceService
+	placement *workspace.Catalog
 }
 
 func newSchedulerService(server *Server) *SchedulerService {
@@ -36,12 +38,12 @@ func (s *SchedulerService) DispatchRun(ctx context.Context, run *controlplane.Ru
 	assigned := *run
 	transientInputs := cloneInputs(run.Inputs)
 	assigned.MarkAssigned(agent.ID, time.Now().UTC())
-	command, err := s.placement.runAssignedCommand(ctx, &assigned)
+	command, err := s.placement.RunAssignedCommand(ctx, &assigned)
 	if err != nil {
 		return err
 	}
 	fingerprint := runAssignmentFingerprint(assigned)
-	stored, created, err := s.jobs.store.CreateRunDispatch(ctx, RunDispatchRequest{Run: assigned, Command: command, Fingerprint: fingerprint})
+	stored, created, err := s.jobs.store.CreateRunDispatch(ctx, controlstore.RunDispatchRequest{Run: assigned, Command: command, Fingerprint: fingerprint})
 	if err != nil {
 		return err
 	}
@@ -62,7 +64,7 @@ func (s *SchedulerService) DispatchRun(ctx context.Context, run *controlplane.Ru
 // SelectAgentForTopology enforces the durable host affinity for host-local
 // resources before selecting an agent.
 func (s *SchedulerService) SelectAgentForTopology(ctx context.Context, topology string, required []string, preferred string) (controlplane.Agent, error) {
-	if p, err := s.placement.loadPlacement(topology); err != nil {
+	if p, err := s.placement.LoadPlacement(topology); err != nil {
 		return controlplane.Agent{}, err
 	} else if p != nil {
 		if preferred != "" && preferred != p.AgentID {
@@ -74,7 +76,7 @@ func (s *SchedulerService) SelectAgentForTopology(ctx context.Context, topology 
 	if err != nil {
 		return controlplane.Agent{}, err
 	}
-	if err := s.placement.bindPlacement(topology, agent.ID, agent.Protocol); err != nil {
+	if err := s.placement.BindPlacement(topology, agent.ID, agent.Protocol); err != nil {
 		return controlplane.Agent{}, err
 	}
 	return agent, nil

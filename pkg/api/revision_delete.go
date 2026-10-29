@@ -3,11 +3,13 @@ package api
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/oslab/sysbox/pkg/persistence"
 	"io"
 	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/persistence"
 )
 
 func (s *Server) handleRevisionDelete(w http.ResponseWriter, r *http.Request) {
@@ -26,7 +28,7 @@ func (s *Server) handleRevisionDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, ok := s.apiStore.(*localAPIStore); ok && s.stateBackend == "" {
+	if _, ok := s.apiStore.(*controlstore.Local); ok && s.stateBackend == "" {
 		if err := s.deleteLocalRevisionBatch(r.Context(), []string{input.Revision}, RevisionRetentionPolicy{OlderThan: input.OlderThan, Limit: 1}); err != nil {
 			writeError(w, 409, err)
 			return

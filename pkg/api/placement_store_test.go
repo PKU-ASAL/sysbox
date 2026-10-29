@@ -9,6 +9,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/stretchr/testify/require"
 )
 
@@ -40,15 +41,15 @@ func TestDeleteTopologyReleasesDatabasePlacement(t *testing.T) {
 	cfg.Paths.RunsDir, cfg.Paths.WorkspacesDir = t.TempDir(), t.TempDir()
 	s := NewServerWithConfig(cfg)
 	w := s.workspaceService()
-	require.NoError(t, w.bindPlacement("lab", "host-b", controlplane.AgentProtocolVersion))
+	require.NoError(t, w.BindPlacement("lab", "host-b", controlplane.AgentProtocolVersion))
 	require.NoError(t, w.Delete(context.Background(), "lab", true))
-	p, err := w.loadPlacement("lab")
+	p, err := w.LoadPlacement("lab")
 	require.NoError(t, err)
 	require.Nil(t, p)
 }
 
 func TestSQLiteSnapshotSurvivesClaimAndReload(t *testing.T) {
-	s := &sqliteAPIStore{dbPath: filepath.Join(t.TempDir(), "api.db")}
+	s := &controlstore.SQLite{DbPath: filepath.Join(t.TempDir(), "api.db")}
 	ctx := context.Background()
 	want := controlplane.Run{ID: "snapshot", Topology: "lab", Status: controlplane.RunAssigned, AgentID: "host", SnapshotPath: "/immutable/field.sysbox.hcl"}
 	require.NoError(t, s.SaveRun(ctx, want))
@@ -73,9 +74,9 @@ func TestRecoveryChildPreservesSnapshot(t *testing.T) {
 }
 
 func TestPlacementBindingTimeDoesNotChangeOnReuse(t *testing.T) {
-	s := &sqliteAPIStore{dbPath: filepath.Join(t.TempDir(), "api.db")}
+	s := &controlstore.SQLite{DbPath: filepath.Join(t.TempDir(), "api.db")}
 	ctx := context.Background()
-	p := topologyPlacement{Topology: "lab", AgentID: "host", Protocol: controlplane.AgentProtocolVersion, BoundAt: time.Now().UTC()}
+	p := controlstore.Placement{Topology: "lab", AgentID: "host", Protocol: controlplane.AgentProtocolVersion, BoundAt: time.Now().UTC()}
 	require.NoError(t, s.SaveTopologyPlacement(ctx, p))
 	first := p.BoundAt
 	p.BoundAt = p.BoundAt.Add(time.Hour)
@@ -91,7 +92,7 @@ func TestPlacementLocalAgentIsNotTreatedAsUnspecified(t *testing.T) {
 	for _, id := range []string{"host-a", "local"} {
 		require.NoError(t, s.agentService().Save(ctx, controlplane.Agent{ID: id, Status: controlplane.AgentStatusOnline, Capabilities: []string{"docker"}}))
 	}
-	require.NoError(t, s.workspaceService().bindPlacement("lab", "local", controlplane.AgentProtocolVersion))
+	require.NoError(t, s.workspaceService().BindPlacement("lab", "local", controlplane.AgentProtocolVersion))
 	agent, err := s.scheduler.SelectAgentForTopology(ctx, "lab", []string{"docker"}, "")
 	require.NoError(t, err)
 	require.Equal(t, "local", agent.ID)
@@ -99,9 +100,9 @@ func TestPlacementLocalAgentIsNotTreatedAsUnspecified(t *testing.T) {
 
 func TestSQLitePlacementConcurrentDatabaseBind(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "api.db")
-	stores := []*sqliteAPIStore{{dbPath: path}, {dbPath: path}}
+	stores := []*controlstore.SQLite{{DbPath: path}, {DbPath: path}}
 	for _, s := range stores {
-		_, err := s.open()
+		_, err := s.OpenDB()
 		require.NoError(t, err)
 	}
 	start := make(chan struct{})
@@ -112,7 +113,7 @@ func TestSQLitePlacementConcurrentDatabaseBind(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			results <- s.SaveTopologyPlacement(context.Background(), topologyPlacement{Topology: "race", AgentID: []string{"a", "b"}[i], BoundAt: time.Now().UTC()})
+			results <- s.SaveTopologyPlacement(context.Background(), controlstore.Placement{Topology: "race", AgentID: []string{"a", "b"}[i], BoundAt: time.Now().UTC()})
 		}()
 	}
 	close(start)

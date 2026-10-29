@@ -12,13 +12,14 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/stretchr/testify/require"
 )
 
 func TestFileHostCompletionAfterRealRetirement(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		pub, key, err := ed25519.GenerateKey(rand.Reader)
@@ -30,7 +31,7 @@ func TestFileHostCompletionAfterRealRetirement(t *testing.T) {
 		lease, ok, err := store.AcquireAgentCommandLease(ctx, "agent", cmd.ID, "worker", time.Minute)
 		require.NoError(t, err)
 		require.True(t, ok)
-		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		session, err := authority.OpenSession(ctx, "agent", "first", "")
 		require.NoError(t, err)
 		request, err := controlplane.FromFileInstallCommand(cmd)

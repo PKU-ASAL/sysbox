@@ -9,7 +9,6 @@ import (
 	"github.com/oslab/sysbox/pkg/controlplane"
 )
 
-const GCDispositionFormatVersion = 9
 const gcDispositionAuthorityVersion = 6
 
 type GCFenceDisposition struct {
@@ -87,9 +86,7 @@ func (r *Repository) CompleteGCDisposition(ctx context.Context, topology string,
 		if GCReservationDigest(stored) != p.Request.JournalSHA256 {
 			return ErrConflict
 		}
-		if a.Format != OwnershipRetirementFormatVersion && a.Format != OwnershipTargetFormatVersion && a.Format != GCAdmissionFormatVersion && a.Format != IntentDispositionFormatVersion && a.Format != AdoptionRecoveryFormatVersion && a.Format != LegacyAdoptionRecoveryFormatVersion {
-			a.Format = GCDispositionFormatVersion
-		}
+
 		stored.DispositionHash = hash
 		a.GC[stored.ID] = stored
 		return nil

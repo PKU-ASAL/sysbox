@@ -42,7 +42,7 @@ def database_config(database, password):
 
 
 def release_files(binary, metadata_path):
-    target, = [row for row in json.loads(Path(metadata_path).read_text())['targets'] if row['architecture']=='amd64']
+    target, = [row for row in json.loads(Path(metadata_path).read_text())['targets'] if row['os']=='linux' and row['architecture']=='amd64']
     files = {}
     for name in ('sysbox','sysbox-init','sysbox-netns'):
         path=Path(binary) if name=='sysbox' else Path(binary).parent/name

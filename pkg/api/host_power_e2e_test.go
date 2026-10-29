@@ -22,9 +22,11 @@ import (
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
 	"github.com/oslab/sysbox/pkg/persistence"
+
 	dockerprovider "github.com/oslab/sysbox/pkg/provider/docker"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/stretchr/testify/require"
@@ -130,7 +132,7 @@ func testHostNodePower(t *testing.T, unhealthy bool) {
 	client := hostsupervisor.NewTaskClient(socket, ref)
 	hostBoot, err := client.HostBootID(ctx)
 	require.NoError(t, err)
-	session, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: api.apiStore}).OpenSession(ctx, "owner", "worker-one", "")
+	session, err := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: api.apiStore}).OpenSession(ctx, "owner", "worker-one", "")
 	require.NoError(t, err)
 	var pauseGrant controlplane.SignedExecutionGrant
 	for _, action := range []string{"pause", "resume"} {

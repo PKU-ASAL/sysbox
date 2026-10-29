@@ -7,7 +7,6 @@ import (
 	"hash/fnv"
 	"net"
 	"os"
-	"os/exec"
 	"strings"
 
 	"github.com/oslab/sysbox/pkg/driver"
@@ -152,6 +151,9 @@ func (s *Substrate) Delete(ctx context.Context, h substrate.NodeHandle, req driv
 }
 
 func (s *Substrate) attachNIC(ctx context.Context, h substrate.NodeHandle, req linkRequest) (attachedNIC, error) {
+	if req.NetNS == "" {
+		return attachedNIC{}, fmt.Errorf("firecracker network attachments require a named network namespace")
+	}
 	vm, m, release, err := s.lockedManifest(ctx, h)
 	if err != nil {
 		return attachedNIC{}, err
@@ -407,21 +409,5 @@ func appendNICtoConfig(cfgPath string, iface fcNetworkInterface) error {
 	return atomicWriteFile(cfgPath, out, 0600)
 }
 
-// ipBin is the absolute path to the ip binary, resolved once at init.
-var ipBin string
-
-func init() {
-	ipBin, _ = exec.LookPath("ip")
-	if ipBin == "" {
-		// Fallback to common locations.
-		for _, p := range []string{"/sbin/ip", "/usr/sbin/ip", "/usr/bin/ip"} {
-			if _, err := os.Stat(p); err == nil {
-				ipBin = p
-				break
-			}
-		}
-	}
-	if ipBin == "" {
-		ipBin = "ip" // last resort
-	}
-}
+// Resolve at invocation, after the host bootstrap has installed its trusted PATH.
+var ipBin = "ip"

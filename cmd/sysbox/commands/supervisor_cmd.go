@@ -11,17 +11,15 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/spf13/cobra"
-
 	"github.com/oslab/sysbox/pkg/agent"
-	"github.com/oslab/sysbox/pkg/agentexec"
-	"github.com/oslab/sysbox/pkg/api"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/hostexec"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
 	"github.com/oslab/sysbox/pkg/provider/firecracker"
 	"github.com/oslab/sysbox/pkg/substrate"
+	"github.com/spf13/cobra"
 )
 
 var supervisorConfigFile, supervisorIdentityFile string
@@ -35,7 +33,7 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 	if err := hostsupervisor.ValidateOwnedPath(supervisorIdentityFile, true); err != nil {
 		return err
 	}
-	cfg, err := config.LoadServiceConfig(supervisorConfigFile)
+	cfg, err := config.LoadServiceConfigStrict(supervisorConfigFile)
 	if err != nil {
 		return err
 	}
@@ -93,7 +91,7 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 	}
 	authority := hostsupervisor.AuthorityClient{Identity: *ident}
 	resolver := hostsupervisor.CanonicalResolver{RunsDir: cfg.Paths.RunsDir, Backend: cfg.State.Backend, AgentID: ident.ID}
-	runBridge, err := api.NewExecutionBridge(cfg)
+	runBridge, err := hostexec.Open(cfg)
 	if err != nil {
 		return err
 	}
@@ -119,10 +117,10 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 	server := hostsupervisor.Server{Socket: cfg.HostSupervisor.Socket, GroupID: cfg.HostSupervisor.WorkerGroupID, Dispatcher: dispatcher, Power: power, Files: files, OnRecoveryError: func(err error) { fmt.Fprintf(cmd.ErrOrStderr(), "host supervisor reconciliation: %v\n", err) }}
 	hostCapabilities, _ := agent.DetectCapabilities()
 	server.Observer = &hostsupervisor.Observer{AgentID: ident.ID, BootID: strings.TrimSpace(string(boot)), Key: key, Collect: func(ctx context.Context) (controlplane.AgentInventory, []controlplane.ResourceProjection, error) {
-		return agentexec.CollectHostObservation(ctx, agentexec.HostObservationOptions{ID: ident.ID, Capabilities: hostCapabilities, Labels: ident.Labels, CapacityPath: cfg.Paths.Home, ArtifactPaths: cfg.Artifacts.Roots}, runBridge)
+		return hostexec.CollectHostObservation(ctx, hostexec.HostObservationOptions{ID: ident.ID, Capabilities: hostCapabilities, Labels: ident.Labels, CapacityPath: cfg.Paths.Home, ArtifactPaths: cfg.Artifacts.Roots}, runBridge)
 	}}
 	server.Runs = runCoordinator
-	hostRun := &agentexec.HostRunExecutor{Bridge: runBridge, Tasks: dispatcher, Resolver: resolver, Authority: authority}
+	hostRun := &hostexec.RunExecutor{Bridge: runBridge, Tasks: dispatcher, Resolver: resolver, Authority: authority}
 	server.RunEffect = hostRun.Execute
 	server.Runs.PrepareRun = hostRun.PrepareRun
 	server.Runs.RecoverInterruptedRun = hostRun.RecoverInterruptedRun

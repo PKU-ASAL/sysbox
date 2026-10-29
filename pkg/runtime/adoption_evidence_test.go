@@ -3,15 +3,16 @@ package runtime_test
 import (
 	"context"
 	"errors"
+	"path/filepath"
+	"testing"
+	"time"
+
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/stretchr/testify/require"
-	"path/filepath"
-	"testing"
-	"time"
 )
 
 func TestCommitAdoptionEvidenceReplayIsIdempotent(t *testing.T) {

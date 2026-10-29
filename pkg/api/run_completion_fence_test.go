@@ -11,12 +11,13 @@ import (
 
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
 )
 
-func hostCompletionRunningRun(t *testing.T, store apiStore, id string) controlplane.Run {
+func hostCompletionRunningRun(t *testing.T, store controlstore.Store, id string) controlplane.Run {
 	t.Helper()
 	run := controlplane.Run{ID: id, Topology: "lab", Op: "apply", Operation: "apply", Revision: "revision", Status: controlplane.RunRunning, AgentID: "agent", LeaseOwner: "worker", Attempt: 1, QueuedAt: time.Now().Add(-time.Hour).UTC(), StartedAt: time.Now().Add(-time.Minute).UTC(), LeaseUntil: time.Now().Add(time.Hour).UTC()}
 	require.NoError(t, store.SaveRun(context.Background(), run))
@@ -48,7 +49,7 @@ func TestHostRunCommitFailureKeepsGrantAndObservation(t *testing.T) {
 	run := hostCompletionRunningRun(t, s.apiStore, "commit-failure")
 	f := prepareHostRunFixture(t, s, run, "owner")
 	observation := f.publishObservation(t, 99)
-	db, err := s.apiStore.(*sqliteAPIStore).open()
+	db, err := s.apiStore.(*controlstore.SQLite).OpenDB()
 	require.NoError(t, err)
 	_, err = db.Exec(`CREATE TRIGGER reject_host_result BEFORE INSERT ON sysbox_runs WHEN NEW.status='done' BEGIN SELECT RAISE(ABORT,'injected host result write failure'); END`)
 	require.NoError(t, err)
@@ -63,7 +64,7 @@ func TestHostRunCommitFailureKeepsGrantAndObservation(t *testing.T) {
 	cached, ok := s.jobs.get(run.ID)
 	require.True(t, ok)
 	require.Equal(t, controlplane.RunRunning, cached.Status)
-	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
 	grant, err := authority.InspectGrant(ctx, run.AgentID, f.grant.Scope)
 	require.NoError(t, err)
 	require.NotEqual(t, controlplane.GrantStopped, grant.State)
@@ -79,7 +80,7 @@ func TestHostRunCommitFailureKeepsGrantAndObservation(t *testing.T) {
 	require.NotNil(t, f.complete(t, result).HostCompletion, "the identical signed receipt recovers after persistence is repaired")
 }
 func TestHostRunCompletionReplayPreservesSignedObservationAcrossRestart(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		run := hostCompletionRunningRun(t, store, "replay")
@@ -118,7 +119,7 @@ func TestHostRunCompletionReplayPreservesSignedObservationAcrossRestart(t *testi
 	})
 }
 func TestHostRunResultKeepsAssertionAndClearsRenewedLease(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		run := hostCompletionRunningRun(t, store, "renewed")
 		f := prepareHostRunFixture(t, stateDeleteTestServer(t, store), run, "owner")
 		_, ok, err := store.RenewRunLease(context.Background(), run.ID, run.AgentID, run.LeaseOwner, 2*time.Hour)

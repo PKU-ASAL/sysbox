@@ -6,15 +6,17 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
-	"github.com/oslab/sysbox/pkg/agent"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/persistence"
-	"github.com/oslab/sysbox/pkg/substrate"
-	"github.com/stretchr/testify/require"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/agent"
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/oslab/sysbox/pkg/substrate"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDerivedSSHGrantCompletionBindsExactRequestAndParent(t *testing.T) {
@@ -22,7 +24,7 @@ func TestDerivedSSHGrantCompletionBindsExactRequestAndParent(t *testing.T) {
 }
 func TestDerivedSSHUnknownStopPreservesParentOutcome(t *testing.T) { testDerivedSSHReceipt(t, true) }
 func testDerivedSSHReceipt(t *testing.T, unknown bool) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		s := stateDeleteTestServer(t, store)
 		s.agentSvc = newAgentService(s)
 		ctx := context.Background()
@@ -33,7 +35,7 @@ func testDerivedSSHReceipt(t *testing.T, unknown bool) {
 		require.NoError(t, s.ConfigureExecutionGrantSigner(issuer))
 		s.grantHostKeys = map[string]ed25519.PublicKey{"agent": hostPublic}
 		require.NoError(t, s.apiStore.SaveAgent(ctx, controlplane.Agent{ID: "agent", AuthSecret: "secret", SecretHash: agent.SecretHash("secret")}))
-		repo := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+		repo := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
 		session, err := repo.OpenSession(ctx, "agent", "worker", "")
 		require.NoError(t, err)
 		run := controlplane.Run{ID: "run", Topology: "lab", Revision: "revision", Op: "apply"}

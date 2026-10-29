@@ -11,12 +11,13 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
 )
 
 func TestHostObservationRejectsForgeryAndPublishesAtomically(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		s.agentSvc = newAgentService(s)
@@ -24,7 +25,7 @@ func TestHostObservationRejectsForgeryAndPublishesAtomically(t *testing.T) {
 		require.NoError(t, err)
 		s.grantHostKeys = map[string]ed25519.PublicKey{"agent": pub}
 		require.NoError(t, store.SaveAgent(ctx, controlplane.Agent{ID: "agent"}))
-		repo := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		repo := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		session, err := repo.OpenSession(ctx, "agent", "process", "")
 		require.NoError(t, err)
 		o := controlplane.HostObservation{AgentID: "agent", SessionID: session.ID, Sequence: 1, BootID: "host", ObservedAt: time.Now().UTC(), Inventory: controlplane.AgentInventory{AgentID: "agent", SessionID: session.ID, Sequence: 1, ObservedAt: time.Now().UTC()}}
@@ -70,7 +71,7 @@ func TestHostObservationRejectsExpiredSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	s.grantHostKeys = map[string]ed25519.PublicKey{"agent": pub}
 	require.NoError(t, s.apiStore.SaveAgent(context.Background(), controlplane.Agent{ID: "agent"}))
-	repo := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	repo := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
 	session, err := repo.OpenSession(context.Background(), "agent", "worker", "")
 	require.NoError(t, err)
 	observed := time.Now().Add(-10 * time.Minute)

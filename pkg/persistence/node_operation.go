@@ -1,8 +1,9 @@
 package persistence
 
 import (
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"reflect"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
 )
 
 func ValidateNodeOperationTransition(current, next controlplane.NodeOperation) error {

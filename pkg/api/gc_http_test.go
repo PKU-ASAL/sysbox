@@ -6,13 +6,15 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
-	"github.com/oslab/sysbox/pkg/agent"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/persistence"
-	"github.com/stretchr/testify/require"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/agent"
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGCHTTPDispatchUsesOwningAgentAndReplaysOriginalCommand(t *testing.T) {
@@ -24,7 +26,7 @@ func TestGCHTTPDispatchUsesOwningAgentAndReplaysOriginalCommand(t *testing.T) {
 	host, _, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
 	s.grantHostKeys["host-a"] = host
-	require.NoError(t, s.workspaceService().bindPlacement("lab", "host-a", controlplane.AgentProtocolVersion))
+	require.NoError(t, s.workspaceService().BindPlacement("lab", "host-a", controlplane.AgentProtocolVersion))
 	repo, err := s.actionRepository("lab")
 	require.NoError(t, err)
 	refs, err := repo.LoadGCReferences(ctx, "lab")
@@ -72,7 +74,7 @@ func TestGCCompletionCannotReleaseReservationFromWorkerOrGenericStop(t *testing.
 	reservation := persistence.GCReservation{ID: "gc-complete", AgentID: "host-a", Candidate: c}
 	require.NoError(t, s.reserveGCWithAuthority(ctx, "lab", reservation))
 	require.NoError(t, s.publishGCReservation(ctx, "lab", reservation))
-	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
 	session, err := authority.OpenSession(ctx, "host-a", "guest-process", "")
 	require.NoError(t, err)
 	cmd, ok, err := s.apiStore.AcquireAgentCommandLease(ctx, "host-a", reservation.ID, "worker", time.Minute)
@@ -120,7 +122,7 @@ func TestGCCompletionRetirementSurvivesInterruptedAuthorityRelease(t *testing.T)
 	reservation := persistence.GCReservation{ID: "gc-retire", AgentID: "host-a", Candidate: candidate}
 	require.NoError(t, s.reserveGCWithAuthority(ctx, "lab", reservation))
 	require.NoError(t, s.publishGCReservation(ctx, "lab", reservation))
-	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
 	session, err := authority.OpenSession(ctx, "host-a", "guest-process", "")
 	require.NoError(t, err)
 	cmd, ok, err := s.apiStore.AcquireAgentCommandLease(ctx, "host-a", reservation.ID, "worker", time.Minute)
@@ -157,7 +159,7 @@ func TestGCGrantRequestCannotInventDispatchOrPoisonReservation(t *testing.T) {
 	owner.AuthSecret = "secret"
 	owner.SecretHash = agent.SecretHash("secret")
 	require.NoError(t, s.apiStore.SaveAgent(ctx, *owner))
-	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
 	session, err := authority.OpenSession(ctx, "host-a", "guest-process", "")
 	require.NoError(t, err)
 	repo, err := s.actionRepository("lab")
@@ -186,7 +188,7 @@ func TestGCBatchReservesMultipleCandidatesUnderOneFreeze(t *testing.T) {
 	host, _, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
 	s.grantHostKeys["host-a"] = host
-	require.NoError(t, s.workspaceService().bindPlacement("lab", "host-a", controlplane.AgentProtocolVersion))
+	require.NoError(t, s.workspaceService().BindPlacement("lab", "host-a", controlplane.AgentProtocolVersion))
 	ctx := context.Background()
 	repo, err := s.actionRepository("lab")
 	require.NoError(t, err)

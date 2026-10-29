@@ -92,7 +92,7 @@ func ApplyHostFenceRelease(authorityRaw, lifecycleRaw []byte, run controlplane.R
 		return commitFenceRelease(a, fence, lifecycleRaw, request, rec.HostPublicKey, rec.Observation, now)
 	}
 	c := command.Command
-	if !command.Retired || c.Status != controlplane.AgentCommandStatusCompleted || c.ID != request.ObservationCommandID || c.Type != controlplane.RunRecoveryCommand || c.RecoveryMode != controlplane.RunRecoveryObserve || c.ActionID != request.FenceID || c.AgentID != run.AgentID || c.TopologyUID != lifecycle.State.TopologyUID || c.ExpectedSerial != lifecycle.Serial || c.Run == nil || !SameRunIncarnation(*c.Run, run) || c.Run.Attempt != run.Attempt || c.Run.LeaseOwner != run.LeaseOwner || validateRecoveryReport(c, command.Recovery) != nil {
+	if !command.Retired || c.Status != controlplane.AgentCommandStatusCompleted || c.ID != request.ObservationCommandID || c.Type != controlplane.RunRecoveryCommand || c.RecoveryMode != controlplane.RunRecoveryObserve || c.ActionID != request.FenceID || c.AgentID != run.AgentID || c.TopologyUID != lifecycle.State.TopologyUID || c.ExpectedSerial != lifecycle.Serial || c.Run == nil || !controlplane.SameRunIncarnation(*c.Run, run) || c.Run.Attempt != run.Attempt || c.Run.LeaseOwner != run.LeaseOwner || validateRecoveryReport(c, command.Recovery) != nil {
 		return nil, zero, ErrConflict
 	}
 	report := command.Recovery

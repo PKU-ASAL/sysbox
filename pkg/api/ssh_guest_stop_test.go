@@ -11,20 +11,21 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/stretchr/testify/require"
 )
 
 func TestGuestSSHStopCannotBypassCanonicalCompletion(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := NewServer(t.TempDir(), t.TempDir())
 		s.apiStore = store
 		pub, key, err := ed25519.GenerateKey(rand.Reader)
 		require.NoError(t, err)
 		s.grantHostKeys = map[string]ed25519.PublicKey{"agent": pub}
-		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		session, err := authority.OpenSession(ctx, "agent", "session", "")
 		require.NoError(t, err)
 		req := substrate.SSHAccessMutation{ID: "delete", Delete: true, ExpectedRevision: 2, Config: substrate.SSHAccessConfig{User: "ubuntu", AccessID: "admin"}}
@@ -74,7 +75,7 @@ func TestGuestSSHStopCannotBypassCanonicalCompletion(t *testing.T) {
 }
 
 func TestGuestSSHCreationCannotInjectCompletionResult(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		op := prepareNodeOperation(controlplane.NodeOperation{ID: "injected", ActionID: "injected", CommandID: "command", AgentID: "agent", Topology: "lab", Node: "web", ResourceUID: "node", Generation: 1, LeaseEpoch: 1, Operation: "guest_ssh_access_delete", SSHResult: &substrate.SSHAccessResult{}})
 		require.Error(t, store.CreateNodeOperation(ctx, op))

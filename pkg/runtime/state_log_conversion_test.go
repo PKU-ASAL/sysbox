@@ -1,10 +1,11 @@
 package runtime
 
 import (
+	"testing"
+
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestAdoptStateResourceRewritesExternalIDs(t *testing.T) {

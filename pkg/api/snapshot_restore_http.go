@@ -6,13 +6,14 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 )
 
 func (s *Server) handlePlanSnapshotRestore(w http.ResponseWriter, r *http.Request) {
 	topology, snapshot, id := r.PathValue("topology"), r.PathValue("snapshot"), r.Header.Get("Idempotency-Key")
 	for _, value := range []string{topology, snapshot, id} {
-		if err := validatePathSegment(value, "restore identity"); err != nil {
+		if err := controlstore.ValidatePathSegment(value, "restore identity"); err != nil {
 			writeError(w, 400, err)
 			return
 		}
@@ -32,7 +33,7 @@ func (s *Server) handlePlanSnapshotRestore(w http.ResponseWriter, r *http.Reques
 
 func (s *Server) handleCancelSnapshotRestore(w http.ResponseWriter, r *http.Request) {
 	topology, snapshot := r.PathValue("topology"), r.PathValue("snapshot")
-	if err := validatePathSegment(topology, "topology"); err != nil {
+	if err := controlstore.ValidatePathSegment(topology, "topology"); err != nil {
 		writeError(w, 400, err)
 		return
 	}
@@ -71,7 +72,7 @@ func (s *Server) handleCancelSnapshotRestore(w http.ResponseWriter, r *http.Requ
 		writeError(w, 409, persistence.ErrConflict)
 		return
 	}
-	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
 	barrier, err := authority.InspectMaintenance(r.Context(), request.ID)
 	if err != nil {
 		writeError(w, stateOperationErrorStatus(err), err)

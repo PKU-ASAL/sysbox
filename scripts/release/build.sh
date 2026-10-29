@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "${repo_root}/scripts/release/lib.sh"
+cd "${repo_root}"
 
 tag=""
 output="${repo_root}/dist"
@@ -17,6 +18,7 @@ while (($#)); do
 done
 
 validate_version "${tag}" || { echo "release: invalid tag ${tag}" >&2; exit 1; }
+require_clean_source
 [[ "${allow_untagged}" == true ]] || require_release_repo "${tag}"
 for command in go git jq tar gzip sha256sum date; do require_command "${command}"; done
 tar --version | head -1 | grep -q 'GNU tar' || { echo "release: GNU tar is required" >&2; exit 1; }
@@ -30,7 +32,7 @@ oci_image="${OCI_IMAGE:-ghcr.io/pku-asal/sysbox}"
 release_repository="${RELEASE_REPOSITORY:-PKU-ASAL/sysbox}"
 ldflags="$(release_ldflags "${tag}" "${commit}" "${build_time}")"
 
-rm -rf "${output}"
+[[ ! -e "${output}" && ! -L "${output}" ]] || { echo "release: output must be a new directory: ${output}" >&2; exit 1; }
 mkdir -p "${output}"
 declare -A sysbox_hashes init_hashes netns_hashes
 for arch in amd64 arm64; do
@@ -55,7 +57,28 @@ for arch in amd64 arm64; do
   rm -rf "${stage}"
 done
 
+# Windows durable-task helper is part of the same release identity. Build it
+# from this checkout with the same source commit and deterministic timestamp;
+# acceptance must consume this archive instead of compiling a helper on demand.
+windows_stage="${output}/.stage-windows-amd64"
+windows_archive="sysbox_${tag}_windows_amd64.tar.gz"
+mkdir -p "${windows_stage}"
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -buildvcs=false \
+  -ldflags "${ldflags}" -o "${windows_stage}/sysbox-windows-task.exe" ./cmd/sysbox-windows-task
+install -m 0644 scripts/windows/task/install.ps1 "${windows_stage}/install.ps1"
+jq -S -n --arg version "${tag}" --arg commit "${commit}" --arg build_time "${build_time}" \
+  '{version:$version,commit:$commit,build_time:$build_time,os:"windows",architecture:"amd64",license:"MulanPSL-2.0"}' \
+  >"${windows_stage}/build-metadata.json"
+chmod 0644 "${windows_stage}/build-metadata.json"
+tar --sort=name --format=ustar --owner=0 --group=0 --numeric-owner --mtime="@${epoch}" \
+  --mode='u+rwX,go+rX,go-w' -C "${windows_stage}" -cf - build-metadata.json install.ps1 sysbox-windows-task.exe \
+  | gzip -n -9 >"${output}/${windows_archive}"
+windows_helper_hash="$(sha256sum "${windows_stage}/sysbox-windows-task.exe" | awk '{print $1}')"
+windows_installer_hash="$(sha256sum "${windows_stage}/install.ps1" | awk '{print $1}')"
+rm -rf "${windows_stage}"
+
 (cd "${output}" && sha256sum "sysbox_${tag}_linux_amd64.tar.gz" "sysbox_${tag}_linux_arm64.tar.gz" >SHA256SUMS)
+echo "$(sha256sum "${output}/${windows_archive}" | awk '{print $1}')  ${windows_archive}" >>"${output}/SHA256SUMS"
 targets='[]'
 for arch in amd64 arm64; do
   archive="sysbox_${tag}_linux_${arch}.tar.gz"
@@ -64,6 +87,9 @@ for arch in amd64 arm64; do
     --arg sysbox_sha256 "${sysbox_hashes[${arch}]}" --arg sysbox_init_sha256 "${init_hashes[${arch}]}" --arg sysbox_netns_sha256 "${netns_hashes[${arch}]}" \
     '. + [{os:$os,architecture:$arch,archive:$archive,sha256:$sha256,sysbox_sha256:$sysbox_sha256,sysbox_init_sha256:$sysbox_init_sha256,sysbox_netns_sha256:$sysbox_netns_sha256}]' <<<"${targets}")"
 done
+windows_checksum="$(awk -v file="${windows_archive}" '$2 == file {print $1}' "${output}/SHA256SUMS")"
+targets="$(jq -c --arg os windows --arg arch amd64 --arg archive "${windows_archive}" --arg sha256 "${windows_checksum}" --arg helper_sha256 "${windows_helper_hash}" --arg installer_sha256 "${windows_installer_hash}" \
+  '. + [{os:$os,architecture:$arch,archive:$archive,sha256:$sha256,helper_sha256:$helper_sha256,installer_sha256:$installer_sha256}]' <<<"${targets}")"
 fingerprint_payload="$(jq -Scn --arg tag "${tag}" --arg commit "${commit}" --argjson targets "${targets}" '{tag:$tag,commit:$commit,targets:$targets}')"
 release_fingerprint="$(printf '%s' "${fingerprint_payload}" | sha256sum | awk '{print $1}')"
 jq -S -n --arg version "${tag}" --arg tag "${tag}" --arg commit "${commit}" \

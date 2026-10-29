@@ -2,11 +2,12 @@ package api
 
 import (
 	"context"
+	"net/http/httptest"
+	"testing"
+
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/stretchr/testify/require"
-	"net/http/httptest"
-	"testing"
 )
 
 func resourceAddressForTest() address.Address { return address.Resource("sysbox_node", "old") }

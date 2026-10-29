@@ -4,17 +4,17 @@ import (
 	"context"
 	"testing"
 
-	"github.com/stretchr/testify/require"
-
 	"github.com/oslab/sysbox/pkg/address"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSnapshotRestorePreservesIdenticalUnresolvedJournal(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		repo, err := s.actionRepository("lab")
@@ -32,7 +32,7 @@ func TestSnapshotRestorePreservesIdenticalUnresolvedJournal(t *testing.T) {
 		require.NoError(t, err)
 		digest, err := request.Digest()
 		require.NoError(t, err)
-		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		barrier, err := authority.BeginMaintenance(ctx, request.ID, st.TopologyUID, digest)
 		require.NoError(t, err)
 		request.MaintenanceEpoch = barrier.Epoch

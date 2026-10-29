@@ -19,12 +19,15 @@ require_command() {
 require_release_repo() {
   local tag="$1"
   validate_version "${tag}" || { echo "release: tag must be canonical vMAJOR.MINOR.PATCH: ${tag}" >&2; return 1; }
-  git diff --quiet --ignore-submodules -- || { echo "release: tracked worktree is dirty" >&2; return 1; }
-  git diff --cached --quiet --ignore-submodules -- || { echo "release: index is dirty" >&2; return 1; }
+  require_clean_source || return 1
   local head tagged
   head="$(git rev-parse HEAD)"
   tagged="$(git rev-parse "${tag}^{commit}" 2>/dev/null)" || { echo "release: tag does not exist: ${tag}" >&2; return 1; }
   [[ "${head}" == "${tagged}" ]] || { echo "release: tag ${tag} does not point at HEAD" >&2; return 1; }
+}
+
+require_clean_source() {
+  [[ -z "$(git status --porcelain --untracked-files=all)" ]] || { echo "release: source must be a clean committed checkout (including untracked files)" >&2; return 1; }
 }
 
 release_commit() { git rev-parse HEAD; }

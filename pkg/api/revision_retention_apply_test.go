@@ -3,17 +3,19 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/persistence"
-	"github.com/stretchr/testify/require"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRevisionRetentionApplyDeletesBatchAndRejectsChangedPreview(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		now := time.Now().UTC()
@@ -58,8 +60,8 @@ func TestRevisionRetentionApplyDeletesBatchAndRejectsChangedPreview(t *testing.T
 }
 
 func TestRevisionRetentionApplyRechecksActualLateRun(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
-		if _, local := store.(*localAPIStore); local {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
+		if _, local := store.(*controlstore.Local); local {
 			return
 		}
 		ctx := context.Background()

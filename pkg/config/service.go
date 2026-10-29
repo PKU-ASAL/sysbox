@@ -48,6 +48,7 @@ type ServiceConfig struct {
 }
 
 type HostSupervisorConfig struct {
+	DockerSocket   string `yaml:"docker_socket" json:"docker_socket,omitempty"`
 	Socket         string `yaml:"socket" json:"socket"`
 	Root           string `yaml:"root" json:"root"`
 	SigningKeyFile string `yaml:"signing_key_file" json:"signing_key_file"`
@@ -263,6 +264,21 @@ func DefaultServiceConfig() ServiceConfig {
 }
 
 func LoadServiceConfig(path string) (ServiceConfig, error) {
+	return loadServiceConfig(path, true)
+}
+
+// LoadServiceConfigStrict loads a trusted service file without applying
+// process environment overrides. Root host services use this entry point so a
+// caller-controlled environment cannot replace provider paths, cgroups,
+// databases, or signing locations after the file has been validated.
+func LoadServiceConfigStrict(path string) (ServiceConfig, error) {
+	if path == "" {
+		return ServiceConfig{}, fmt.Errorf("explicit service configuration required")
+	}
+	return loadServiceConfig(path, false)
+}
+
+func loadServiceConfig(path string, allowEnv bool) (ServiceConfig, error) {
 	cfg := DefaultServiceConfig()
 	if path == "" {
 		path = os.Getenv("SYSBOX_CONFIG")
@@ -272,7 +288,7 @@ func LoadServiceConfig(path string) (ServiceConfig, error) {
 	}
 	if path != "" {
 		raw, err := os.ReadFile(path)
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err != nil && (!allowEnv || !errors.Is(err, os.ErrNotExist)) {
 			return cfg, fmt.Errorf("read sysbox config %s: %w", path, err)
 		}
 		if err == nil {
@@ -283,7 +299,9 @@ func LoadServiceConfig(path string) (ServiceConfig, error) {
 			}
 		}
 	}
-	applyEnvOverrides(&cfg)
+	if allowEnv {
+		applyEnvOverrides(&cfg)
+	}
 	applyDerivedDefaults(&cfg)
 	if err := cfg.Validate(); err != nil {
 		return cfg, err

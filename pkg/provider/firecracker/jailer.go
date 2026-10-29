@@ -35,6 +35,12 @@ type jailIdentity struct {
 }
 
 func jailerArguments(m *vmManifest, j jailIdentity) ([]string, error) {
+	if m == nil {
+		return nil, fmt.Errorf("manifest is required")
+	}
+	if len(m.Handle.Attachments) > 0 && m.Handle.NetnsName == "" {
+		return nil, fmt.Errorf("firecracker network attachments require a named network namespace")
+	}
 	if !validIdentityPart(m.VMID) || j.UID == 0 || j.GID != j.UID || !filepath.IsAbs(j.Root) || !filepath.IsAbs(j.Executable) || filepath.Base(j.Root) != "root" || filepath.Base(filepath.Dir(j.Root)) != m.VMID || filepath.Base(filepath.Dir(filepath.Dir(j.Root))) != filepath.Base(j.Executable) {
 		return nil, fmt.Errorf("invalid jail identity")
 	}
@@ -214,6 +220,9 @@ func inode(path string) (uint64, error) {
 }
 
 func (s *Substrate) prepareJailer(ctx context.Context, m *vmManifest) (*exec.Cmd, error) {
+	if m == nil || len(m.Handle.Attachments) > 0 && m.Handle.NetnsName == "" {
+		return nil, fmt.Errorf("firecracker network attachments require a named network namespace")
+	}
 	if os.Geteuid() != 0 {
 		return nil, fmt.Errorf("Firecracker jailer requires the root host supervisor")
 	}
@@ -276,7 +285,7 @@ func (s *Substrate) prepareJailer(ctx context.Context, m *vmManifest) (*exec.Cmd
 	// A PID namespace without daemonization preserves the host PID across the
 	// jailer's exec. Isolated IPC/UTS and, for unconnected VMs, network as well.
 	flags := uintptr(unix.CLONE_NEWPID | unix.CLONE_NEWIPC | unix.CLONE_NEWUTS)
-	if m.Handle.NetnsName == "" && len(m.Handle.Attachments) == 0 {
+	if m.Handle.NetnsName == "" {
 		flags |= unix.CLONE_NEWNET
 	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Cloneflags: flags}

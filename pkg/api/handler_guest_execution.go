@@ -11,6 +11,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
@@ -98,11 +99,11 @@ func (s *Server) guestTargetIdentity(topology, node string) (substrate.Operation
 
 func (s *Server) handleCreateGuestExecution(w http.ResponseWriter, r *http.Request) {
 	topology, node := r.PathValue("topology"), r.PathValue("node")
-	if err := validatePathSegment(topology, "topology"); err != nil {
+	if err := controlstore.ValidatePathSegment(topology, "topology"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if err := validatePathSegment(node, "node"); err != nil {
+	if err := controlstore.ValidatePathSegment(node, "node"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}

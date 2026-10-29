@@ -12,8 +12,10 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
+	"github.com/oslab/sysbox/pkg/workspace"
 )
 
 var operationKeyPattern = regexp.MustCompile(`^[A-Za-z0-9:_-]{1,128}$`)
@@ -36,8 +38,8 @@ type RunService struct {
 	hclFile         func(string) string
 	stateManager    func(string) (*state.Manager, error)
 	requiredForTopo func(string) ([]string, error)
-	revisions       globalRevisionStore
-	workspaces      *WorkspaceService
+	revisions       controlstore.GlobalRevisionStore
+	workspaces      *workspace.Catalog
 	checkpoints     runtime.CheckpointLoader
 }
 
@@ -95,7 +97,7 @@ func runError(kind runServiceErrorKind, err error) error {
 }
 
 func runServiceStatus(err error) int {
-	if errors.Is(err, errActiveOperation) {
+	if errors.Is(err, controlstore.ErrActiveOperation) {
 		return http.StatusConflict
 	}
 	var svcErr runServiceError
@@ -115,7 +117,7 @@ func runServiceStatus(err error) int {
 }
 
 func (s *RunService) StartApply(ctx context.Context, topology string, req RunStartRequest) (*controlplane.Run, error) {
-	if req.Revision != "" && !globalRevisionPattern.MatchString(req.Revision) {
+	if req.Revision != "" && !controlstore.GlobalRevisionPattern.MatchString(req.Revision) {
 		return nil, runError(runServiceBadRequest, errors.New("revision must be an immutable global digest; republish old workspace revisions"))
 	}
 	if req.OperationKey != "" {
@@ -143,10 +145,10 @@ func (s *RunService) StartApply(ctx context.Context, topology string, req RunSta
 	}
 
 	var reqSnapshot string
-	if req.Revision != "" && globalRevisionPattern.MatchString(req.Revision) {
+	if req.Revision != "" && controlstore.GlobalRevisionPattern.MatchString(req.Revision) {
 		rev, err := s.revisions.GetGlobalRevision(ctx, req.Revision)
 		if err != nil {
-			if errors.Is(err, errGlobalRevisionNotFound) {
+			if errors.Is(err, controlstore.ErrRevisionNotFound) {
 				return nil, runError(runServiceNotFound, err)
 			}
 			return nil, runError(runServiceInternal, err)
@@ -275,7 +277,7 @@ func (s *RunService) snapshotForRevision(ctx context.Context, topology, revision
 		}
 		return path, nil
 	}
-	if !globalRevisionPattern.MatchString(revision) {
+	if !controlstore.GlobalRevisionPattern.MatchString(revision) {
 		return "", runError(runServiceBadRequest, errors.New("revision must be an immutable global digest; republish old workspace revisions"))
 	}
 	rev, err := s.revisions.GetGlobalRevision(ctx, revision)
@@ -297,7 +299,7 @@ func (s *RunService) rejectActiveTopology(ctx context.Context, topology, exceptI
 	if err != nil {
 		return runError(runServiceInternal, err)
 	}
-	if err := validateTopologyAdmission(runs, controlplane.Run{ID: exceptID, Topology: topology, Status: controlplane.RunQueued}); err != nil {
+	if err := controlstore.ValidateTopologyAdmission(runs, controlplane.Run{ID: exceptID, Topology: topology, Status: controlplane.RunQueued}); err != nil {
 		return runError(runServiceConflict, err)
 	}
 	return nil
@@ -377,7 +379,7 @@ func (s *RunService) startIdempotentDestroy(ctx context.Context, topology string
 	run.RequestFingerprint = fingerprint
 	existing, found, err := s.jobs.store.GetRunDispatch(ctx, run.ID, fingerprint)
 	if err != nil {
-		if errors.Is(err, errIdempotencyConflict) {
+		if errors.Is(err, controlstore.ErrIdempotencyConflict) {
 			return nil, runError(runServiceConflict, err)
 		}
 		return nil, runError(runServiceInternal, err)
@@ -411,7 +413,7 @@ func (s *RunService) startIdempotentDestroy(ctx context.Context, topology string
 		return nil, runError(runServiceConflict, err)
 	}
 	run.MarkAssigned(agent.ID, time.Now().UTC())
-	command, err := s.workspaces.runAssignedCommand(ctx, run)
+	command, err := s.workspaces.RunAssignedCommand(ctx, run)
 	if err != nil {
 		return nil, runError(runServiceInternal, err)
 	}
@@ -419,9 +421,9 @@ func (s *RunService) startIdempotentDestroy(ctx context.Context, topology string
 	// CreateRunDispatch, sensitive inputs must never be persisted here.
 	run.Inputs = nil
 	command.Run.Inputs = nil
-	stored, created, err := s.jobs.store.CreateRunDispatch(ctx, RunDispatchRequest{Run: *run, Command: command, Fingerprint: fingerprint})
+	stored, created, err := s.jobs.store.CreateRunDispatch(ctx, controlstore.RunDispatchRequest{Run: *run, Command: command, Fingerprint: fingerprint})
 	if err != nil {
-		if errors.Is(err, errIdempotencyConflict) {
+		if errors.Is(err, controlstore.ErrIdempotencyConflict) {
 			return nil, runError(runServiceConflict, err)
 		}
 		return nil, runError(runServiceInternal, err)
@@ -437,7 +439,7 @@ func (s *RunService) startIdempotentDestroy(ctx context.Context, topology string
 // lifecycle operations use its admitted immutable intent while placement still
 // anchors that topology. Removed metadata never revives a historical snapshot.
 func (s *RunService) admittedApplySnapshot(ctx context.Context, topology string) (string, error) {
-	placement, err := s.workspaces.loadPlacement(topology)
+	placement, err := s.workspaces.LoadPlacement(topology)
 	if err != nil {
 		return "", runError(runServiceInternal, err)
 	}
@@ -449,7 +451,7 @@ func (s *RunService) admittedApplySnapshot(ctx context.Context, topology string)
 		return "", runError(runServiceInternal, err)
 	}
 	var latest *controlplane.Run
-	for _, run := range latestRunsByID(runs) {
+	for _, run := range controlstore.LatestRunsByID(runs) {
 		if run.Topology != topology || run.Op != "apply" || run.RequestFingerprint == "" {
 			continue
 		}

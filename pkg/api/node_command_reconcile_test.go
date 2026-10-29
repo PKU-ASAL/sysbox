@@ -4,15 +4,17 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/persistence"
-	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/stretchr/testify/require"
 )
 
 func TestTerminalNodeOperationSettlesLostDeliveryReceipt(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		op, cmd := nodeDispatchFixture()
 		require.NoError(t, store.CreateNodeOperationDispatch(ctx, op, cmd))
@@ -21,7 +23,7 @@ func TestTerminalNodeOperationSettlesLostDeliveryReceipt(t *testing.T) {
 		require.True(t, ok)
 		leased.Status = controlplane.AgentCommandStatusDelivered
 		require.NoError(t, store.SaveAgentCommand(ctx, *leased))
-		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		session, err := authority.OpenSession(ctx, op.AgentID, "host", "")
 		require.NoError(t, err)
 		request, err := controlplane.FromNodeOperationCommand(*leased)
@@ -39,12 +41,12 @@ func TestTerminalNodeOperationSettlesLostDeliveryReceipt(t *testing.T) {
 			return persistence.CompletePowerFromHost(current, record, op.AgentID, op.ID, receipt)
 		}
 		switch adapter := store.(type) {
-		case *localAPIStore:
-			_, err = adapter.completeNodeOperation(ctx, op.AgentID, op.ID, &receipt, transition)
-		case *sqliteAPIStore:
-			_, err = adapter.completeNodeOperation(ctx, op.AgentID, op.ID, &receipt, transition)
-		case *postgresAPIStore:
-			_, err = adapter.completeNodeOperation(ctx, op.AgentID, op.ID, &receipt, transition)
+		case *controlstore.Local:
+			_, err = adapter.TransitionNodeOperation(ctx, op.AgentID, op.ID, &receipt, transition)
+		case *controlstore.SQLite:
+			_, err = adapter.TransitionNodeOperation(ctx, op.AgentID, op.ID, &receipt, transition)
+		case *controlstore.Postgres:
+			_, err = adapter.TransitionNodeOperation(ctx, op.AgentID, op.ID, &receipt, transition)
 		}
 		require.NoError(t, err)
 		service := AgentService{store: store}
@@ -71,7 +73,7 @@ func TestPowerGrantSourceRejectsTerminalOrChangedOperation(t *testing.T) {
 			case "action":
 				current.ActionID = "other"
 			}
-			err := (apiExecutionGrantStorage{}).checkGuestSSHSource(&persistence.CommandRecord{Command: cmd}, func(string) (*controlplane.NodeOperation, error) {
+			err := (controlstore.AuthorityStorage{}).CheckGuestSSHSource(&persistence.CommandRecord{Command: cmd}, func(string) (*controlplane.NodeOperation, error) {
 				if scenario == "missing" {
 					return nil, persistence.ErrNotFound
 				}

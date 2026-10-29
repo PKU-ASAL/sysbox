@@ -6,12 +6,12 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/stretchr/testify/require"
-
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/runtime"
+	"github.com/stretchr/testify/require"
 )
 
 func TestLifecycleCatalogUsesDatabaseWithoutFakeTopology(t *testing.T) {
@@ -41,9 +41,9 @@ func TestLifecycleCatalogUsesDatabaseWithoutFakeTopology(t *testing.T) {
 func TestSQLiteMetadataUsesDecodedDatabaseLocation(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state #1.db")
 	u := url.URL{Scheme: "sqlite", Path: path, RawQuery: "topology=lab"}
-	s, err := newAPIStore(t.TempDir(), u.String())
+	s, err := controlstore.New(t.TempDir(), u.String())
 	require.NoError(t, err)
-	require.Equal(t, path, s.(*sqliteAPIStore).dbPath)
+	require.Equal(t, path, s.(*controlstore.SQLite).DbPath)
 }
 
 func TestLifecycleCatalogIncludesUnresolvedFirstCreate(t *testing.T) {

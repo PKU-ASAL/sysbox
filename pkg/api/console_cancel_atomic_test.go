@@ -5,12 +5,13 @@ import (
 	"testing"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
 )
 
 func TestConsoleCancelConflictDoesNotPublishIntent(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		hub := newConsoleSessionHub(store)
 		sess := createConsoleForTest(t, hub)
@@ -34,7 +35,7 @@ func TestConsoleCancelConflictDoesNotPublishIntent(t *testing.T) {
 }
 
 func TestConsoleHubCancelAtomicallyPublishesOutbox(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		hub := newConsoleSessionHub(store)
 		sess := createConsoleForTest(t, hub)
 		require.NoError(t, hub.Cancel(context.Background(), sess.ID, "stop", requestSubject{User: "operator"}))
@@ -46,7 +47,7 @@ func TestConsoleHubCancelAtomicallyPublishesOutbox(t *testing.T) {
 }
 
 func TestConsoleCancelledRequestDoesNotCommitCancellation(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		hub := newConsoleSessionHub(store)
 		sess := createConsoleForTest(t, hub)
 		ctx, cancel := context.WithCancel(context.Background())
@@ -62,7 +63,7 @@ func TestConsoleCancelledRequestDoesNotCommitCancellation(t *testing.T) {
 }
 
 func TestConsoleFailedCancellationRepairDoesNotSignalRelay(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		hub := newConsoleSessionHub(store)
 		sess := createConsoleForTest(t, hub)

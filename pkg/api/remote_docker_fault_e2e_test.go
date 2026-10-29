@@ -26,16 +26,18 @@ import (
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/client"
 	"github.com/google/uuid"
-	"github.com/stretchr/testify/require"
-	"golang.org/x/crypto/ssh"
-
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/agentexec"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/hostexec"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
 	"github.com/oslab/sysbox/pkg/model"
+	"github.com/oslab/sysbox/pkg/workspace"
+	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/ssh"
+
 	dockerprovider "github.com/oslab/sysbox/pkg/provider/docker"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -111,7 +113,7 @@ type failDeletePublication struct {
 }
 
 func (r failDeletePublication) ProveCleanup(ctx context.Context, run controlplane.Run) (*controlplane.CleanupReceipt, error) {
-	return r.ActionRepository.(agentexec.CleanupProver).ProveCleanup(ctx, run)
+	return r.ActionRepository.(hostexec.CleanupProver).ProveCleanup(ctx, run)
 }
 
 func (r failDeletePublication) CommitResetIntents(ctx context.Context, actions []runtime.ActionRecord) error {
@@ -183,7 +185,7 @@ func (r failDeletePublication) CommitActionOutcome(ctx context.Context, a runtim
 }
 
 type destroyFailureHostBridge struct {
-	*ExecutionBridge
+	*hostexec.Environment
 	fail           *atomic.Bool
 	returned       chan struct{}
 	resetPrepared  chan struct{}
@@ -192,7 +194,7 @@ type destroyFailureHostBridge struct {
 }
 
 func (b destroyFailureHostBridge) ActionRepository(topology string) (runtime.ActionRepository, error) {
-	r, err := b.ExecutionBridge.ActionRepository(topology)
+	r, err := b.Environment.ActionRepository(topology)
 	return failDeletePublication{ActionRepository: r, fail: b.fail, returned: b.returned, resetPrepared: b.resetPrepared, resetDestroyed: b.resetDestroyed, secondFault: b.secondFault}, err
 }
 
@@ -364,7 +366,7 @@ func testRemoteDockerCompletionLossRecovery(t *testing.T, managedSSH, targetedRe
 	hostErrors := make(chan error, 1)
 	socket := filepath.Join(socketDir, "host.sock")
 	startHost := func() (context.CancelFunc, <-chan error) {
-		bridge, err := NewExecutionBridge(hostCfg)
+		bridge, err := hostexec.Open(hostCfg)
 		require.NoError(t, err)
 		require.NoError(t, bridge.BindHostIdentity("fault-agent", hostPub))
 		resolver := hostsupervisor.CanonicalResolver{RunsDir: hostCfg.Paths.RunsDir, Backend: cfg.State.Backend, AgentID: "fault-agent"}
@@ -385,9 +387,9 @@ func testRemoteDockerCompletionLossRecovery(t *testing.T, managedSSH, targetedRe
 				default:
 				}
 			}}
-		executor := &agentexec.HostRunExecutor{Bridge: bridge, Tasks: tasks, Resolver: resolver, Authority: authority}
+		executor := &hostexec.RunExecutor{Bridge: bridge, Tasks: tasks, Resolver: resolver, Authority: authority}
 		if len(destroyPublicationFault) != 0 && destroyPublicationFault[0] || resetPrepared != nil {
-			executor.Bridge = destroyFailureHostBridge{ExecutionBridge: bridge, fail: &failPublication, returned: returned, resetPrepared: resetPrepared, resetDestroyed: resetDestroyed, secondFault: &secondFault}
+			executor.Bridge = destroyFailureHostBridge{Environment: bridge, fail: &failPublication, returned: returned, resetPrepared: resetPrepared, resetDestroyed: resetDestroyed, secondFault: &secondFault}
 		}
 		runs.PrepareRun = executor.PrepareRun
 		runs.RecoverInterruptedRun = executor.RecoverInterruptedRun
@@ -396,7 +398,7 @@ func testRemoteDockerCompletionLossRecovery(t *testing.T, managedSSH, targetedRe
 			srv.GroupID = 32000
 		}
 		srv.Observer = &hostsupervisor.Observer{AgentID: tasks.AgentID, BootID: tasks.HostBootID, Key: hostKey, Collect: func(ctx context.Context) (controlplane.AgentInventory, []controlplane.ResourceProjection, error) {
-			return agentexec.CollectHostObservation(ctx, agentexec.HostObservationOptions{ID: tasks.AgentID, Capabilities: []string{"docker", "veth"}, CapacityPath: hostCfg.Paths.Home}, bridge)
+			return hostexec.CollectHostObservation(ctx, hostexec.HostObservationOptions{ID: tasks.AgentID, Capabilities: []string{"docker", "veth"}, CapacityPath: hostCfg.Paths.Home}, bridge)
 		}}
 		srv.Power = &hostsupervisor.PowerDispatcher{Root: filepath.Join(root, "power"), AgentID: tasks.AgentID, HostBootID: tasks.HostBootID, IssuerKey: pub, HostKey: hostKey, Authorize: checkedAuthorize, ReportStop: authority.ReportStop, Resolve: resolver.ResolveNode}
 		sshBase := *tasks
@@ -580,7 +582,7 @@ resource "sysbox_node" "%s" {
 	}
 	require.Equal(t, controlplane.RunDone, completion.Run.Status, completion.Run.Err)
 	require.NoError(t, controlplane.VerifyRunStopReceipt(hostPub, completion.Proof.Receipt, completion.Proof.Evidence))
-	hostBridge, err := NewExecutionBridge(hostCfg)
+	hostBridge, err := hostexec.Open(hostCfg)
 	require.NoError(t, err)
 	localRevision, err := hostBridge.MaterializeRunRevision(ctx, topology, completion.Run.Revision)
 	require.NoError(t, err)
@@ -652,7 +654,7 @@ resource "sysbox_node" "%s" {
 	require.Equal(t, externalID, instances[0].ID)
 	status, raw = request("GET", "/v1/topologies/"+topology, nil, "")
 	require.Equal(t, 200, status, string(raw))
-	var workspace WorkspaceInfo
+	var workspace workspace.Info
 	require.NoError(t, json.Unmarshal(raw, &workspace))
 	require.True(t, workspace.HasState, "host and API share canonical repository")
 	require.Equal(t, opts.ID, workspace.PlacementAgentID)
@@ -1006,7 +1008,7 @@ resource "sysbox_node" "%s" {
 	awaitReceipt(destroyProof)
 	status, raw = request("DELETE", "/v1/topologies/"+topology, nil, "")
 	require.Equal(t, 200, status, string(raw))
-	placement, err := third.workspaceService().loadPlacement(topology)
+	placement, err := third.workspaceService().LoadPlacement(topology)
 	require.NoError(t, err)
 	require.Nil(t, placement)
 	t.Logf("host supervisor created %s; completion acknowledgment lost; reconstructed API/Agent/supervisor retained run %s and one container; stale claim/report rejected", externalID, runID)

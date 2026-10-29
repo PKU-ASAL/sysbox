@@ -6,7 +6,6 @@ import (
 
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/effectgate"
-	"github.com/oslab/sysbox/pkg/persistence"
 )
 
 func (c *RunCoordinator) recoverInterruptedRun(ctx context.Context, gate *effectgate.Gate, grant controlplane.ExecutionGrant, id string) error {
@@ -41,7 +40,7 @@ func (c *RunCoordinator) recoverInterruptedRun(ctx context.Context, gate *effect
 		return err
 	}
 	var result controlplane.Run
-	if json.Unmarshal(raw, &result) != nil || !persistence.SameRunIncarnation(a.Run, result) || result.Attempt != a.Run.Attempt || result.LeaseOwner != a.Run.LeaseOwner || result.Status != controlplane.RunFailed || result.EndedAt.IsZero() || !result.Recoverable || result.Cleanup != nil || result.Inputs != nil || result.HostCompletion != nil {
+	if json.Unmarshal(raw, &result) != nil || !controlplane.SameRunIncarnation(a.Run, result) || result.Attempt != a.Run.Attempt || result.LeaseOwner != a.Run.LeaseOwner || result.Status != controlplane.RunFailed || result.EndedAt.IsZero() || !result.Recoverable || result.Cleanup != nil || result.Inputs != nil || result.HostCompletion != nil {
 		return effectgate.ErrFenced
 	}
 	return gate.CommitQuiescentRun(ctx, prior.Grant, id, raw)

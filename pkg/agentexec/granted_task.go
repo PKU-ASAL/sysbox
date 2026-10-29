@@ -5,14 +5,15 @@ import (
 	"crypto/ed25519"
 	"errors"
 	"fmt"
+	"os"
+	"strings"
+	"time"
+
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/guesttask"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/oslab/sysbox/pkg/transport"
-	"os"
-	"strings"
-	"time"
 )
 
 type durableGuestTaskConnection interface {
@@ -24,15 +25,15 @@ type durableGuestTaskConnection interface {
 	GuestTaskBootID(context.Context) (string, error)
 }
 
-func executeGrantedGuestOperation(ctx context.Context, opts Options, cmd controlplane.AgentCommand) guestOperationCompletion {
+func executeGrantedGuestOperation(ctx context.Context, opts Options, cmd controlplane.AgentCommand) controlplane.GuestOperationCompletion {
 	result, err := runGrantedGuestTask(ctx, opts, cmd)
 	if err != nil {
-		class := classifyGuestExecError(ctx, err)
-		return guestOperationCompletion{Result: encodeGuestResult(result), ResultClass: class, Err: class + " guest operation"}
+		class := controlplane.ClassifyGuestExecError(ctx, err)
+		return controlplane.GuestOperationCompletion{Result: controlplane.EncodeGuestResult(result), ResultClass: class, Err: class + " guest operation"}
 	}
-	out := encodeGuestResult(result)
+	out := controlplane.EncodeGuestResult(result)
 	out.ExitCode = result.ExitCode
-	return guestOperationCompletion{Result: out, ResultClass: controlplane.GuestExecutionResultClassExit}
+	return controlplane.GuestOperationCompletion{Result: out, ResultClass: controlplane.GuestExecutionResultClassExit}
 }
 
 type grantedTask struct {
@@ -209,7 +210,7 @@ func readGrantedTaskOutput(ctx context.Context, client substrate.ConnectionExecu
 		if err := ctx.Err(); err != nil {
 			return output.String(), false, err
 		}
-		remaining := guestOutputLimit - output.Len()
+		remaining := controlplane.GuestOutputLimit - output.Len()
 		limit := min(64<<10, remaining)
 		if remaining == 0 {
 			limit = 1

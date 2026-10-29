@@ -6,14 +6,15 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/substrate"
-	"github.com/oslab/sysbox/pkg/transport"
-	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/substrate"
+	"github.com/oslab/sysbox/pkg/transport"
+	"github.com/stretchr/testify/require"
 )
 
 func TestFirecrackerDurableGuestTaskE2E(t *testing.T) {

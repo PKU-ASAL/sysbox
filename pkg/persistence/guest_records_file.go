@@ -3,11 +3,12 @@ package persistence
 import (
 	"context"
 	"errors"
-	"github.com/oslab/sysbox/pkg/revisiongate"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/revisiongate"
 
 	"github.com/gofrs/flock"
 )

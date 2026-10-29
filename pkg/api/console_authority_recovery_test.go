@@ -2,15 +2,17 @@ package api
 
 import (
 	"context"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/persistence"
-	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/stretchr/testify/require"
 )
 
 func TestUnstartedConsoleRetiresDelivery(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		sess, cmd := consoleDispatchFixture()
 		sess.CommandID, sess.TopologyUID, sess.ResourceUID, sess.Generation = cmd.ID, "topology", "node", 1
@@ -25,7 +27,7 @@ func TestUnstartedConsoleRetiresDelivery(t *testing.T) {
 		commands, err := store.ListAgentCommands(ctx, sess.AgentID)
 		require.NoError(t, err)
 		for _, command := range commands {
-			require.False(t, commandBlocksTopology(command, sess.Topology, sess.TopologyUID), command.ID)
+			require.False(t, controlstore.CommandBlocksTopology(command, sess.Topology, sess.TopologyUID), command.ID)
 		}
 	})
 }
@@ -33,7 +35,7 @@ func TestConsoleCrashRepairsRevocation(t *testing.T) {
 	for _, status := range []string{controlplane.ConsoleSessionStatusLost, controlplane.ConsoleSessionStatusCancelling} {
 		t.Run(status, func(t *testing.T) {
 			ctx := context.Background()
-			store := &localAPIStore{runsDir: t.TempDir()}
+			store := &controlstore.Local{RunsDir: t.TempDir()}
 			s := stateDeleteTestServer(t, store)
 			sess, cmd := consoleDispatchFixture()
 			sess.CommandID = cmd.ID
@@ -45,7 +47,7 @@ func TestConsoleCrashRepairsRevocation(t *testing.T) {
 			lease, ok, err := store.AcquireAgentCommandLease(ctx, "agent", cmd.ID, "worker", time.Minute)
 			require.NoError(t, err)
 			require.True(t, ok)
-			storage := apiExecutionGrantStorage{store: store}
+			storage := controlstore.AuthorityStorage{Store: store}
 			repo := persistence.NewExecutionGrantRepository(storage)
 			session, err := repo.OpenSession(ctx, "agent", "process", "")
 			require.NoError(t, err)

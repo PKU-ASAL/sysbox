@@ -62,6 +62,9 @@ mkdir -p "${git_repo}"
     fail "accepted dirty tracked worktree"
   fi
   git restore tracked
+  printf 'untracked source\n' >untracked.go
+  if require_release_repo v0.1.0 >/dev/null 2>&1; then fail "accepted untracked source"; fi
+  rm untracked.go
   printf 'two\n' >tracked
   git add tracked
   git commit -qm second
@@ -95,7 +98,7 @@ PYTEST
   sysbox_sha="$(sha256sum "${extracted}/sysbox" | awk '{print $1}')"
   init_sha="$(sha256sum "${extracted}/sysbox-init" | awk '{print $1}')"
   jq -e --arg arch "${arch}" --arg sysbox_sha "${sysbox_sha}" --arg init_sha "${init_sha}" \
-    '.targets[] | select(.architecture == $arch) | .sysbox_sha256 == $sysbox_sha and .sysbox_init_sha256 == $init_sha' \
+    '.targets[] | select(.os == "linux" and .architecture == $arch) | .sysbox_sha256 == $sysbox_sha and .sysbox_init_sha256 == $init_sha' \
     "${tmp}/first/build-metadata.json" >/dev/null || fail "binary hashes missing from ${arch} metadata"
 done
 jq -e '.release_fingerprint | type == "string" and test("^[0-9a-f]{64}$")' "${tmp}/first/build-metadata.json" >/dev/null || fail "release fingerprint missing from metadata"
@@ -106,4 +109,5 @@ if validate_release_fingerprint "${tmp}/tampered-metadata.json" >/dev/null 2>&1;
   fail "accepted release fingerprint after target identity changed"
 fi
 
+cmp "${tmp}/first/sysbox_v0.1.0_windows_amd64.tar.gz" "${tmp}/second/sysbox_v0.1.0_windows_amd64.tar.gz"
 echo "Release artifact tests passed."

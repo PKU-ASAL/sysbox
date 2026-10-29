@@ -11,10 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
-
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/workspace"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSchedulerDispatchPersistsCommandBeforeNotification(t *testing.T) {
@@ -26,26 +27,26 @@ func TestSchedulerDispatchPersistsCommandBeforeNotification(t *testing.T) {
 	commands, err := s.apiStore.ListAgentCommands(ctx, "agent")
 	require.NoError(t, err)
 	require.Len(t, commands, 1)
-	require.Equal(t, runCommandID(*run), commands[0].ID)
+	require.Equal(t, controlstore.RunCommandID(*run), commands[0].ID)
 }
 
 func TestPlacementConcurrentBindHasSingleWinner(t *testing.T) {
 	runs := t.TempDir()
-	a := newWorkspaceService(runs, t.TempDir(), "", nil, nil)
-	b := newWorkspaceService(runs, t.TempDir(), "", nil, nil)
+	a := workspace.New(runs, t.TempDir(), "", nil, nil)
+	b := workspace.New(runs, t.TempDir(), "", nil, nil)
 	var wg sync.WaitGroup
 	errs := make(chan error, 2)
 	for _, item := range []struct {
-		s     *WorkspaceService
+		s     *workspace.Catalog
 		agent string
 	}{{a, "host-a"}, {b, "host-b"}} {
 		wg.Add(1)
 		go func(item struct {
-			s     *WorkspaceService
+			s     *workspace.Catalog
 			agent string
 		}) {
 			defer wg.Done()
-			errs <- item.s.bindPlacement("race", item.agent, "agent.v1")
+			errs <- item.s.BindPlacement("race", item.agent, "agent.v1")
 		}(item)
 	}
 	wg.Wait()

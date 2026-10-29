@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/guesttask"
 	"github.com/oslab/sysbox/pkg/persistence"
 )
@@ -36,7 +37,7 @@ func (s *Server) completeConsoleFromHost(ctx context.Context, cmd controlplane.A
 	}
 	sum := sha256.Sum256(raw)
 	hash := hex.EncodeToString(sum[:])
-	repo := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	repo := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
 	if err = repo.ValidateHostStop(ctx, g, hash); err != nil {
 		return err
 	}

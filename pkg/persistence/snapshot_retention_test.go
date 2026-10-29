@@ -3,10 +3,11 @@ package persistence
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/oslab/sysbox/pkg/state"
-	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/state"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSnapshotRetentionPlanRemainsBoundedForLargeCatalog(t *testing.T) {

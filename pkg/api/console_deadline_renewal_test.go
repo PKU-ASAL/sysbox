@@ -12,6 +12,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
 )
@@ -19,7 +20,7 @@ import (
 func TestConsoleRenewalRespectsAbsoluteDeadline(t *testing.T) {
 	for _, seconds := range []int{10, 120} {
 		t.Run((time.Duration(seconds) * time.Second).String(), func(t *testing.T) {
-			eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+			eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 				ctx := context.Background()
 				s := stateDeleteTestServer(t, store)
 				s.agentSvc = nil
@@ -37,7 +38,7 @@ func TestConsoleRenewalRespectsAbsoluteDeadline(t *testing.T) {
 				lease, ok, err := store.AcquireAgentCommandLease(ctx, "agent", cmd.ID, "worker", time.Minute)
 				require.NoError(t, err)
 				require.True(t, ok)
-				repo := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+				repo := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 				session, err := repo.OpenSession(ctx, "agent", "process", "")
 				require.NoError(t, err)
 				grant, err := s.issueCommandGrant(ctx, "agent", cmd.ID, ExecutionGrantRequest{SessionID: session.ID, LeaseOwner: lease.LeaseOwner, Attempt: lease.Attempt, BootID: "guest"})

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
 )
@@ -16,7 +17,7 @@ func TestPostgresSchemaRejectsUnsupportedWithoutMutation(t *testing.T) {
 		t.Run(fmt.Sprint(version), func(t *testing.T) {
 			ctx := context.Background()
 			dsn := isolatedPostgresTestDSN(t)
-			conn, err := pgx.Connect(ctx, dsnWithoutSysboxQuery(dsn))
+			conn, err := pgx.Connect(ctx, controlstore.DsnWithoutSysboxQuery(dsn))
 			require.NoError(t, err)
 			defer conn.Close(ctx)
 			_, err = conn.Exec(ctx, `CREATE TABLE sysbox_runs(id TEXT PRIMARY KEY); INSERT INTO sysbox_runs VALUES('preserved')`)
@@ -27,8 +28,8 @@ func TestPostgresSchemaRejectsUnsupportedWithoutMutation(t *testing.T) {
 				_, err = conn.Exec(ctx, `INSERT INTO sysbox_api_schema_migrations(name,version) VALUES('api',$1)`, version)
 				require.NoError(t, err)
 			}
-			s := &postgresAPIStore{dsn: dsn}
-			_, err = s.poolFor(ctx)
+			s := &controlstore.Postgres{DSN: dsn}
+			_, err = s.PoolFor(ctx)
 			require.ErrorIs(t, err, persistence.ErrUnsupportedVersion)
 			require.ErrorContains(t, err, "rebuild")
 			var tables int
@@ -59,13 +60,13 @@ func TestPostgresSchemaConcurrentFreshOpenAndReopen(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			s := &postgresAPIStore{dsn: dsn}
-			pool, err := s.poolFor(ctx)
+			s := &controlstore.Postgres{DSN: dsn}
+			pool, err := s.PoolFor(ctx)
 			if err == nil {
 				defer pool.Close()
 				var version int
 				version, err = s.SchemaVersion(ctx)
-				if err == nil && version != apiSchemaVersion {
+				if err == nil && version != controlstore.SchemaVersion {
 					err = fmt.Errorf("version %d", version)
 				}
 			}
@@ -77,8 +78,8 @@ func TestPostgresSchemaConcurrentFreshOpenAndReopen(t *testing.T) {
 	for err := range failures {
 		require.NoError(t, err)
 	}
-	s := &postgresAPIStore{dsn: dsn}
-	pool, err := s.poolFor(ctx)
+	s := &controlstore.Postgres{DSN: dsn}
+	pool, err := s.PoolFor(ctx)
 	require.NoError(t, err)
 	defer pool.Close()
 	var count int
@@ -89,13 +90,13 @@ func TestPostgresSchemaConcurrentFreshOpenAndReopen(t *testing.T) {
 func TestPostgresCurrentSchemaDoesNotRepairMissingTable(t *testing.T) {
 	ctx := context.Background()
 	dsn := isolatedPostgresTestDSN(t)
-	s := &postgresAPIStore{dsn: dsn}
-	pool, err := s.poolFor(ctx)
+	s := &controlstore.Postgres{DSN: dsn}
+	pool, err := s.PoolFor(ctx)
 	require.NoError(t, err)
 	defer pool.Close()
 	_, err = pool.Exec(ctx, `DROP TABLE sysbox_execution_authority`)
 	require.NoError(t, err)
-	_, err = (&postgresAPIStore{dsn: dsn}).poolFor(ctx)
+	_, err = (&controlstore.Postgres{DSN: dsn}).PoolFor(ctx)
 	require.ErrorIs(t, err, persistence.ErrUnsupportedVersion)
 	var missing bool
 	require.NoError(t, pool.QueryRow(ctx, `SELECT to_regclass('sysbox_execution_authority') IS NULL`).Scan(&missing))

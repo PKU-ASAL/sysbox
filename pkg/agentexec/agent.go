@@ -18,12 +18,10 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/google/uuid"
-
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
-	"github.com/oslab/sysbox/pkg/persistence"
 )
 
 const (
@@ -430,7 +428,7 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 		// report and the state load are part of the operation the caller timed,
 		// and a wedged state backend here would otherwise burn unbounded time
 		// before the deadline even exists.
-		opCtx, opCancel := guestOperationContext(runCtx, cmd.ExecutionRequest)
+		opCtx, opCancel := controlplane.GuestOperationContext(runCtx, cmd.ExecutionRequest)
 		defer opCancel()
 		if err := r.opts.ReportGuestExecutionStart(opCtx, cmd.Execution.ID); err != nil {
 			emit("failed", "guest execution start report failed", err)
@@ -758,7 +756,7 @@ func renewRunLease(ctx context.Context, opts Options, run *controlplane.Run) err
 	}, &renewed); err != nil {
 		return err
 	}
-	if !persistence.SameRunIncarnation(*run, renewed) || renewed.LeaseOwner != run.LeaseOwner || renewed.Attempt != run.Attempt || renewed.Status != controlplane.RunRunning || !renewed.LeaseUntil.After(time.Now()) {
+	if !controlplane.SameRunIncarnation(*run, renewed) || renewed.LeaseOwner != run.LeaseOwner || renewed.Attempt != run.Attempt || renewed.Status != controlplane.RunRunning || !renewed.LeaseUntil.After(time.Now()) {
 		return fmt.Errorf("run renewal identity or lease mismatch")
 	}
 	return nil
@@ -897,7 +895,7 @@ func (r *commandRunner) executeAssignedHostRun(ctx context.Context, run controlp
 	if err := controlplane.VerifyExecutionGrant(ed25519.PublicKey(key), grant, boot, grant.IssuedAt); err != nil {
 		return nil, err
 	}
-	if err := waitForCanonicalRunStart(ctx, grant.IssuedAt); err != nil {
+	if err := controlplane.WaitForCanonicalRunStart(ctx, grant.IssuedAt); err != nil {
 		return nil, err
 	}
 	if err := controlplane.VerifyExecutionGrant(ed25519.PublicKey(key), grant, boot, time.Now()); err != nil {

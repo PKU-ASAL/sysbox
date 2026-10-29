@@ -2,9 +2,10 @@ package agentexec
 
 import (
 	"context"
+	"testing"
+
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestCancellationRequestDoesNotReportTargetStopped(t *testing.T) {

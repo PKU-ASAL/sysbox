@@ -13,6 +13,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
 )
@@ -24,7 +25,7 @@ func TestDerivedGuestRenewalAuthority(t *testing.T) {
 	require.NoError(t, s.ConfigureExecutionGrantSigner(key))
 	ctx := context.Background()
 	require.NoError(t, s.apiStore.SaveAgent(ctx, controlplane.Agent{ID: "agent", AuthSecret: "secret", SecretHash: agent.SecretHash("secret")}))
-	repo := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	repo := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
 	session, err := repo.OpenSession(ctx, "agent", "worker-process", "")
 	require.NoError(t, err)
 	run := controlplane.Run{ID: "run", Topology: "lab", Revision: "revision", Op: "reset", Target: "sysbox_node.web"}
@@ -156,7 +157,7 @@ func TestDerivedGuestRenewalAuthority(t *testing.T) {
 	w = authorize()
 	require.Equal(t, http.StatusConflict, w.Code, w.Body.String())
 	require.NoError(t, s.apiStore.DeleteAgentCommand(ctx, "agent", cmd.ID))
-	require.ErrorIs(t, s.derivedGuestStorage(ctx, parent).validate(&persistence.CommandRecord{Command: cmd, Retired: true}), persistence.ErrConflict)
+	require.ErrorIs(t, s.derivedGuestStorage(ctx, parent).Validate(&persistence.CommandRecord{Command: cmd, Retired: true}), persistence.ErrConflict)
 	w = post("renew-guest", body, true)
 	require.NotEqual(t, 200, w.Code)
 	w = post("derive-guest", proof, true)
@@ -166,9 +167,9 @@ func TestDerivedGuestRenewalAuthority(t *testing.T) {
 }
 
 func TestRejectedDerivedGrantPersistsClockFloor(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
-		storage := apiExecutionGrantStorage{store: store}
+		storage := controlstore.AuthorityStorage{Store: store}
 		repo := persistence.NewExecutionGrantRepository(storage)
 		session, err := repo.OpenSession(ctx, "agent", "process", "")
 		require.NoError(t, err)
@@ -216,7 +217,7 @@ func TestRejectedDerivedEnvelopePersistsClockFloor(t *testing.T) {
 				want = http.StatusUnauthorized
 			}
 			require.Equal(t, want, w.Code)
-			raw, err = (apiExecutionGrantStorage{store: s.apiStore}).ReadExecutionAuthority(ctx)
+			raw, err = (controlstore.AuthorityStorage{Store: s.apiStore}).ReadExecutionAuthority(ctx)
 			require.NoError(t, err)
 			var ledger struct {
 				ObservedAt time.Time `json:"observed_at"`

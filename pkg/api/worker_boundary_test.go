@@ -6,19 +6,23 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
+
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
 	"github.com/oslab/sysbox/pkg/persistence"
+
+	"net/http/httptest"
+	"testing"
+	"time"
+
 	libvirtprovider "github.com/oslab/sysbox/pkg/provider/libvirt"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/stretchr/testify/require"
-	"net/http/httptest"
-	"testing"
-	"time"
 )
 
 func TestBoundaryWorkerCannotCompleteRunWithoutHost(t *testing.T) {
@@ -109,7 +113,7 @@ func TestBoundaryWorkerCannotReverseHostObservationOrder(t *testing.T) {
 	pub, key, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
 	s.grantHostKeys = map[string]ed25519.PublicKey{"worker": pub}
-	repo := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	repo := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
 	session, err := repo.OpenSession(ctx, "worker", "process", "")
 	require.NoError(t, err)
 	var cpu int64 = 1

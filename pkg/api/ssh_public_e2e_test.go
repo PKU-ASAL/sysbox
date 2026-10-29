@@ -25,8 +25,10 @@ import (
 	"github.com/oslab/sysbox/pkg/agentexec"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
+
 	dockerprovider "github.com/oslab/sysbox/pkg/provider/docker"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/stretchr/testify/require"
@@ -114,7 +116,7 @@ func TestPublicSSHAgentDockerE2E(t *testing.T) {
 	observerConfig.Paths.RunsDir, observerConfig.Paths.WorkspacesDir = runs, data
 	hostPublicFile := wireTestHostObserver(t, host, observerConfig, "owner", []string{"docker"}, hostKey)
 	require.NoError(t, os.MkdirAll(filepath.Join(data, "lab"), 0700))
-	require.NoError(t, api.apiStore.(durablePlacementStore).SaveTopologyPlacement(ctx, topologyPlacement{Topology: "lab", AgentID: "owner", Protocol: controlplane.AgentProtocolVersion, BoundAt: time.Now()}))
+	require.NoError(t, api.apiStore.(controlstore.PlacementStore).SaveTopologyPlacement(ctx, controlstore.Placement{Topology: "lab", AgentID: "owner", Protocol: controlplane.AgentProtocolVersion, BoundAt: time.Now()}))
 	hostCtx, stopHost := context.WithCancel(ctx)
 	hostDone := make(chan error, 1)
 	go func() { hostDone <- host.Serve(hostCtx) }()

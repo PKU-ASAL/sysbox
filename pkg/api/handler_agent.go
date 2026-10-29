@@ -5,12 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/google/uuid"
 	"io"
 	"net/http"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 )
 
@@ -45,7 +46,7 @@ func (s *Server) handleGetAgent(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("agent")
-	if err := validatePathSegment(id, "agent"); err != nil {
+	if err := controlstore.ValidatePathSegment(id, "agent"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -64,7 +65,7 @@ func (s *Server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetAgentByID(w http.ResponseWriter, id string) {
-	if err := validatePathSegment(id, "agent"); err != nil {
+	if err := controlstore.ValidatePathSegment(id, "agent"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -100,11 +101,11 @@ func (s *Server) handleClaimAgentRun(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleClaimAgentRunByID(w http.ResponseWriter, agentID, runID string, expected controlplane.RunClaim) {
-	if err := validatePathSegment(agentID, "agent"); err != nil {
+	if err := controlstore.ValidatePathSegment(agentID, "agent"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if err := validatePathSegment(runID, "id"); err != nil {
+	if err := controlstore.ValidatePathSegment(runID, "id"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -123,7 +124,7 @@ func (s *Server) handleClaimAgentRunByID(w http.ResponseWriter, agentID, runID s
 func (s *Server) handleRenewAgentRun(w http.ResponseWriter, r *http.Request) {
 	agentID := r.PathValue("agent")
 	runID := r.PathValue("id")
-	if err := validatePathSegment(agentID, "agent"); err != nil {
+	if err := controlstore.ValidatePathSegment(agentID, "agent"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -131,7 +132,7 @@ func (s *Server) handleRenewAgentRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, err)
 		return
 	}
-	if err := validatePathSegment(runID, "id"); err != nil {
+	if err := controlstore.ValidatePathSegment(runID, "id"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -161,7 +162,7 @@ func (s *Server) handleRenewAgentRun(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleListAgentProjections(w http.ResponseWriter, r *http.Request) {
 	agentID := r.PathValue("agent")
-	if err := validatePathSegment(agentID, "agent"); err != nil {
+	if err := controlstore.ValidatePathSegment(agentID, "agent"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -184,7 +185,7 @@ func (s *Server) handleListAgentProjections(w http.ResponseWriter, r *http.Reque
 
 func (s *Server) handleListAgentCommandEvents(w http.ResponseWriter, r *http.Request) {
 	agentID := r.PathValue("agent")
-	if err := validatePathSegment(agentID, "agent"); err != nil {
+	if err := controlstore.ValidatePathSegment(agentID, "agent"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -201,7 +202,7 @@ func (s *Server) handleListAgentCommandEvents(w http.ResponseWriter, r *http.Req
 
 func (s *Server) handleListAgentCommands(w http.ResponseWriter, r *http.Request) {
 	agentID := r.PathValue("agent")
-	if err := validatePathSegment(agentID, "agent"); err != nil {
+	if err := controlstore.ValidatePathSegment(agentID, "agent"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -223,11 +224,11 @@ func (s *Server) handleListAgentCommands(w http.ResponseWriter, r *http.Request)
 func (s *Server) handleCancelAgentCommand(w http.ResponseWriter, r *http.Request) {
 	agentID := r.PathValue("agent")
 	commandID := r.PathValue("command")
-	if err := validatePathSegment(agentID, "agent"); err != nil {
+	if err := controlstore.ValidatePathSegment(agentID, "agent"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if err := validatePathSegment(commandID, "command"); err != nil {
+	if err := controlstore.ValidatePathSegment(commandID, "command"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -255,7 +256,7 @@ func (s *Server) handleCancelAgentCommand(w http.ResponseWriter, r *http.Request
 
 func (s *Server) handleGetAgentInventory(w http.ResponseWriter, r *http.Request) {
 	agentID := r.PathValue("agent")
-	if err := validatePathSegment(agentID, "agent"); err != nil {
+	if err := controlstore.ValidatePathSegment(agentID, "agent"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -271,7 +272,7 @@ func (s *Server) handleGetAgentInventory(w http.ResponseWriter, r *http.Request)
 
 func (s *Server) handleAgentCommandStream(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("agent")
-	if err := validatePathSegment(id, "agent"); err != nil {
+	if err := controlstore.ValidatePathSegment(id, "agent"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -293,7 +294,7 @@ func (s *Server) handleAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAgentHeartbeatByID(w http.ResponseWriter, r *http.Request, id string) {
-	if err := validatePathSegment(id, "agent"); err != nil {
+	if err := controlstore.ValidatePathSegment(id, "agent"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}

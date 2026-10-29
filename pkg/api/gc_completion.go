@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 )
 
@@ -23,7 +24,7 @@ func (s *Server) completeGCFromHost(ctx context.Context, receipt controlplane.Si
 	if cmd.Type != "gc_delete" || cmd.AgentID != receipt.Grant.AgentID || cmd.Session == nil || cmd.ActionID != receipt.Grant.ActionID {
 		return persistence.ErrConflict
 	}
-	topology, err := grantCommandTopology(record)
+	topology, err := controlstore.GrantCommandTopology(record)
 	if err != nil {
 		return err
 	}
@@ -43,7 +44,7 @@ func (s *Server) completeGCFromHost(ctx context.Context, receipt controlplane.Si
 		return err
 	}
 	sum := sha256.Sum256(raw)
-	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
 	// Retire command first: stopping authority while a command remains issuable
 	// would permit another epoch before the reservation is released. Exact host
 	// stop validation allows retry after retirement, including after a crash.
@@ -52,12 +53,12 @@ func (s *Server) completeGCFromHost(ctx context.Context, receipt controlplane.Si
 	}
 	var storage persistence.CommandStorage
 	switch store := s.apiStore.(type) {
-	case *localAPIStore:
-		storage = localCommandStorage{store: store}
-	case *sqliteAPIStore:
-		storage = sqliteCommandStorage{store: store}
-	case *postgresAPIStore:
-		storage = postgresCommandStorage{store: store}
+	case *controlstore.Local:
+		storage = controlstore.LocalCommandStorage{Store: store}
+	case *controlstore.SQLite:
+		storage = controlstore.SqliteCommandStorage{Store: store}
+	case *controlstore.Postgres:
+		storage = controlstore.PostgresCommandStorage{Store: store}
 	default:
 		return persistence.ErrUnsupportedVersion
 	}

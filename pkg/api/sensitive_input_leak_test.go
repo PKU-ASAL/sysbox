@@ -6,11 +6,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
-
 	"github.com/oslab/sysbox/pkg/address"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/state"
+	"github.com/stretchr/testify/require"
 )
 
 // leakCanary is a distinctive plaintext passed as an apply input. It must never
@@ -47,7 +47,7 @@ func TestSensitiveInputNeverPersisted(t *testing.T) {
 			Attributes: map[string]any{"image": "alpine"},
 		}},
 	})
-	require.NoError(t, s.saveHealthSnapshot(topology, HealthSnapshot{
+	require.NoError(t, s.saveHealthSnapshot(topology, controlstore.HealthSnapshot{
 		Topology: topology,
 		Observed: time.Now().UTC(),
 		Health:   model.TopologyHealth{Status: model.ResourceHealthHealthy, Healthy: 1},

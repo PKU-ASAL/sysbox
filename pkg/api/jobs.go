@@ -13,9 +13,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/eventstream"
 	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/oslab/sysbox/pkg/workspace"
 )
 
 const (
@@ -28,11 +30,11 @@ type Jobs struct {
 	mu                 sync.RWMutex
 	runs               map[string]*controlplane.Run
 	runsDir            string // root directory for runs, e.g. "runs"
-	store              apiStore
+	store              controlstore.Store
 	recoverInterrupted bool
 	runLeaseTTL        time.Duration
 	expiredPolicy      string
-	logs               *RunLogHub
+	logs               *eventstream.RunLogHub
 	topologyLocks      *TopologyLocks
 }
 
@@ -48,17 +50,17 @@ type runStartOptions struct {
 	SnapshotPath string
 }
 
-func newJobs(runsDir string, store apiStore) *Jobs {
+func newJobs(runsDir string, store controlstore.Store) *Jobs {
 	return newJobsWithRecovery(runsDir, store, true)
 }
 
-func newJobsWithRecovery(runsDir string, store apiStore, recoverInterrupted bool) *Jobs {
+func newJobsWithRecovery(runsDir string, store controlstore.Store, recoverInterrupted bool) *Jobs {
 	return newJobsWithPolicy(runsDir, store, recoverInterrupted, 30*time.Minute, "fail_recoverable")
 }
 
-func newJobsWithPolicy(runsDir string, store apiStore, recoverInterrupted bool, runLeaseTTL time.Duration, expiredPolicy string) *Jobs {
+func newJobsWithPolicy(runsDir string, store controlstore.Store, recoverInterrupted bool, runLeaseTTL time.Duration, expiredPolicy string) *Jobs {
 	if store == nil {
-		store = &localAPIStore{runsDir: runsDir}
+		store = &controlstore.Local{RunsDir: runsDir}
 	}
 	if runLeaseTTL <= 0 {
 		runLeaseTTL = 30 * time.Minute
@@ -73,7 +75,7 @@ func newJobsWithPolicy(runsDir string, store apiStore, recoverInterrupted bool, 
 		recoverInterrupted: recoverInterrupted,
 		runLeaseTTL:        runLeaseTTL,
 		expiredPolicy:      expiredPolicy,
-		logs:               newRunLogHub(),
+		logs:               eventstream.NewRuns(),
 		topologyLocks:      newTopologyLocks(),
 	}
 	j.load()
@@ -99,7 +101,7 @@ func (j *Jobs) load() {
 	}
 	for _, r := range runs {
 		run := r
-		normalizeRunProductFields(&run)
+		controlstore.NormalizeRunProductFields(&run)
 		j.logs.Ensure(run.ID, run.Status.IsTerminal())
 		j.runs[run.ID] = &run
 	}
@@ -155,7 +157,7 @@ func (j *Jobs) loadCheckpoints() {
 
 // persist writes a run record through the configured API store.
 func (j *Jobs) persist(r *controlplane.Run) error {
-	rec := runRecord(*r)
+	rec := workspace.RunRecord(*r)
 	// Sensitive apply inputs are transient: the agent binds var.<name> from the
 	// run it receives in-memory (claim/dispatch), but they must never survive in
 	// the durable run record. Strip them here so a canary/flag plaintext never
@@ -177,18 +179,6 @@ func (j *Jobs) persist(r *controlplane.Run) error {
 	return nil
 }
 
-func runRecord(r controlplane.Run) controlplane.Run {
-	normalizeRunProductFields(&r)
-	return r
-}
-
-func normalizeRunProductFields(r *controlplane.Run) {
-	if r == nil {
-		return
-	}
-	persistence.NormalizeRun(r)
-}
-
 // cloneInputs returns a shallow copy so re-attached transient inputs never
 // alias the in-memory run's map.
 func cloneInputs(in map[string]string) map[string]string {
@@ -203,7 +193,7 @@ func cloneInputs(in map[string]string) map[string]string {
 }
 
 func inputsForRun(cached, current *controlplane.Run) map[string]string {
-	if cached == nil || current == nil || current.Status.IsTerminal() || !persistence.SameRunIncarnation(*cached, *current) {
+	if cached == nil || current == nil || current.Status.IsTerminal() || !controlplane.SameRunIncarnation(*cached, *current) {
 		return nil
 	}
 	return cloneInputs(cached.Inputs)
@@ -274,7 +264,7 @@ func (j *Jobs) forceStart(r *controlplane.Run) error {
 	if r == nil {
 		return persistence.ErrInvalidRecord
 	}
-	normalizeRunProductFields(r)
+	controlstore.NormalizeRunProductFields(r)
 	stored, err := j.store.RestartRun(context.Background(), *r)
 	if err != nil {
 		return err
@@ -316,7 +306,7 @@ func newRun(topology, op string, opts runStartOptions) *controlplane.Run {
 		QueuedAt:     now,
 		StartedAt:    now,
 	}
-	normalizeRunProductFields(r)
+	controlstore.NormalizeRunProductFields(r)
 	r.LeaseOwner = fmt.Sprintf("sysbox-api:%s:%s", r.Op, r.ID)
 	return r
 }
@@ -325,7 +315,7 @@ func (j *Jobs) remember(r *controlplane.Run) {
 	if r == nil {
 		return
 	}
-	snapshot := runRecord(*r)
+	snapshot := workspace.RunRecord(*r)
 	j.mu.Lock()
 	j.runs[r.ID] = &snapshot
 	j.mu.Unlock()
@@ -436,7 +426,7 @@ func (j *Jobs) markExpiredLeases(now time.Time) {
 	if err != nil {
 		return
 	}
-	for _, run := range latestRunsByID(runs) {
+	for _, run := range controlstore.LatestRunsByID(runs) {
 		if run.Status != controlplane.RunRunning || run.LeaseUntil.IsZero() || run.LeaseUntil.After(now) {
 			continue
 		}
@@ -523,38 +513,6 @@ func (j *Jobs) runnableForAgent(agentID string) []*controlplane.Run {
 	return out
 }
 
-func latestRunsByID(runs []controlplane.Run) []controlplane.Run {
-	latest := map[string]controlplane.Run{}
-	for _, run := range runs {
-		prev, ok := latest[run.ID]
-		if !ok || run.QueuedAt.After(prev.QueuedAt) || run.QueuedAt.Equal(prev.QueuedAt) && (runStatusRank(run.Status) >= runStatusRank(prev.Status) || runRecordTime(run).After(runRecordTime(prev))) {
-			latest[run.ID] = run
-		}
-	}
-	out := make([]controlplane.Run, 0, len(latest))
-	for _, run := range latest {
-		out = append(out, run)
-	}
-	return out
-}
-
-func runStatusRank(status controlplane.RunStatus) int {
-	return status.Rank()
-}
-
-func runRecordTime(run controlplane.Run) time.Time {
-	switch {
-	case !run.EndedAt.IsZero():
-		return run.EndedAt
-	case !run.StartedAt.IsZero():
-		return run.StartedAt
-	case !run.AssignedAt.IsZero():
-		return run.AssignedAt
-	default:
-		return run.QueuedAt
-	}
-}
-
 func (j *Jobs) hasRunning(topology string) bool {
 	j.mu.RLock()
 	defer j.mu.RUnlock()
@@ -605,7 +563,7 @@ func (j *Jobs) replace(r *controlplane.Run) error {
 	if r == nil {
 		return persistence.ErrInvalidRecord
 	}
-	normalizeRunProductFields(r)
+	controlstore.NormalizeRunProductFields(r)
 	if r.Status.IsTerminal() {
 		r.Inputs = nil
 	}
@@ -653,11 +611,11 @@ func preferRun(a, b *controlplane.Run) bool {
 	if !a.QueuedAt.Equal(b.QueuedAt) {
 		return a.QueuedAt.After(b.QueuedAt)
 	}
-	ar, br := runStatusRank(a.Status), runStatusRank(b.Status)
+	ar, br := controlstore.RunStatusRank(a.Status), controlstore.RunStatusRank(b.Status)
 	if ar != br {
 		return ar > br
 	}
-	return runRecordTime(*a).After(runRecordTime(*b))
+	return controlstore.RunRecordTime(*a).After(controlstore.RunRecordTime(*b))
 }
 
 func (j *Jobs) list(topology string) []*controlplane.Run {
@@ -693,6 +651,6 @@ func (j *Jobs) recoverableRuns(topology string) []*controlplane.Run {
 	return out
 }
 
-func (j *Jobs) logWriter(runID string) *Broadcaster {
+func (j *Jobs) logWriter(runID string) *eventstream.Broadcaster {
 	return j.logs.Writer(runID)
 }

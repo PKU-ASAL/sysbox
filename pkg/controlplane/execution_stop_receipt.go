@@ -3,8 +3,9 @@ package controlplane
 import (
 	"crypto/ed25519"
 	"encoding/json"
-	"github.com/oslab/sysbox/pkg/substrate"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 // SignedExecutionStopReceipt is produced only by the resource-host gate after

@@ -4,10 +4,11 @@ import (
 	"context"
 	"crypto/ed25519"
 	"fmt"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/hostsupervisor"
 	"os"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/hostsupervisor"
 )
 
 func runGrantedInspection(ctx context.Context, opts Options, cmd controlplane.AgentCommand) error {

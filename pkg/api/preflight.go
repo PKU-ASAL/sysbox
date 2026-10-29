@@ -1,63 +1,19 @@
 package api
 
 import (
-	"fmt"
 	"net/http"
-	"path/filepath"
 
-	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/runtime"
-	"github.com/oslab/sysbox/pkg/substrate"
 )
-
-type preflightCheck struct {
-	Name     string `json:"name"`
-	OK       bool   `json:"ok"`
-	Severity string `json:"severity"` // error | warning | info
-	Message  string `json:"message,omitempty"`
-	Hint     string `json:"hint,omitempty"`
-}
-
-type preflightResult struct {
-	OK     bool             `json:"ok"`
-	Checks []preflightCheck `json:"checks"`
-}
-
-func (r *preflightResult) add(name string, ok bool, severity, message, hint string) {
-	r.Checks = append(r.Checks, preflightCheck{
-		Name:     name,
-		OK:       ok,
-		Severity: severity,
-		Message:  message,
-		Hint:     hint,
-	})
-	if !ok && severity == "error" {
-		r.OK = false
-	}
-}
-
-func (r *preflightResult) err() error {
-	if r.OK {
-		return nil
-	}
-	for _, c := range r.Checks {
-		if !c.OK && c.Severity == "error" {
-			if c.Hint != "" {
-				return fmt.Errorf("preflight failed: %s: %s (%s)", c.Name, c.Message, c.Hint)
-			}
-			return fmt.Errorf("preflight failed: %s: %s", c.Name, c.Message)
-		}
-	}
-	return fmt.Errorf("preflight failed")
-}
 
 // GET /v1/capabilities
 func (s *Server) handleCapabilities(w http.ResponseWriter, _ *http.Request) {
-	res := preflightResult{OK: true}
+	res := runtime.PreflightResult{OK: true}
 	for _, name := range []string{"docker", "firecracker", "libvirt"} {
 		if nodeDriver, err := driver.DefaultRegistry.RequireNode(name); err == nil {
-			addPreflightChecks(&res, nodeDriver.PreflightChecks(false))
+			runtime.AddPreflightChecks(&res, nodeDriver.PreflightChecks(false))
 		}
 	}
 	writeJSON(w, http.StatusOK, s.runtimeCapabilities(res))
@@ -66,7 +22,7 @@ func (s *Server) handleCapabilities(w http.ResponseWriter, _ *http.Request) {
 // GET /v1/topologies/{topology}/preflight
 func (s *Server) handlePreflight(w http.ResponseWriter, r *http.Request) {
 	topology := r.PathValue("topology")
-	if err := validatePathSegment(topology, "topology"); err != nil {
+	if err := controlstore.ValidatePathSegment(topology, "topology"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -78,41 +34,6 @@ func (s *Server) handlePreflight(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, res)
 }
 
-func (s *Server) preflightTopology(topology string) (*preflightResult, error) {
-	return preflightFile(s.workspaceService().HCLFile(topology))
-}
-
-func preflightFile(hclPath string) (*preflightResult, error) {
-	root, err := config.ParseFile(hclPath)
-	if err != nil {
-		return nil, fmt.Errorf("parse config: %w", err)
-	}
-	ctx, err := config.BuildEvalContext(root, filepath.Dir(hclPath))
-	if err != nil {
-		return nil, fmt.Errorf("evaluate config: %w", err)
-	}
-	res := &preflightResult{OK: true}
-
-	needed := map[string]bool{}
-	for _, sb := range root.Substrates {
-		needed[sb.Type] = true
-	}
-
-	for name := range needed {
-		if nodeDriver, err := driver.DefaultRegistry.RequireNode(name); err == nil {
-			addPreflightChecks(res, nodeDriver.PreflightChecks(true))
-		}
-	}
-
-	for _, rb := range root.Resources {
-		addPreflightChecks(res, runtime.ResourcePreflightChecks(rb, ctx))
-	}
-
-	return res, nil
-}
-
-func addPreflightChecks(res *preflightResult, checks []substrate.PreflightCheck) {
-	for _, c := range checks {
-		res.add(c.Name, c.OK, c.Severity, c.Message, c.Hint)
-	}
+func (s *Server) preflightTopology(topology string) (*runtime.PreflightResult, error) {
+	return runtime.PreflightFile(s.workspaceService().HCLFile(topology), driver.DefaultRegistry)
 }

@@ -11,17 +11,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
-
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
 	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
+	"github.com/stretchr/testify/require"
 )
 
 func TestAdoptionFenceRecoversObservedOwnerWithoutInventingSuccess(t *testing.T) {
@@ -35,11 +35,11 @@ func TestAdoptionFenceCancellationClosesUnknownActions(t *testing.T) {
 	}
 }
 func testAdoptionFenceRecovery(t *testing.T, failed bool, mode string) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		s.agentSvc = newAgentService(s)
-		if _, ok := store.(*sqliteAPIStore); ok {
+		if _, ok := store.(*controlstore.SQLite); ok {
 			s.stateBackend += "?topology={topology}"
 		}
 		issuerPub, issuer, err := ed25519.GenerateKey(rand.Reader)
@@ -63,7 +63,7 @@ func testAdoptionFenceRecovery(t *testing.T, failed bool, mode string) {
 		cmd, ok, err := store.AcquireAgentCommandLease(ctx, "host", op.CommandID, "worker", time.Minute)
 		require.NoError(t, err)
 		require.True(t, ok)
-		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		session, err := authority.OpenSession(ctx, "host", "process", "")
 		require.NoError(t, err)
 		grant, err := s.issueCommandGrant(ctx, "host", cmd.ID, ExecutionGrantRequest{SessionID: session.ID, LeaseOwner: cmd.LeaseOwner, Attempt: cmd.Attempt, BootID: "11111111-1111-4111-8111-111111111111"})

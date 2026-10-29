@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
 	"github.com/oslab/sysbox/pkg/persistence"
 )
@@ -33,7 +34,7 @@ func (s *Server) runTaskStop(ctx context.Context, child, parent controlplane.Exe
 	}
 	req := hostsupervisor.RunRequest{RunID: cmd.Run.ID, Topology: cmd.Run.Topology, TopologyUID: cmd.TopologyUID, Revision: cmd.Run.Revision, ActionID: cmd.ActionID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation, Action: action, Target: cmd.Run.Target, ExpectedSerial: cmd.ExpectedSerial}
 	digest, err := req.Digest()
-	if err != nil || digest != parent.Digest || parent.Operation != "run_"+req.Action || validatePathSegment(req.Topology, "topology") != nil || validatePathSegment(req.RunID, "run") != nil {
+	if err != nil || digest != parent.Digest || parent.Operation != "run_"+req.Action || controlstore.ValidatePathSegment(req.Topology, "topology") != nil || controlstore.ValidatePathSegment(req.RunID, "run") != nil {
 		return zero, persistence.ErrConflict
 	}
 	proof, err := controlplane.SignRunExecutionCancellation(s.grantSigner, child, req.RunID, req.Topology)

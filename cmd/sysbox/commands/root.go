@@ -48,6 +48,11 @@ func ExecuteContext(ctx context.Context) error {
 func ExecuteContextWithProviders(ctx context.Context, initialize func(string) error) error {
 	previous := rootCmd.PersistentPreRunE
 	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
+		if cmd == supervisorCmd {
+			if err := prepareSupervisorProcess(); err != nil {
+				return err
+			}
+		}
 		if cmd.Annotations["service-client"] != "true" {
 			path := ""
 			if cmd.Flags().Lookup("config") != nil {

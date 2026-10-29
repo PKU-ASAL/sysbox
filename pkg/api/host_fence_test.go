@@ -15,15 +15,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
-
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
+	"github.com/stretchr/testify/require"
 )
 
 func TestHostFenceAPIRecordsEvidenceWithoutCompletingRun(t *testing.T) {
@@ -53,9 +53,9 @@ func runHostFenceAPIContract(t *testing.T, acceptanceRoot string, releaseCase bo
 	linkedRouter := len(reconcileCase) > 12 && reconcileCase[12]
 	for _, mismatch := range []bool{false, true} {
 		t.Run(fmt.Sprint("changed-incarnation-", mismatch), func(t *testing.T) {
-			eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+			eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 				if acceptanceRoot != "" {
-					if _, ok := store.(*localAPIStore); !ok || mismatch {
+					if _, ok := store.(*controlstore.Local); !ok || mismatch {
 						t.Skip("real VM round uses one local canonical fixture")
 					}
 				}
@@ -235,7 +235,7 @@ func runHostFenceAPIContract(t *testing.T, acceptanceRoot string, releaseCase bo
 					completed.Status = runtime.ActionSucceeded
 					require.NoError(t, repo.CommitActionOutcome(ctx, completed, &runtime.StatePatch{Resource: completed.Resource.String(), Action: completed.Action, Op: runtime.StatePatchDelete}))
 				}
-				authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+				authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 				session, err := authority.OpenSession(ctx, "agent", "process", "")
 				require.NoError(t, err)
 				original := run

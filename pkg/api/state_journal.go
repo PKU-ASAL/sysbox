@@ -8,6 +8,7 @@ import (
 	"sort"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/model"
@@ -23,10 +24,10 @@ type JournalReplayReport struct {
 
 // Legacy checkpoints are diagnostic projections. They cannot authorize state
 // writes or provider effects in the canonical lifecycle repository.
-func replayCheckpointJournal(context.Context, apiStore, string, string, *state.Manager, string) (*JournalReplayReport, error) {
+func replayCheckpointJournal(context.Context, controlstore.Store, string, string, *state.Manager, string) (*JournalReplayReport, error) {
 	return nil, fmt.Errorf("%w: checkpoint patches are not recovery authority; durable action intents are required", runtime.ErrConvergenceUnsupported)
 }
-func reconcileCheckpointJournal(context.Context, apiStore, string, string, *state.Manager, string) (*RecoverReport, error) {
+func reconcileCheckpointJournal(context.Context, controlstore.Store, string, string, *state.Manager, string) (*RecoverReport, error) {
 	return nil, fmt.Errorf("%w: checkpoint-only recovery is disabled; use canonical action recovery", runtime.ErrConvergenceUnsupported)
 }
 
@@ -72,7 +73,7 @@ func (s *Server) loadRecoveryExecution(ctx context.Context, topology, runID stri
 	if err != nil {
 		return nil, err
 	}
-	authority, err := (apiExecutionGrantStorage{store: s.apiStore}).ReadExecutionAuthority(ctx)
+	authority, err := (controlstore.AuthorityStorage{Store: s.apiStore}).ReadExecutionAuthority(ctx)
 	if err != nil && !errors.Is(err, persistence.ErrNotFound) {
 		return nil, err
 	}
@@ -172,7 +173,7 @@ func (s *Server) reconcileCanonicalActions(ctx context.Context, topology, runID 
 	if err != nil {
 		return nil, err
 	}
-	execution.executor.SetActionRepository(&recoveryActionRepository{ActionRepository: execution.repository, store: s.apiStore, run: *execution.run, localRecovery: true})
+	execution.executor.SetActionRepository(&controlstore.RecoveryRepository{ActionRepository: execution.repository, Store: s.apiStore, Run: *execution.run, LocalRecovery: true})
 	if err := execution.executor.RecoverActions(ctx, execution.plan); err != nil {
 		return nil, err
 	}
@@ -219,7 +220,7 @@ func (s *Server) cleanupCanonicalActions(ctx context.Context, topology, runID st
 	}
 	// A known complete effect can be restored first. Arbitrary uncertain guest
 	// execution remains blocked by the same runner and is never replayed.
-	execution.executor.SetActionRepository(&recoveryActionRepository{ActionRepository: execution.repository, store: s.apiStore, run: *execution.run, localRecovery: true})
+	execution.executor.SetActionRepository(&controlstore.RecoveryRepository{ActionRepository: execution.repository, Store: s.apiStore, Run: *execution.run, LocalRecovery: true})
 	if err := execution.executor.RecoverActions(ctx, execution.plan); err != nil {
 		return nil, err
 	}

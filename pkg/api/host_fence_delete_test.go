@@ -15,19 +15,19 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
-
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
 	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/stretchr/testify/require"
 )
 
-func checkFenceDeleteClosure(t *testing.T, s *Server, store apiStore, fence persistence.HostFenceRecord, acceptanceRoot string) {
+func checkFenceDeleteClosure(t *testing.T, s *Server, store controlstore.Store, fence persistence.HostFenceRecord, acceptanceRoot string) {
 	t.Helper()
 	ctx := context.Background()
 	path := "/v1/topologies/lab/host-fences/" + fence.Request.ID
-	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+	authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 	repo, err := s.actionRepository("lab")
 	require.NoError(t, err)
 	before, actions, err := repo.LoadStateAndActions(ctx, "lab")

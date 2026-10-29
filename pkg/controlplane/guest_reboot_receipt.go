@@ -2,8 +2,9 @@ package controlplane
 
 import (
 	"crypto/ed25519"
-	"github.com/oslab/sysbox/pkg/substrate"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 // The resource host verifies canonical provider UID/generation before reading

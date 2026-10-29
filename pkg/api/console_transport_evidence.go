@@ -1,8 +1,9 @@
 package api
 
 import (
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
 )
 
 // Closing a websocket is not evidence that a remote process stopped. Preserve

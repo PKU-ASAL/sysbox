@@ -5,9 +5,6 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/hostsupervisor"
-	"github.com/stretchr/testify/require"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +12,10 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/hostsupervisor"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRemotePowerRequiresSupervisorWithoutStateAccess(t *testing.T) {
@@ -25,13 +26,10 @@ func TestRemotePowerRequiresSupervisorWithoutStateAccess(t *testing.T) {
 }
 
 func TestRemotePowerRunnerNeverLoadsLocalProviderState(t *testing.T) {
-	dir := t.TempDir()
-	bridge := &nodeOperationProofBridge{LocalBridge: NewLocalBridge(LocalOptions{Topology: "lab", RunsDir: dir, StatePath: filepath.Join(dir, "state.json")})}
 	runner := newCommandRunner(Options{})
 	cmd := controlplane.AgentCommand{ID: "command", Type: "node_operation", Operation: controlplane.NodeOperation{ID: "op", Topology: "lab", Node: "web", Operation: "pause"}}
 	var terminal controlplane.AgentCommandEvent
 	runner.Execute(context.Background(), &cmd, func(event controlplane.AgentCommandEvent) { terminal = event })
-	require.Zero(t, bridge.stateReads)
 	require.Equal(t, "failed", terminal.Status)
 	require.Contains(t, terminal.Error, "host supervisor socket")
 }

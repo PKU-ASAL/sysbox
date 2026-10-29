@@ -13,6 +13,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -52,7 +53,7 @@ func TestPublicSSHAdmissionProducesIssuableGuestCommand(t *testing.T) {
 	require.NoError(t, err)
 	grant, err := s.sourceGrant(context.Background(), "host-a", ExecutionGrantRequest{SessionID: inventory.SessionID, LeaseOwner: cmd.LeaseOwner, Attempt: cmd.Attempt, BootID: "guest"}, &persistence.CommandRecord{Command: *cmd})
 	require.NoError(t, err)
-	issued, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).Issue(context.Background(), grant, time.Minute)
+	issued, err := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore}).Issue(context.Background(), grant, time.Minute)
 	require.NoError(t, err)
 	hostPublic, hostPrivate, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)

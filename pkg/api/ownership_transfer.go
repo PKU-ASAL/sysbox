@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
@@ -40,10 +41,10 @@ func (s *Server) prepareOwnershipTransfer(ctx context.Context, p controlplane.Ow
 	if _, err = s.beginOwnershipMaintenance(ctx, p); err != nil {
 		return zero, err
 	}
-	if err = s.workspaceService().ensureTopologyQuiescent(ctx, p.TargetTopology); err != nil {
+	if err = s.workspaceService().EnsureTopologyQuiescent(ctx, p.TargetTopology); err != nil {
 		return zero, err
 	}
-	if err = s.workspaceService().ensureTopologyQuiescent(ctx, p.SourceTopology); err != nil {
+	if err = s.workspaceService().EnsureTopologyQuiescent(ctx, p.SourceTopology); err != nil {
 		return zero, err
 	}
 	proof, err := s.commitOwnershipRetirement(ctx, p.SourceTopology, p)
@@ -72,7 +73,7 @@ func (s *Server) handleOwnershipTransfer(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if prior != nil {
-		if prior.Adoption == nil || prior.Adoption.Transfer == nil || gcEvidenceHash(prior.Adoption.Transfer.Plan) != gcEvidenceHash(p) {
+		if prior.Adoption == nil || prior.Adoption.Transfer == nil || controlstore.GcEvidenceHash(prior.Adoption.Transfer.Plan) != controlstore.GcEvidenceHash(p) {
 			writeError(w, 409, persistence.ErrConflict)
 			return
 		}
@@ -80,7 +81,7 @@ func (s *Server) handleOwnershipTransfer(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	for _, topology := range []string{p.SourceTopology, p.TargetTopology} {
-		placement, err := s.workspaceService().loadPlacement(topology)
+		placement, err := s.workspaceService().LoadPlacement(topology)
 		if err != nil || placement == nil || placement.AgentID != p.AgentID {
 			writeError(w, 409, fmt.Errorf("transfer requires same enrolled owning host"))
 			return
@@ -92,7 +93,7 @@ func (s *Server) handleOwnershipTransfer(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	reserved, err := target.ReadOwnershipTarget(r.Context(), p.TargetTopology, p.ID)
-	if err != nil || reserved.Aborted || reserved.DispositionHash != "" || reserved.Preparation == nil || gcEvidenceHash(reserved.Plan) != gcEvidenceHash(p) {
+	if err != nil || reserved.Aborted || reserved.DispositionHash != "" || reserved.Preparation == nil || controlstore.GcEvidenceHash(reserved.Plan) != controlstore.GcEvidenceHash(p) {
 		writeError(w, 409, fmt.Errorf("host ownership preparation required before retirement"))
 		return
 	}
@@ -125,7 +126,7 @@ func (s *Server) handleBeginOwnershipPreparation(w http.ResponseWriter, r *http.
 		return
 	}
 	for _, name := range []string{p.SourceTopology, p.TargetTopology} {
-		placement, err := s.workspaceService().loadPlacement(name)
+		placement, err := s.workspaceService().LoadPlacement(name)
 		if err != nil || placement == nil || placement.AgentID != p.AgentID {
 			writeError(w, 409, persistence.ErrConflict)
 			return
@@ -154,7 +155,7 @@ func (s *Server) handleBeginOwnershipPreparation(w http.ResponseWriter, r *http.
 		writeError(w, 409, err)
 		return
 	}
-	if err = s.workspaceService().ensureTopologyQuiescent(r.Context(), p.SourceTopology); err != nil {
+	if err = s.workspaceService().EnsureTopologyQuiescent(r.Context(), p.SourceTopology); err != nil {
 		writeJSON(w, 202, map[string]any{"status": "waiting_for_stop", "plan": p, "barrier": barrier})
 		return
 	}
@@ -180,18 +181,18 @@ func (s *Server) handleAuthorizeOwnershipPreparation(w http.ResponseWriter, r *h
 		return
 	}
 	v, err := target.ReadOwnershipTarget(r.Context(), p.TargetTopology, p.ID)
-	if err != nil || v.Aborted || v.DispositionHash != "" || v.CompletedHash != "" || gcEvidenceHash(v.Plan) != gcEvidenceHash(p) {
+	if err != nil || v.Aborted || v.DispositionHash != "" || v.CompletedHash != "" || controlstore.GcEvidenceHash(v.Plan) != controlstore.GcEvidenceHash(p) {
 		writeError(w, 409, persistence.ErrConflict)
 		return
 	}
-	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
 	barrier, err := authority.InspectMaintenance(r.Context(), p.ID)
 	digest, _ := p.Digest()
 	if err != nil || barrier.Released || barrier.RequestDigest != digest || barrier.TopologyUID != p.Source.TopologyUID {
 		writeError(w, 409, persistence.ErrConflict)
 		return
 	}
-	if err = s.workspaceService().ensureTopologyQuiescent(r.Context(), p.SourceTopology); err != nil {
+	if err = s.workspaceService().EnsureTopologyQuiescent(r.Context(), p.SourceTopology); err != nil {
 		writeError(w, 409, err)
 		return
 	}
@@ -207,7 +208,7 @@ func (s *Server) handleRecordOwnershipPreparation(w http.ResponseWriter, r *http
 		writeError(w, 409, persistence.ErrConflict)
 		return
 	}
-	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
 	barrier, err := authority.InspectMaintenance(r.Context(), proof.Plan.ID)
 	digest, _ := proof.Plan.Digest()
 	if err != nil || barrier.Released || barrier.Epoch != proof.SourceEpoch || barrier.RequestDigest != digest || proof.ObservedAt.Before(barrier.CreatedAt) || proof.ObservedAt.After(time.Now().UTC()) {
@@ -244,7 +245,7 @@ func (s *Server) handleAbortOwnershipTransfer(w http.ResponseWriter, r *http.Req
 		writeError(w, 409, err)
 		return
 	}
-	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
 	barrier, err := authority.InspectMaintenance(r.Context(), plan.ID)
 	if err == nil {
 		digest, _ := plan.Digest()

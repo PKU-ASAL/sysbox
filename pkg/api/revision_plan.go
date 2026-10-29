@@ -2,9 +2,10 @@ package api
 
 import (
 	"fmt"
-	"github.com/oslab/sysbox/pkg/address"
 	"net/http"
 
+	"github.com/oslab/sysbox/pkg/address"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/runtime"
 )
@@ -13,7 +14,7 @@ import (
 // does not admit execution or claim to have performed live provider refresh.
 func (s *Server) handleRevisionPlan(w http.ResponseWriter, r *http.Request) {
 	topology := r.PathValue("topology")
-	if err := validatePathSegment(topology, "topology"); err != nil {
+	if err := controlstore.ValidatePathSegment(topology, "topology"); err != nil {
 		writeError(w, 400, err)
 		return
 	}
@@ -23,7 +24,7 @@ func (s *Server) handleRevisionPlan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, err)
 		return
 	}
-	if !globalRevisionPattern.MatchString(request.Revision) {
+	if !controlstore.GlobalRevisionPattern.MatchString(request.Revision) {
 		writeError(w, 400, fmt.Errorf("plan requires an immutable revision"))
 		return
 	}

@@ -3,11 +3,13 @@ package api
 import (
 	"context"
 	"errors"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/stretchr/testify/require"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/stretchr/testify/require"
 )
 
 func nodeDispatchFixture() (controlplane.NodeOperation, controlplane.AgentCommand) {
@@ -20,7 +22,7 @@ func nodeDispatchFixture() (controlplane.NodeOperation, controlplane.AgentComman
 }
 
 func TestNodeOperationDispatchIsDurableBeforeDelivery(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, s controlstore.Store) {
 		ctx := context.Background()
 		op, cmd := nodeDispatchFixture()
 		require.NoError(t, s.CreateNodeOperationDispatch(ctx, op, cmd))
@@ -48,7 +50,7 @@ func TestNodeOperationDispatchIsDurableBeforeDelivery(t *testing.T) {
 }
 
 type failNodeDispatch struct {
-	apiStore
+	controlstore.Store
 	failure error
 }
 
@@ -58,13 +60,13 @@ func (s failNodeDispatch) CreateNodeOperationDispatch(context.Context, controlpl
 
 func TestNodeOperationWakeupFollowsAtomicCommit(t *testing.T) {
 	root := t.TempDir()
-	store := &localAPIStore{runsDir: root}
+	store := &controlstore.Local{RunsDir: root}
 	op, _ := nodeDispatchFixture()
 	wakes := 0
 	service := &NodeOperationService{operations: newNodeOperationStore(store), wakeCommand: func(agent string, cmd controlplane.AgentCommand) error {
 		wakes++
 		require.Equal(t, "topology-uid", cmd.TopologyUID)
-		reopened := &localAPIStore{runsDir: root}
+		reopened := &controlstore.Local{RunsDir: root}
 		saved, err := reopened.GetNodeOperation(context.Background(), op.ID)
 		require.NoError(t, err)
 		require.Equal(t, cmd.ID, saved.CommandID)
@@ -77,7 +79,7 @@ func TestNodeOperationWakeupFollowsAtomicCommit(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, wakes)
 	failure := errors.New("commit rejected")
-	service.operations = newNodeOperationStore(failNodeDispatch{apiStore: store, failure: failure})
+	service.operations = newNodeOperationStore(failNodeDispatch{Store: store, failure: failure})
 	op.ID = "other"
 	_, err = service.enqueue(context.Background(), "topology-uid", op)
 	require.ErrorIs(t, err, failure)
@@ -85,7 +87,7 @@ func TestNodeOperationWakeupFollowsAtomicCommit(t *testing.T) {
 }
 
 func TestNodeOperationEnqueueRejectsMissingTopologyProof(t *testing.T) {
-	s := &NodeOperationService{operations: newNodeOperationStore(&localAPIStore{runsDir: t.TempDir()})}
+	s := &NodeOperationService{operations: newNodeOperationStore(&controlstore.Local{RunsDir: t.TempDir()})}
 	op, _ := nodeDispatchFixture()
 	_, err := s.enqueue(context.Background(), "", op)
 	require.ErrorContains(t, err, "ownership proof")
@@ -95,7 +97,7 @@ func TestNodeOperationEnqueueRejectsMissingTopologyProof(t *testing.T) {
 }
 
 func TestNodeOperationDispatchConcurrentCreationHasOneWinner(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, s controlstore.Store) {
 		op, cmd := nodeDispatchFixture()
 		results := make(chan error, 2)
 		var wg sync.WaitGroup
@@ -119,7 +121,7 @@ func TestNodeOperationDispatchConcurrentCreationHasOneWinner(t *testing.T) {
 }
 
 func TestNodeOperationDispatchConflictRollsBackOperation(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, s controlstore.Store) {
 		ctx := context.Background()
 		op, cmd := nodeDispatchFixture()
 		require.NoError(t, s.SaveAgentCommand(ctx, cmd))

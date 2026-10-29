@@ -4,13 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/gofrs/flock"
-	"github.com/google/uuid"
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"net/http"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/gofrs/flock"
+	"github.com/google/uuid"
+	"github.com/oslab/sysbox/pkg/controlplane"
 )
 
 type executionSessionRecord struct {

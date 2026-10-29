@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 )
 
@@ -39,7 +40,7 @@ func (s *AgentService) reconcileConsoleAuthority(ctx context.Context) error {
 	return errors.Join(failures...)
 }
 
-func retireConsoleDeliveries(ctx context.Context, store apiStore, sess controlplane.ConsoleSession) error {
+func retireConsoleDeliveries(ctx context.Context, store controlstore.Store, sess controlplane.ConsoleSession) error {
 	if (!sess.NotStarted && (!sess.TerminationConfirmed || sess.HostCompletion == "")) || sess.CommandID == "" {
 		return nil
 	}

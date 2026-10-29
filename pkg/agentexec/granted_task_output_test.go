@@ -39,15 +39,15 @@ func (c *pagedTaskOutput) ReadExecutionOutput(_ context.Context, _ substrate.Exe
 	return out, nil
 }
 func TestGrantedTaskReadsOutputInBoundedPages(t *testing.T) {
-	for _, size := range []int{0, 64 << 10, 150000, guestOutputLimit, guestOutputLimit + 100} {
+	for _, size := range []int{0, 64 << 10, 150000, controlplane.GuestOutputLimit, controlplane.GuestOutputLimit + 100} {
 		t.Run(fmt.Sprint(size), func(t *testing.T) {
 			client := &pagedTaskOutput{streams: map[string]string{"stdout": strings.Repeat("x", size), "stderr": "error"}, cursors: map[string][]int64{}}
 			grant := controlplane.SignedExecutionGrant{IssuedAt: time.Now(), Grant: controlplane.ExecutionGrant{ExpiresAt: time.Now().Add(time.Minute)}}
 			got, err := awaitGrantedTask(context.Background(), Options{}, client, substrate.ExecutionHandle{}, "", "", grant, nil)
 			require.NoError(t, err)
-			require.Equal(t, strings.Repeat("x", min(size, guestOutputLimit)), got.Stdout)
+			require.Equal(t, strings.Repeat("x", min(size, controlplane.GuestOutputLimit)), got.Stdout)
 			require.Equal(t, "error", got.Stderr)
-			require.Equal(t, size > guestOutputLimit, got.StdoutTruncated)
+			require.Equal(t, size > controlplane.GuestOutputLimit, got.StdoutTruncated)
 			require.True(t, got.StderrTruncated, "guest-side truncation survives collection")
 			require.Equal(t, 7, got.ExitCode)
 			for i, cursor := range client.cursors["stdout"] {

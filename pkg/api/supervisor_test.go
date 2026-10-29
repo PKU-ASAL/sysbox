@@ -10,14 +10,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
-
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/state"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSupervisorScanWritesHealthSnapshot(t *testing.T) {
@@ -44,7 +44,7 @@ func TestSupervisorScanWritesHealthSnapshot(t *testing.T) {
 
 	raw, err := os.ReadFile(filepath.Join(runs, "mixed", "health.json"))
 	require.NoError(t, err)
-	var snap HealthSnapshot
+	var snap controlstore.HealthSnapshot
 	require.NoError(t, json.Unmarshal(raw, &snap))
 	require.Equal(t, "mixed", snap.Topology)
 	require.Equal(t, model.ResourceHealthHealthy, snap.Health.Status)
@@ -86,7 +86,7 @@ func TestSupervisorScanUsesAgentProjectionForNodeHealth(t *testing.T) {
 			Status:   model.ResourceHealthHealthy,
 		}},
 	}
-	session, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).OpenSession(context.Background(), "agent-1", "supervisor-process", "")
+	session, err := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore}).OpenSession(context.Background(), "agent-1", "supervisor-process", "")
 	require.NoError(t, err)
 	proj.SessionID = session.ID
 	proj.Sequence = 1
@@ -97,7 +97,7 @@ func TestSupervisorScanUsesAgentProjectionForNodeHealth(t *testing.T) {
 
 	raw, err := os.ReadFile(filepath.Join(runs, "web", "health.json"))
 	require.NoError(t, err)
-	var snap HealthSnapshot
+	var snap controlstore.HealthSnapshot
 	require.NoError(t, json.Unmarshal(raw, &snap))
 	require.Equal(t, model.ResourceHealthHealthy, snap.Health.Status)
 }
@@ -107,7 +107,7 @@ func TestGetTopologyHealthCached(t *testing.T) {
 	runs := filepath.Join(dir, "runs")
 	workspaces := filepath.Join(dir, "workspaces")
 	s := NewServer(runs, workspaces)
-	snap := HealthSnapshot{
+	snap := controlstore.HealthSnapshot{
 		Topology: "mixed",
 		Observed: time.Now().UTC(),
 		Health: model.TopologyHealth{
@@ -122,7 +122,7 @@ func TestGetTopologyHealthCached(t *testing.T) {
 	s.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	var body HealthSnapshot
+	var body controlstore.HealthSnapshot
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	require.Equal(t, "mixed", body.Topology)
 	require.Equal(t, model.ResourceHealthHealthy, body.Health.Status)

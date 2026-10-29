@@ -3,6 +3,7 @@ package firecracker
 import (
 	"context"
 	"fmt"
+
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 

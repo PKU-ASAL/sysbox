@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/oslab/sysbox/pkg/driver"
+
+	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/stretchr/testify/require"
 )
 
@@ -30,7 +33,7 @@ resource "sysbox_image" "vm" {
 	res, err := s.preflightTopology("missing-rootfs")
 	require.NoError(t, err)
 	require.False(t, res.OK)
-	require.NotNil(t, res.err())
+	require.NotNil(t, res.Err())
 
 	var found bool
 	for _, c := range res.Checks {
@@ -82,7 +85,7 @@ func TestPreflightResolvesBundledArtifactRelativeToRevision(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "kernel.bin"), []byte("kernel"), 0600))
 	path := filepath.Join(dir, "field.sysbox.hcl")
 	require.NoError(t, os.WriteFile(path, []byte("resource \"sysbox_kernel\" \"kernel\" {\n substrate = \"firecracker\"\n source = \"kernel.bin\"\n architecture = \"amd64\"\n}"), 0600))
-	result, err := preflightFile(path)
+	result, err := runtime.PreflightFile(path, driver.DefaultRegistry)
 	require.NoError(t, err)
-	require.NoError(t, result.err())
+	require.NoError(t, result.Err())
 }

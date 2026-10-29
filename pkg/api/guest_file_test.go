@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
-
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGuestFilePutValidatesPathModeDigestAndStagesPrivately(t *testing.T) {
@@ -156,7 +156,7 @@ func TestGuestFileOperationReportsAreIdempotentAndOrdered(t *testing.T) {
 }
 
 func TestCancelledGuestFileOperationRejectsLateCompletion(t *testing.T) {
-	store := &localAPIStore{runsDir: t.TempDir()}
+	store := &controlstore.Local{RunsDir: t.TempDir()}
 	svc := newGuestFileOperationService(store)
 	require.NoError(t, store.SaveGuestFileOperation(context.Background(), controlplane.GuestFileOperation{ID: "op", Version: 1, Topology: "lab", Status: controlplane.GuestExecutionQueued}))
 	_, err := svc.Cancel(context.Background(), "op")
@@ -198,7 +198,7 @@ func TestRunningGuestFileWithoutGrantCanCancelWithoutEffect(t *testing.T) {
 }
 
 func TestCancelIntentBlocksConcurrentStartAndCompletion(t *testing.T) {
-	store := &localAPIStore{runsDir: t.TempDir()}
+	store := &controlstore.Local{RunsDir: t.TempDir()}
 	svc := newGuestFileOperationService(store)
 	require.NoError(t, store.SaveGuestFileOperation(context.Background(), controlplane.GuestFileOperation{ID: "op", Version: 1, Topology: "lab", Status: controlplane.GuestExecutionQueued}))
 	op, err := svc.RequestCancel(context.Background(), "op")

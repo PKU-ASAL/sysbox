@@ -1,10 +1,12 @@
 package api
 
 import (
-	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/stretchr/testify/require"
 )
 
 func TestLocalInventorySkipsOrdinaryFilesAtWildcardDirectoryLevel(t *testing.T) {
@@ -13,9 +15,9 @@ func TestLocalInventorySkipsOrdinaryFilesAtWildcardDirectoryLevel(t *testing.T) 
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "lab", "sessions"), 0700))
 	expected := filepath.Join(root, "lab", "sessions", "session.json")
 	require.NoError(t, os.WriteFile(expected, []byte("{}"), 0600))
-	files, err := localRecordPaths(filepath.Join(root, "*", "sessions", "*.json"))
+	files, err := controlstore.LocalRecordPaths(filepath.Join(root, "*", "sessions", "*.json"))
 	require.NoError(t, err)
 	require.Equal(t, []string{expected}, files)
-	_, err = localRecordPaths(filepath.Join(root, "field.sysbox.hcl", "*.json"))
+	_, err = controlstore.LocalRecordPaths(filepath.Join(root, "field.sysbox.hcl", "*.json"))
 	require.Error(t, err, "explicit non-directory remains invalid")
 }

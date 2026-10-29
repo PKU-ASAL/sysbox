@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"github.com/oslab/sysbox/pkg/address"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -14,13 +13,14 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/stretchr/testify/require"
-
+	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/state"
+	"github.com/stretchr/testify/require"
 )
 
 func TestAgentRegistry(t *testing.T) {
@@ -287,7 +287,7 @@ func TestAgentProtocolMismatchRejected(t *testing.T) {
 }
 
 func TestAgentCommandLeaseExpiresAndRedelivers(t *testing.T) {
-	store := &localAPIStore{runsDir: t.TempDir()}
+	store := &controlstore.Local{RunsDir: t.TempDir()}
 	ctx := context.Background()
 	cmd := controlplane.AgentCommand{
 		ID:        "cmd-1",
@@ -313,7 +313,7 @@ func TestAgentCommandLeaseExpiresAndRedelivers(t *testing.T) {
 	expired.LeaseUntil = time.Now().Add(-time.Second)
 	raw, err := persistence.EncodeCommandRecord(persistence.CommandRecord{Command: expired})
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(store.runsDir, "_agents", "host-a", "commands", "cmd-1.json"), raw, 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(store.RunsDir, "_agents", "host-a", "commands", "cmd-1.json"), raw, 0600))
 	leased, ok, err = store.AcquireAgentCommandLease(ctx, "host-a", "cmd-1", "owner-2", time.Hour)
 	require.NoError(t, err)
 	require.True(t, ok)

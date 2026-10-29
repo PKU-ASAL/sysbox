@@ -2,11 +2,12 @@ package api
 
 import (
 	"context"
+	"testing"
+	"time"
+
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
-	"testing"
-	"time"
 )
 
 func TestGuestActivityBlocksMetadataDeleteAndOldCleanupReceipt(t *testing.T) {

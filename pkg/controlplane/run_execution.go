@@ -5,8 +5,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/oslab/sysbox/pkg/address"
 	"strings"
+
+	"github.com/oslab/sysbox/pkg/address"
 )
 
 type RunExecutionRequest struct {

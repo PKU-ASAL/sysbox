@@ -10,44 +10,45 @@ import (
 
 	"github.com/gofrs/flock"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
 )
 
-func stateDeleteTestServer(t *testing.T, store apiStore) *Server {
+func stateDeleteTestServer(t *testing.T, store controlstore.Store) *Server {
 	t.Helper()
 	s := NewServer(t.TempDir(), t.TempDir())
 	// Each fixture and cold reconstruction owns its cached lifecycle pools.
 	// Closing only the API store leaves these connections alive across tests.
 	t.Cleanup(func() {
-		s.repositoryMu.Lock()
-		defer s.repositoryMu.Unlock()
-		for _, repo := range s.repositories {
+		s.RepositoryMu.Lock()
+		defer s.RepositoryMu.Unlock()
+		for _, repo := range s.Repositories {
 			require.NoError(t, repo.Close())
 		}
-		s.repositories = nil
+		s.Repositories = nil
 	})
 	s.apiStore, s.workspaces = store, nil
 	switch typed := store.(type) {
-	case *localAPIStore:
-		s.runsDir = typed.runsDir
-	case *sqliteAPIStore:
-		s.stateBackend = "sqlite://" + typed.dbPath
-	case *postgresAPIStore:
-		s.stateBackend = typed.dsn
+	case *controlstore.Local:
+		s.runsDir = typed.RunsDir
+	case *controlstore.SQLite:
+		s.stateBackend = "sqlite://" + typed.DbPath
+	case *controlstore.Postgres:
+		s.stateBackend = typed.DSN
 	}
 	return s
 }
 
 func TestMetadataDeleteRequiresAllExecutionStopsAndNoMaintenance(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		repo, err := s.actionRepository("lab")
 		require.NoError(t, err)
 		before, err := repo.LoadState(ctx, "lab")
 		require.NoError(t, err)
-		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		session, err := authority.OpenSession(ctx, "agent", "incarnation", "")
 		require.NoError(t, err)
 		grant, err := authority.Issue(ctx, controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: before.TopologyUID}, AgentID: "agent", SessionID: session.ID, ActionID: "failed-run", CommandID: "command", Attempt: 1, Operation: "run_apply", Digest: "digest", TargetBootID: "boot"}, time.Minute)
@@ -85,8 +86,8 @@ func TestMetadataDeleteRequiresAllExecutionStopsAndNoMaintenance(t *testing.T) {
 }
 
 func TestMetadataDeleteLocksInitiallyAbsentAuthorityThroughCommit(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
-		if _, ok := store.(*sqliteAPIStore); ok {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
+		if _, ok := store.(*controlstore.SQLite); ok {
 			t.Skip("SQLite uses one BEGIN IMMEDIATE lock for both records")
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -99,13 +100,13 @@ func TestMetadataDeleteLocksInitiallyAbsentAuthorityThroughCommit(t *testing.T) 
 		var release func()
 		var awaitBlocked func()
 		switch typed := store.(type) {
-		case *localAPIStore:
-			blocker := flock.New(filepath.Join(typed.runsDir, "lab", "state.json.lifecycle", "lab.lock"))
+		case *controlstore.Local:
+			blocker := flock.New(filepath.Join(typed.RunsDir, "lab", "state.json.lifecycle", "lab.lock"))
 			require.NoError(t, blocker.Lock())
 			defer blocker.Close()
 			release = func() { require.NoError(t, blocker.Unlock()) }
 			awaitBlocked = func() {
-				probe := flock.New(filepath.Join(typed.runsDir, "_execution-authority", "authority.lock"))
+				probe := flock.New(filepath.Join(typed.RunsDir, "_execution-authority", "authority.lock"))
 				defer probe.Close()
 				require.Eventually(t, func() bool {
 					held, err := probe.TryLock()
@@ -118,8 +119,8 @@ func TestMetadataDeleteLocksInitiallyAbsentAuthorityThroughCommit(t *testing.T) 
 					return !held
 				}, time.Second, time.Millisecond)
 			}
-		case *postgresAPIStore:
-			pool, err := typed.poolFor(ctx)
+		case *controlstore.Postgres:
+			pool, err := typed.PoolFor(ctx)
 			require.NoError(t, err)
 			blocker, err := pool.Begin(ctx)
 			require.NoError(t, err)
@@ -139,7 +140,7 @@ func TestMetadataDeleteLocksInitiallyAbsentAuthorityThroughCommit(t *testing.T) 
 		go func() { done <- s.deleteStateWithAuthority(ctx, "lab", before.Meta.Serial, before.TopologyUID) }()
 		awaitBlocked()
 		limited, cancelAdmission := context.WithTimeout(ctx, 40*time.Millisecond)
-		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		_, err = authority.OpenSession(limited, "agent", "first-incarnation", "")
 		cancelAdmission()
 		require.Error(t, err, "first authority creation cannot pass a deletion waiting for lifecycle commit")

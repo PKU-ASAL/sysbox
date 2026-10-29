@@ -9,12 +9,13 @@ import (
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 )
 
 func (s *Server) handleAdoptionInspection(w http.ResponseWriter, r *http.Request) {
 	topology, key := r.PathValue("topology"), r.Header.Get("Idempotency-Key")
-	if err := validatePathSegment(topology, "topology"); err != nil {
+	if err := controlstore.ValidatePathSegment(topology, "topology"); err != nil {
 		writeError(w, 400, err)
 		return
 	}
@@ -80,7 +81,7 @@ func (s *Server) handleAdoptionInspection(w http.ResponseWriter, r *http.Request
 // provider payload. The provider will compare the same fingerprint at mutation.
 func (s *Server) handleConfirmAdoptionInspection(w http.ResponseWriter, r *http.Request) {
 	topology, id, key := r.PathValue("topology"), r.PathValue("inspection"), r.Header.Get("Idempotency-Key")
-	if validatePathSegment(topology, "topology") != nil || validatePathSegment(id, "inspection") != nil || key == "" || len(key) > 128 {
+	if controlstore.ValidatePathSegment(topology, "topology") != nil || controlstore.ValidatePathSegment(id, "inspection") != nil || key == "" || len(key) > 128 {
 		writeError(w, 400, fmt.Errorf("valid topology, inspection and Idempotency-Key required"))
 		return
 	}

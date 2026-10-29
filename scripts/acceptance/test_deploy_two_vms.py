@@ -22,7 +22,7 @@ class DeploymentTests(unittest.TestCase):
         from pathlib import Path
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory)
-            target={'architecture':'amd64'}
+            target={'os':'linux','architecture':'amd64'}
             for name in ('sysbox','sysbox-init','sysbox-netns'):
                 (root/name).write_bytes(name.encode())
                 target[name.replace('-','_')+'_sha256']=hashlib.sha256(name.encode()).hexdigest()

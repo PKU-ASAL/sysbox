@@ -27,6 +27,7 @@ assets() {
   printf '%s\n' \
     "sysbox_${tag}_linux_amd64.tar.gz" \
     "sysbox_${tag}_linux_arm64.tar.gz" \
+    "sysbox_${tag}_windows_amd64.tar.gz" \
     SHA256SUMS \
     build-metadata.json
 }

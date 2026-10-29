@@ -2,8 +2,9 @@ package api
 
 import (
 	"fmt"
-	"github.com/oslab/sysbox/pkg/revisiongate"
 	"net/http"
+
+	"github.com/oslab/sysbox/pkg/revisiongate"
 )
 
 func (s *Server) handleRemoteRevisionSync(w http.ResponseWriter, r *http.Request) {

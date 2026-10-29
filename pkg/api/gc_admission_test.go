@@ -2,15 +2,17 @@ package api
 
 import (
 	"context"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/persistence"
-	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGCAdmissionReservesReferencesAndRejectsActiveAuthority(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		repo, err := s.actionRepository("lab")
@@ -18,7 +20,7 @@ func TestGCAdmissionReservesReferencesAndRejectsActiveAuthority(t *testing.T) {
 		inventory, err := repo.LoadGCReferences(ctx, "lab")
 		require.NoError(t, err)
 		reservation := persistence.GCReservation{ID: "gc", AgentID: "agent", Candidate: controlplane.GCCandidate{Kind: "container", ExternalID: "orphan", TopologyUID: inventory.TopologyUID, OwnerUID: inventory.TopologyUID, ResourceUID: "orphan", Generation: 1, InventoryDigest: inventory.Digest}}
-		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		session, err := authority.OpenSession(ctx, "agent", "process", "")
 		require.NoError(t, err)
 		grant, err := authority.Issue(ctx, controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: inventory.TopologyUID}, AgentID: "agent", SessionID: session.ID, ActionID: "busy", CommandID: "busy", Attempt: 1, Operation: "run_apply", Digest: "digest", TargetBootID: "boot"}, time.Minute)

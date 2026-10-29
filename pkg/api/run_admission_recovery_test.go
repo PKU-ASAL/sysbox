@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/effectgate"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
 	"github.com/oslab/sysbox/pkg/persistence"
@@ -20,7 +21,7 @@ import (
 )
 
 func TestNeverEnteredRunRecoveryCommitsFailureAndRetiresAuthority(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := NewServer(t.TempDir(), t.TempDir())
 		s.apiStore = store
@@ -35,7 +36,7 @@ func TestNeverEnteredRunRecoveryCommitsFailureAndRetiresAuthority(t *testing.T) 
 		require.NoError(t, store.SaveRun(ctx, run))
 		cmd := controlplane.AgentCommand{ID: "command", AgentID: "agent", Type: "run_assigned", Status: controlplane.AgentCommandStatusRunning, Run: &run, TopologyUID: owner, ActionID: run.ID, Attempt: 1, LeaseOwner: "worker", LeaseUntil: run.LeaseUntil}
 		require.NoError(t, store.SaveAgentCommand(ctx, cmd))
-		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		session, err := authority.OpenSession(ctx, "agent", "original", "")
 		require.NoError(t, err)
 		source, err := s.sourceGrant(ctx, "agent", ExecutionGrantRequest{SessionID: session.ID, Attempt: 1, LeaseOwner: "worker", BootID: "original-boot"}, &persistence.CommandRecord{Command: cmd})

@@ -6,12 +6,13 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
 )
 
 func TestConsoleDeliveryReplayPreservesUnconfirmedExecution(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		hub := newConsoleSessionHub(store)
 		sess, err := hub.Create(ctx, "lab", "node", "agent", controlplane.ConsoleRequest{})
@@ -23,7 +24,7 @@ func TestConsoleDeliveryReplayPreservesUnconfirmedExecution(t *testing.T) {
 		require.True(t, ok)
 		event := controlplane.AgentCommandEvent{AgentID: "agent", CommandID: cmd.ID, Type: cmd.Type, Status: "completed", LeaseOwner: lease.LeaseOwner, Attempt: lease.Attempt}
 		svc := &AgentService{store: store, consoles: hub}
-		hub.store = failingConsoleSave{apiStore: store}
+		hub.store = failingConsoleSave{Store: store}
 		require.Error(t, svc.updateCommandFromEvent(ctx, event))
 		accepted, err := store.ApplyAgentCommandEvent(ctx, event)
 		require.NoError(t, err)
@@ -70,7 +71,7 @@ func TestConsoleRecoveryRefusesAmbiguousOrUnconfirmedOutcome(t *testing.T) {
 	for _, scenario := range []string{"retired_only", "duplicate", "foreign_node", "foreign_creation"} {
 		t.Run(scenario, func(t *testing.T) {
 			ctx := context.Background()
-			store := &localAPIStore{runsDir: t.TempDir()}
+			store := &controlstore.Local{RunsDir: t.TempDir()}
 			hub := newConsoleSessionHub(store)
 			sess := createConsoleForTest(t, hub)
 			commandSession := sess

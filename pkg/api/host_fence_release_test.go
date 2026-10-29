@@ -11,18 +11,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
-
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/stretchr/testify/require"
 )
 
-func checkCompletedFenceRelease(t *testing.T, s *Server, store apiStore, fence persistence.HostFenceRecord) {
+func checkCompletedFenceRelease(t *testing.T, s *Server, store controlstore.Store, fence persistence.HostFenceRecord) {
 	t.Helper()
 	ctx := context.Background()
 	path := "/v1/topologies/lab/host-fences/" + fence.Request.ID
-	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+	authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 	repo, err := s.actionRepository("lab")
 	require.NoError(t, err)
 	before, actions, err := repo.LoadStateAndActions(ctx, "lab")

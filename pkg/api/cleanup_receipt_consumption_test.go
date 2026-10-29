@@ -22,7 +22,7 @@ import (
 func completedCleanupRun(t *testing.T, s *Server) controlplane.Run {
 	t.Helper()
 	ctx := context.Background()
-	require.NoError(t, s.workspaceService().bindPlacement("lab", "owner", controlplane.AgentProtocolVersion))
+	require.NoError(t, s.workspaceService().BindPlacement("lab", "owner", controlplane.AgentProtocolVersion))
 	queued := controlplane.Run{ID: "destroy", Topology: "lab", AgentID: "owner", Op: "destroy", Revision: "revision", Status: controlplane.RunAssigned, QueuedAt: time.Now().UTC()}
 	require.NoError(t, s.apiStore.SaveRun(ctx, queued))
 	claimed, err := s.jobs.claim(queued.ID, "owner")
@@ -58,7 +58,7 @@ func TestCleanupReceiptSurvivesReopenAndPermitsMetadataDelete(t *testing.T) {
 			require.NotNil(t, evidence["cleanup_receipt"])
 			require.Equal(t, "unknown", evidence["external_presence"], "receipt is bounded past evidence, not live global absence")
 			require.NoError(t, reopened.workspaceService().Delete(context.Background(), "lab", false))
-			placement, err := reopened.workspaceService().loadPlacement("lab")
+			placement, err := reopened.workspaceService().LoadPlacement("lab")
 			require.NoError(t, err)
 			require.Nil(t, placement)
 		})
@@ -93,11 +93,11 @@ func TestCleanupReceiptCannotOutliveAdmissionOrPlacement(t *testing.T) {
 				}
 				require.NoError(t, s.apiStore.CompareAndSwapNodeOperation(ctx, op, done))
 			case "rebind":
-				require.NoError(t, s.workspaceService().deletePlacement(ctx, "lab"))
-				require.NoError(t, s.workspaceService().bindPlacement("lab", "owner", controlplane.AgentProtocolVersion))
+				require.NoError(t, s.workspaceService().DeletePlacement(ctx, "lab"))
+				require.NoError(t, s.workspaceService().BindPlacement("lab", "owner", controlplane.AgentProtocolVersion))
 			}
 			require.ErrorIs(t, s.workspaceService().Delete(ctx, "lab", false), persistence.ErrConflict)
-			placement, err := s.workspaceService().loadPlacement("lab")
+			placement, err := s.workspaceService().LoadPlacement("lab")
 			require.NoError(t, err)
 			require.NotNil(t, placement)
 		})
@@ -121,7 +121,7 @@ func TestCleanupReceiptDoesNotBypassLocalJournalOrCorruption(t *testing.T) {
 				require.NoError(t, os.WriteFile(filepath.Join(s.runsDir, "lab", "state.json"), []byte(`{"version":1}`), 0600))
 			}
 			require.Error(t, s.workspaceService().Delete(ctx, "lab", false))
-			placement, err := s.workspaceService().loadPlacement("lab")
+			placement, err := s.workspaceService().LoadPlacement("lab")
 			require.NoError(t, err)
 			require.NotNil(t, placement)
 		})

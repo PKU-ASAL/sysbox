@@ -9,15 +9,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/guesttask"
-	"github.com/oslab/sysbox/pkg/hostsupervisor"
-	"github.com/oslab/sysbox/pkg/persistence"
 	"io"
 	"net/http"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/guesttask"
+	"github.com/oslab/sysbox/pkg/hostsupervisor"
+	"github.com/oslab/sysbox/pkg/persistence"
 )
 
 // ConfigureExecutionGrantSigner must be called before serving. The issuer key
@@ -64,6 +66,7 @@ func (s *Server) loadExecutionGrantSigner() error {
 	}
 	return s.ConfigureExecutionGrantSigner(ed25519.PrivateKey(raw))
 }
+
 func (s *Server) registerExecutionGrantRoutes() {
 	s.mux.HandleFunc("POST /v1/agents/{agent}/guest-task-stops", s.handleGuestTaskStops)
 	s.mux.HandleFunc("POST /v1/agents/{agent}/execution-session", s.handleExecutionSession)
@@ -122,7 +125,7 @@ func (s *Server) handleGCGrant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cmd := record.Command
-	topology, err := grantCommandTopology(record)
+	topology, err := controlstore.GrantCommandTopology(record)
 	candidate := controlplane.GCCandidate{Kind: cmd.GCKind, ExternalID: cmd.GCExternalID, TopologyUID: cmd.TopologyUID, OwnerUID: cmd.TopologyUID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation, InventoryDigest: cmd.GCInventoryDigest}
 	if err != nil || topology != request.Topology || cmd.Type != "gc_delete" || cmd.AgentID != r.PathValue("agent") || cmd.ActionID != cmd.ID || cmd.ActionID != request.ActionID || candidate != request.Candidate {
 		writeError(w, http.StatusConflict, persistence.ErrConflict)
@@ -158,7 +161,7 @@ func (s *Server) handleDeriveGuestExecutionGrant(w http.ResponseWriter, r *http.
 		return
 	}
 	parent := request.Parent
-	if err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).ObserveTime(r.Context()); err != nil {
+	if err := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore}).ObserveTime(r.Context()); err != nil {
 		writeError(w, agentRepositoryErrorStatus(err), err)
 		return
 	}
@@ -186,13 +189,13 @@ func (s *Server) handleDeriveGuestExecutionGrant(w http.ResponseWriter, r *http.
 	writeJSON(w, http.StatusOK, signed)
 }
 
-func mustDeriveGuestGrant(ctx context.Context, storage apiExecutionGrantStorage, parent, child controlplane.ExecutionGrant, ttl time.Duration) (*controlplane.ExecutionGrant, error) {
+func mustDeriveGuestGrant(ctx context.Context, storage controlstore.AuthorityStorage, parent, child controlplane.ExecutionGrant, ttl time.Duration) (*controlplane.ExecutionGrant, error) {
 	var result *controlplane.ExecutionGrant
 	var transitionErr error
 	err := storage.UpdateExecutionAuthority(ctx, func(raw []byte) ([]byte, error) {
-		memory := &grantTransaction{raw: raw}
+		memory := &controlstore.GrantTransaction{Raw: raw}
 		result, transitionErr = persistence.NewExecutionGrantRepository(memory).DeriveGuestTask(ctx, parent, child, ttl)
-		return memory.raw, nil
+		return memory.Raw, nil
 	})
 	if err == nil {
 		err = transitionErr
@@ -210,11 +213,11 @@ type hostRunCompletion struct {
 // receipt, durable command identity and immutable Run incarnation must agree.
 func (s *Server) handleHostRunCompletion(w http.ResponseWriter, r *http.Request) {
 	agentID, runID := r.PathValue("agent"), r.PathValue("run")
-	if err := validatePathSegment(agentID, "agent"); err != nil {
+	if err := controlstore.ValidatePathSegment(agentID, "agent"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if err := validatePathSegment(runID, "run"); err != nil {
+	if err := controlstore.ValidatePathSegment(runID, "run"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -235,7 +238,7 @@ func (s *Server) handleHostRunCompletion(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	receiptHash := sha256.Sum256(rawReceipt)
-	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
 	if err := authority.PrepareHostStop(r.Context(), body.Receipt.Grant, hex.EncodeToString(receiptHash[:])); err != nil {
 		writeError(w, http.StatusConflict, err)
 		return
@@ -286,7 +289,7 @@ func (s *Server) handleHostAuthorizeExecutionGrant(w http.ResponseWriter, r *htt
 		writeError(w, 400, err)
 		return
 	}
-	base := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	base := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
 	if err := base.ObserveTime(r.Context()); err != nil {
 		writeError(w, agentRepositoryErrorStatus(err), err)
 		return
@@ -320,6 +323,7 @@ func (s *Server) handleHostAuthorizeExecutionGrant(w http.ResponseWriter, r *htt
 	}
 	writeJSON(w, 200, map[string]bool{"authorized": true})
 }
+
 func (s *Server) handleInspectExecutionGrant(w http.ResponseWriter, r *http.Request) {
 	if err := s.authenticatedGrantAgent(r); err != nil {
 		writeError(w, 401, err)
@@ -332,7 +336,7 @@ func (s *Server) handleInspectExecutionGrant(w http.ResponseWriter, r *http.Requ
 		writeError(w, 400, err)
 		return
 	}
-	g, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).InspectGrant(r.Context(), r.PathValue("agent"), scope)
+	g, err := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore}).InspectGrant(r.Context(), r.PathValue("agent"), scope)
 	if err != nil {
 		writeError(w, agentRepositoryErrorStatus(err), err)
 		return
@@ -350,7 +354,7 @@ func (s *Server) handleRevokeExecutionGrant(w http.ResponseWriter, r *http.Reque
 		writeError(w, 400, persistence.ErrInvalidRecord)
 		return
 	}
-	if err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).Revoke(r.Context(), g); err != nil {
+	if err := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore}).Revoke(r.Context(), g); err != nil {
 		writeError(w, agentRepositoryErrorStatus(err), err)
 		return
 	}
@@ -396,7 +400,7 @@ func (s *Server) handleStoppedExecutionGrant(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	sum := sha256.Sum256(raw)
-	repo := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	repo := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
 	if receipt.Grant.Operation == "guest_task" && receipt.Grant.ParentEpoch == 0 {
 		command, readErr := readFailureCommand(r.Context(), s.apiStore, receipt.Grant.CommandID)
 		if readErr != nil {
@@ -502,7 +506,7 @@ func (s *Server) handleHostNodeOperationCompletion(w http.ResponseWriter, r *htt
 		return
 	}
 	receiptHash := sha256.Sum256(rawReceipt)
-	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
 	if err := authority.ValidateHostStop(r.Context(), body.Receipt.Grant, hex.EncodeToString(receiptHash[:])); err != nil {
 		writeError(w, 409, err)
 		return
@@ -548,6 +552,7 @@ func (s *Server) commitAdoptionState(ctx context.Context, op controlplane.NodeOp
 		return persistence.ApplyHostAdoptionState(raw, authority, op, evidence, key)
 	})
 }
+
 func (s *Server) authenticatedGrantAgent(r *http.Request) error {
 	id := r.PathValue("agent")
 	a, err := s.apiStore.GetAgent(r.Context(), id)
@@ -560,6 +565,7 @@ func (s *Server) authenticatedGrantAgent(r *http.Request) error {
 	}
 	return s.verifyAgentRequest(r, id)
 }
+
 func (s *Server) handleExecutionSession(w http.ResponseWriter, r *http.Request) {
 	if err := s.authenticatedGrantAgent(r); err != nil {
 		writeError(w, 401, err)
@@ -573,7 +579,7 @@ func (s *Server) handleExecutionSession(w http.ResponseWriter, r *http.Request) 
 		writeError(w, 400, err)
 		return
 	}
-	repo := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	repo := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
 	session, err := repo.OpenSession(r.Context(), r.PathValue("agent"), request.IncarnationID, request.Expected)
 	if err != nil {
 		writeError(w, agentRepositoryErrorStatus(err), err)
@@ -613,7 +619,7 @@ func (s *Server) handleAuthorizeExecutionGrant(w http.ResponseWriter, r *http.Re
 	// A temporal rejection is itself an observation of the authority clock.
 	// Persist it before Verify can return, otherwise a later wall-clock step
 	// could make the same previously expired signed envelope appear live.
-	if err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).ObserveTime(r.Context()); err != nil {
+	if err := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore}).ObserveTime(r.Context()); err != nil {
 		writeError(w, agentRepositoryErrorStatus(err), err)
 		return
 	}
@@ -655,28 +661,28 @@ func (s *Server) handleAuthorizeExecutionGrant(w http.ResponseWriter, r *http.Re
 		}
 		return nil
 	})
-	storage.writeCommand, storage.commitCommand = renew, &commitCommand
+	storage.WriteCommand, storage.CommitCommand = renew, &commitCommand
 	if renew {
 		var granted *controlplane.ExecutionGrant
 		var transitionErr error
 		err := storage.UpdateExecutionAuthority(r.Context(), func(raw []byte) ([]byte, error) {
-			memory := &grantTransaction{raw: raw}
+			memory := &controlstore.GrantTransaction{Raw: raw}
 			repo := persistence.NewExecutionGrantRepository(memory)
 			granted, transitionErr = repo.RenewUntil(r.Context(), g, controlplane.ExecutionGrantMaxTTL/2, leaseDeadline)
 			if transitionErr != nil {
 				commitCommand = false
-				return memory.raw, nil
+				return memory.Raw, nil
 			}
 			if granted.ExpiresAt.After(leaseDeadline) {
 				commitCommand = false
 				transitionErr = persistence.ErrConflict
-				memory.raw = raw
+				memory.Raw = raw
 				if err := repo.ObserveTime(r.Context()); err != nil {
 					return nil, err
 				}
-				return memory.raw, nil
+				return memory.Raw, nil
 			}
-			return memory.raw, nil
+			return memory.Raw, nil
 		})
 		if err == nil {
 			err = transitionErr
@@ -875,23 +881,4 @@ func (s *Server) handleExecutionGrant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, signed)
-}
-
-// grantTransaction lets the shared state machine operate on bytes already
-// protected by the API's compound authority/command transaction.
-type grantTransaction struct{ raw []byte }
-
-func (t *grantTransaction) ReadExecutionAuthority(context.Context) ([]byte, error) {
-	if t.raw == nil {
-		return nil, persistence.ErrNotFound
-	}
-	return append([]byte(nil), t.raw...), nil
-}
-
-func (t *grantTransaction) UpdateExecutionAuthority(_ context.Context, fn func([]byte) ([]byte, error)) error {
-	raw, err := fn(t.raw)
-	if err == nil {
-		t.raw = raw
-	}
-	return err
 }

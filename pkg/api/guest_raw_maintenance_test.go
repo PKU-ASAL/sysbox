@@ -7,12 +7,13 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
 )
 
 func TestRawGuestRecordsRespectMaintenanceAndDrain(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		uid := grantTestTopologyUID(t, s, "lab")
@@ -20,7 +21,7 @@ func TestRawGuestRecordsRespectMaintenanceAndDrain(t *testing.T) {
 		f := controlplane.GuestFileOperation{ID: "file", Version: 1, Topology: "lab", Node: "node", AgentID: "agent", Status: "queued", CreatedAt: time.Now().UTC()}
 		require.NoError(t, store.SaveGuestExecution(ctx, x))
 		require.NoError(t, store.SaveGuestFileOperation(ctx, f))
-		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		barrier, err := authority.BeginMaintenance(ctx, "freeze", uid, "plan")
 		require.NoError(t, err)
 		freshX, freshF := x, f
@@ -63,11 +64,11 @@ func TestRawGuestRecordsRespectMaintenanceAndDrain(t *testing.T) {
 func TestRawGuestPublicationWaitsForAuthorityTransaction(t *testing.T) {
 	for _, kind := range []string{"execution", "file"} {
 		t.Run(kind, func(t *testing.T) {
-			eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+			eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 				ctx := context.Background()
-				var authority persistence.ExecutionGrantStorage = apiExecutionGrantStorage{store: store}
-				if local, ok := store.(*localAPIStore); ok {
-					authority = persistence.FilesystemExecutionGrantStorage(local.runsDir)
+				var authority persistence.ExecutionGrantStorage = controlstore.AuthorityStorage{Store: store}
+				if local, ok := store.(*controlstore.Local); ok {
+					authority = persistence.FilesystemExecutionGrantStorage(local.RunsDir)
 				}
 				entered, release := make(chan struct{}), make(chan struct{})
 				var once sync.Once
@@ -76,11 +77,11 @@ func TestRawGuestPublicationWaitsForAuthorityTransaction(t *testing.T) {
 				done := make(chan error, 1)
 				go func() {
 					done <- authority.UpdateExecutionAuthority(ctx, func(raw []byte) ([]byte, error) {
-						memory := &grantTransaction{raw: raw}
+						memory := &controlstore.GrantTransaction{Raw: raw}
 						err := persistence.NewExecutionGrantRepository(memory).ObserveTime(ctx)
 						close(entered)
 						<-release
-						return memory.raw, err
+						return memory.Raw, err
 					})
 				}()
 				select {
@@ -119,14 +120,14 @@ func TestRawGuestPublicationWaitsForAuthorityTransaction(t *testing.T) {
 func TestMetadataDeleteRechecksGuestRecordsInsideCommit(t *testing.T) {
 	for _, kind := range []string{"execution", "file"} {
 		t.Run(kind, func(t *testing.T) {
-			eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+			eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 				ctx := context.Background()
 				s := stateDeleteTestServer(t, store)
 				repo, err := s.actionRepository("lab")
 				require.NoError(t, err)
 				before, err := repo.LoadState(ctx, "lab")
 				require.NoError(t, err)
-				require.NoError(t, s.workspaceService().ensureTopologyQuiescent(ctx, "lab"))
+				require.NoError(t, s.workspaceService().EnsureTopologyQuiescent(ctx, "lab"))
 				x := controlplane.GuestExecution{ID: "late", Version: 1, Topology: "lab", Node: "node", AgentID: "agent", Status: "queued", CreatedAt: time.Now().UTC()}
 				f := controlplane.GuestFileOperation{ID: "late", Version: 1, Topology: "lab", Node: "node", AgentID: "agent", Status: "queued", CreatedAt: time.Now().UTC()}
 				if kind == "execution" {
@@ -152,7 +153,7 @@ func TestMetadataDeleteRechecksGuestRecordsInsideCommit(t *testing.T) {
 }
 
 func TestMetadataDeleteRejectsIncompleteGuestTerminalEvidence(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		repo, err := s.actionRepository("lab")
@@ -170,7 +171,7 @@ func TestMetadataDeleteRejectsIncompleteGuestTerminalEvidence(t *testing.T) {
 		for _, activity := range activities {
 			require.True(t, activity.Unresolved())
 		}
-		require.ErrorIs(t, s.workspaceService().ensureTopologyQuiescent(ctx, "lab"), persistence.ErrConflict)
+		require.ErrorIs(t, s.workspaceService().EnsureTopologyQuiescent(ctx, "lab"), persistence.ErrConflict)
 		require.ErrorIs(t, s.deleteStateWithAuthority(ctx, "lab", before.Meta.Serial, before.TopologyUID), persistence.ErrConflict)
 		after, err := repo.LoadState(ctx, "lab")
 		require.NoError(t, err)

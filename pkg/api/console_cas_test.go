@@ -7,12 +7,13 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
 )
 
 func TestConsoleCASHasOneWinnerAndRejectsBlindOverwrite(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		original := controlplane.ConsoleSession{ID: "session", AgentID: "agent", Topology: "lab", Workspace: "workspace", Status: "queued", CreatedAt: time.Now().UTC()}
 		require.ErrorIs(t, store.CompareAndSwapConsoleSession(ctx, original, original), persistence.ErrConflict)
@@ -64,7 +65,7 @@ func TestConsoleCASHasOneWinnerAndRejectsBlindOverwrite(t *testing.T) {
 }
 
 func TestConsoleCASCancelConflictCanRetryWithFreshObservation(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		sess := controlplane.ConsoleSession{ID: "session", AgentID: "agent", Topology: "lab", Node: "node", Status: "lost", CreatedAt: time.Now().UTC()}
 		require.NoError(t, store.SaveConsoleSession(context.Background(), sess))
 		first, second := newConsoleSessionHub(store), newConsoleSessionHub(store)
@@ -86,7 +87,7 @@ func TestConsoleCASCancelConflictCanRetryWithFreshObservation(t *testing.T) {
 }
 
 func TestConsoleCASConflictRefreshesIndependentHubWithoutReplayingUpdate(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		sess := controlplane.ConsoleSession{ID: "session", AgentID: "agent", Topology: "lab", Node: "node", Status: "lost", CreatedAt: time.Now().UTC()}
 		require.NoError(t, store.SaveConsoleSession(ctx, sess))
@@ -110,7 +111,7 @@ func TestConsoleCASConflictRefreshesIndependentHubWithoutReplayingUpdate(t *test
 }
 
 type staleConsoleInventory struct {
-	apiStore
+	controlstore.Store
 	session controlplane.ConsoleSession
 }
 
@@ -119,12 +120,12 @@ func (s staleConsoleInventory) ListConsoleSessions(context.Context, string) ([]c
 }
 
 func TestConsoleCASConcurrentStartupAdoptsPersistedObservation(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		sess := controlplane.ConsoleSession{ID: "session", AgentID: "agent", Topology: "lab", Status: "running", CreatedAt: time.Now().UTC()}
 		require.NoError(t, store.SaveConsoleSession(context.Background(), sess))
 		first := newConsoleSessionHub(store)
 		require.NoError(t, first.initErr)
-		second := newConsoleSessionHub(staleConsoleInventory{apiStore: store, session: sess})
+		second := newConsoleSessionHub(staleConsoleInventory{Store: store, session: sess})
 		require.NoError(t, second.initErr)
 		a, err := first.Snapshot(sess.ID)
 		require.NoError(t, err)
@@ -135,7 +136,7 @@ func TestConsoleCASConcurrentStartupAdoptsPersistedObservation(t *testing.T) {
 }
 
 func TestConsoleCASStartupRechecksActiveObservation(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		queued := controlplane.ConsoleSession{ID: "session", AgentID: "agent", Topology: "lab", Status: "queued", CreatedAt: time.Now().UTC()}
 		require.NoError(t, store.SaveConsoleSession(ctx, queued))
@@ -143,7 +144,7 @@ func TestConsoleCASStartupRechecksActiveObservation(t *testing.T) {
 		running.Status = "running"
 		running.StartedAt = time.Now().UTC()
 		require.NoError(t, store.CompareAndSwapConsoleSession(ctx, queued, running))
-		hub := newConsoleSessionHub(staleConsoleInventory{apiStore: store, session: queued})
+		hub := newConsoleSessionHub(staleConsoleInventory{Store: store, session: queued})
 		require.NoError(t, hub.initErr)
 		observed, err := hub.Snapshot(queued.ID)
 		require.NoError(t, err)

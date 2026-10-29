@@ -3,11 +3,13 @@ package api
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/oslab/sysbox/pkg/persistence"
 	"io"
 	"net/http"
 	"net/url"
 	"reflect"
+
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/persistence"
 )
 
 func (s *Server) handleRevisionRetentionApply(w http.ResponseWriter, r *http.Request) {
@@ -35,7 +37,7 @@ func (s *Server) handleRevisionRetentionApply(w http.ResponseWriter, r *http.Req
 		writeError(w, 409, fmt.Errorf("%w: retention preview changed", persistence.ErrConflict))
 		return
 	}
-	if _, local := s.apiStore.(*localAPIStore); local && s.stateBackend == "" {
+	if _, local := s.apiStore.(*controlstore.Local); local && s.stateBackend == "" {
 		if err := s.deleteLocalRevisionBatch(r.Context(), requested.Candidates, requested.Policy); err != nil {
 			writeError(w, 409, err)
 			return

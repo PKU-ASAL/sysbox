@@ -150,7 +150,7 @@ func PrepareFenceDelete(authorityRaw, lifecycleRaw []byte, run controlplane.Run,
 		return out, ErrConflict
 	}
 	c := original.Command
-	if original.Retired || c.ID != fence.Request.Grant.CommandID || c.Type != "run_assigned" || c.AgentID != run.AgentID || c.ActionID != run.ID || c.Run == nil || !SameRunIncarnation(*c.Run, run) || uint64(c.Attempt) != fence.Request.Grant.Attempt || c.TopologyUID != a.State.TopologyUID {
+	if original.Retired || c.ID != fence.Request.Grant.CommandID || c.Type != "run_assigned" || c.AgentID != run.AgentID || c.ActionID != run.ID || c.Run == nil || !controlplane.SameRunIncarnation(*c.Run, run) || uint64(c.Attempt) != fence.Request.Grant.Attempt || c.TopologyUID != a.State.TopologyUID {
 		return out, ErrConflict
 	}
 	// No child/other outstanding effects can be covered by this parent-only proof.
@@ -165,7 +165,7 @@ func PrepareFenceDelete(authorityRaw, lifecycleRaw []byte, run controlplane.Run,
 	}
 	obs := observation.Command
 	report := observation.Recovery
-	if !observation.Retired || obs.Status != controlplane.AgentCommandStatusCompleted || obs.ID != request.ObservationCommandID || obs.Type != controlplane.RunRecoveryCommand || obs.RecoveryMode != controlplane.RunRecoveryObserve || obs.ActionID != fence.Request.ID || obs.Run == nil || !SameRunIncarnation(*obs.Run, run) || obs.Run.Attempt != run.Attempt || obs.Run.LeaseOwner != run.LeaseOwner || obs.TopologyUID != a.State.TopologyUID || obs.ExpectedSerial != a.Serial || validateRecoveryReport(obs, report) != nil {
+	if !observation.Retired || obs.Status != controlplane.AgentCommandStatusCompleted || obs.ID != request.ObservationCommandID || obs.Type != controlplane.RunRecoveryCommand || obs.RecoveryMode != controlplane.RunRecoveryObserve || obs.ActionID != fence.Request.ID || obs.Run == nil || !controlplane.SameRunIncarnation(*obs.Run, run) || obs.Run.Attempt != run.Attempt || obs.Run.LeaseOwner != run.LeaseOwner || obs.TopologyUID != a.State.TopologyUID || obs.ExpectedSerial != a.Serial || validateRecoveryReport(obs, report) != nil {
 		return out, ErrConflict
 	}
 	digest, _ := fence.Request.Digest()

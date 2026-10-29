@@ -2,9 +2,10 @@ package api
 
 import (
 	"context"
-	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func leaseFileCompletion(t *testing.T, s *Server, id string) map[string]any {

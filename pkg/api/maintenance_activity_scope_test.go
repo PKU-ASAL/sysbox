@@ -6,13 +6,14 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/stretchr/testify/require"
 )
 
 func TestRestoreWaitsForTopologyActivityAcrossWorkspaceNames(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		// Give the unrelated topology its own real identity before freezing lab.
@@ -28,7 +29,7 @@ func TestRestoreWaitsForTopologyActivityAcrossWorkspaceNames(t *testing.T) {
 		queued := op
 		op.Status = controlplane.NodeOperationStatusRunning
 		require.NoError(t, store.CompareAndSwapNodeOperation(ctx, queued, op))
-		require.ErrorIs(t, s.workspaceService().ensureTopologyQuiescent(ctx, "lab"), persistence.ErrConflict, "workspace filtering must not hide target topology activity")
+		require.ErrorIs(t, s.workspaceService().EnsureTopologyQuiescent(ctx, "lab"), persistence.ErrConflict, "workspace filtering must not hide target topology activity")
 		require.ErrorIs(t, s.workspaceService().ForceUnlock(ctx, "lab"), persistence.ErrConflict)
 		result, err := s.restoreSnapshotWorkflow(ctx, "lab", plan)
 		require.NoError(t, err)
@@ -48,7 +49,7 @@ func TestRestoreWaitsForTopologyActivityAcrossWorkspaceNames(t *testing.T) {
 		ended := op
 		ended.Status, ended.EndedAt = controlplane.NodeOperationStatusDone, time.Now().UTC()
 		require.NoError(t, store.CompareAndSwapNodeOperation(ctx, op, ended))
-		require.NoError(t, s.workspaceService().ensureTopologyQuiescent(ctx, "lab"))
+		require.NoError(t, s.workspaceService().EnsureTopologyQuiescent(ctx, "lab"))
 		result, err = s.restoreSnapshotWorkflow(ctx, "lab", result.Request)
 		require.NoError(t, err)
 		require.Equal(t, "restored", result.Status)

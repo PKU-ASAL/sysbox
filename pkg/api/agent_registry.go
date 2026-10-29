@@ -8,15 +8,15 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/eventstream"
 )
 
 type agentRegistry struct {
 	mu        sync.RWMutex
 	agents    map[string]controlplane.Agent
-	streams   map[string]*Broadcaster
-	status    map[string]*Broadcaster
+	streams   map[string]*eventstream.Broadcaster
+	status    map[string]*eventstream.Broadcaster
 	resources map[string]controlplane.ResourceProjection
 	events    map[string][]controlplane.AgentCommandEvent
 }
@@ -24,8 +24,8 @@ type agentRegistry struct {
 func newAgentRegistry() *agentRegistry {
 	return &agentRegistry{
 		agents:    map[string]controlplane.Agent{},
-		streams:   map[string]*Broadcaster{},
-		status:    map[string]*Broadcaster{},
+		streams:   map[string]*eventstream.Broadcaster{},
+		status:    map[string]*eventstream.Broadcaster{},
 		resources: map[string]controlplane.ResourceProjection{},
 		events:    map[string][]controlplane.AgentCommandEvent{},
 	}
@@ -119,23 +119,23 @@ func (r *agentRegistry) List() []controlplane.Agent {
 	return out
 }
 
-func (r *agentRegistry) Stream(id string) *Broadcaster {
+func (r *agentRegistry) Stream(id string) *eventstream.Broadcaster {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	stream := r.streams[id]
 	if stream == nil {
-		stream = &Broadcaster{}
+		stream = &eventstream.Broadcaster{}
 		r.streams[id] = stream
 	}
 	return stream
 }
 
-func (r *agentRegistry) StatusStream(topology string) *Broadcaster {
+func (r *agentRegistry) StatusStream(topology string) *eventstream.Broadcaster {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	stream := r.status[topology]
 	if stream == nil {
-		stream = &Broadcaster{}
+		stream = &eventstream.Broadcaster{}
 		r.status[topology] = stream
 	}
 	return stream

@@ -6,12 +6,13 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
 )
 
 func TestRawCommandAdmissionCannotBypassMaintenance(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		uid := grantTestTopologyUID(t, s, "lab")
@@ -23,7 +24,7 @@ func TestRawCommandAdmissionCannotBypassMaintenance(t *testing.T) {
 		leased, ok, err := store.AcquireAgentCommandLease(ctx, "agent", active.ID, "worker", time.Minute)
 		require.NoError(t, err)
 		require.True(t, ok)
-		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		barrier, err := authority.BeginMaintenance(ctx, "freeze", uid, "plan")
 		require.NoError(t, err)
 		fresh := cmd
@@ -63,12 +64,12 @@ func TestRawCommandAdmissionCannotBypassMaintenance(t *testing.T) {
 }
 
 func TestRawCommandWithoutUIDUsesConservativeMaintenanceScope(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		uid := grantTestTopologyUID(t, s, "lab")
 		grantTestTopologyUID(t, s, "other")
-		_, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store}).BeginMaintenance(ctx, "freeze", uid, "plan")
+		_, err := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store}).BeginMaintenance(ctx, "freeze", uid, "plan")
 		require.NoError(t, err)
 		cmd := controlplane.AgentCommand{ID: "named", AgentID: "agent", Type: "run_assigned", Run: &controlplane.Run{Topology: "lab"}}
 		require.ErrorIs(t, store.SaveAgentCommand(ctx, cmd), persistence.ErrConflict)

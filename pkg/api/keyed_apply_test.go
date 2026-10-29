@@ -6,16 +6,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/persistence"
-	"github.com/stretchr/testify/require"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/stretchr/testify/require"
 )
 
 func keyedApply(t *testing.T, s *Server, rev, key, value string) *httptest.ResponseRecorder {
@@ -60,18 +62,18 @@ func TestKeyedApplyDispatchCarriesCanonicalIdentity(t *testing.T) {
 }
 
 func TestRunAdmissionAndOldSQLiteSnapshot(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, s controlstore.Store) {
 		ctx := context.Background()
 		first := controlplane.Run{ID: "first", Topology: "admission", Op: "apply", Status: controlplane.RunAssigned, QueuedAt: time.Now().UTC()}
 		require.NoError(t, s.SaveRun(ctx, first))
 		second := first
 		second.ID = "second"
-		require.ErrorIs(t, s.SaveRun(ctx, second), errActiveOperation)
+		require.ErrorIs(t, s.SaveRun(ctx, second), controlstore.ErrActiveOperation)
 	})
-	s := &sqliteAPIStore{dbPath: filepath.Join(t.TempDir(), "test.db"), runsDir: t.TempDir()}
+	s := &controlstore.SQLite{DbPath: filepath.Join(t.TempDir(), "test.db"), RunsDir: t.TempDir()}
 	ctx := context.Background()
 	require.NoError(t, s.SaveRun(ctx, controlplane.Run{ID: "old", Topology: "old", Status: controlplane.RunDone}))
-	db, err := s.open()
+	db, err := s.OpenDB()
 	require.NoError(t, err)
 	defer db.Close()
 	_, err = db.Exec(`UPDATE sysbox_runs SET record_json=x'' WHERE id='old'`)
@@ -119,7 +121,7 @@ func TestKeyedApplyImmutableReplayAndHydration(t *testing.T) {
 	commands, err := restart.apiStore.ListAgentCommands(context.Background(), "host-a")
 	require.NoError(t, err)
 	require.Len(t, commands, 1)
-	require.Equal(t, runCommandID(*stored), commands[0].ID)
+	require.Equal(t, controlstore.RunCommandID(*stored), commands[0].ID)
 	raw, _ = json.Marshal(commands)
 	require.NotContains(t, string(raw), "private-canary")
 }
@@ -166,14 +168,14 @@ func TestKeyedApplyConcurrentPostgresServers(t *testing.T) {
 	}
 	runs, err := servers[0].apiStore.LoadRuns(context.Background())
 	require.NoError(t, err)
-	require.Len(t, latestRunsByID(runs), 1)
+	require.Len(t, controlstore.LatestRunsByID(runs), 1)
 	commands, err := servers[0].apiStore.ListAgentCommands(context.Background(), "host-a")
 	require.NoError(t, err)
 	require.Len(t, commands, 1)
 }
 
 func TestRunAdmissionSerializesConcurrentDifferentKeys(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, s controlstore.Store) {
 		ctx := context.Background()
 		start := make(chan struct{})
 		results := make(chan error, 2)
@@ -192,7 +194,7 @@ func TestRunAdmissionSerializesConcurrentDifferentKeys(t *testing.T) {
 			if err == nil {
 				success++
 			} else {
-				require.ErrorIs(t, err, errActiveOperation)
+				require.ErrorIs(t, err, controlstore.ErrActiveOperation)
 			}
 		}
 		require.Equal(t, 1, success)
@@ -202,7 +204,7 @@ func TestRunAdmissionSerializesConcurrentDifferentKeys(t *testing.T) {
 	})
 }
 
-type unavailableRunStore struct{ apiStore }
+type unavailableRunStore struct{ controlstore.Store }
 
 func (s unavailableRunStore) GetRun(context.Context, string) (*controlplane.Run, error) {
 	return nil, errors.New("backend unavailable")
@@ -250,7 +252,7 @@ func TestKeyedApplyEmptyInputsCanonicalAndFingerprintImmutable(t *testing.T) {
 	changed := *first
 	changed.RequestFingerprint = "changed"
 	require.Error(t, s.apiStore.SaveRun(context.Background(), changed))
-	require.False(t, persistence.SameRunIncarnation(*first, changed))
+	require.False(t, controlplane.SameRunIncarnation(*first, changed))
 }
 
 func TestRejectedUnkeyedApplyDoesNotChangeWorkspace(t *testing.T) {
@@ -309,7 +311,7 @@ func TestHydrationCannotAuthorizePreviouslyCapturedMissingInputs(t *testing.T) {
 }
 
 func TestRunRequestFingerprintCannotBeRewritten(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, s controlstore.Store) {
 		ctx := context.Background()
 		run := controlplane.Run{ID: "bound", Topology: "bound", Op: "apply", Status: controlplane.RunAssigned, RequestFingerprint: "apply-request:original"}
 		require.NoError(t, s.SaveRun(ctx, run))

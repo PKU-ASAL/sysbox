@@ -16,15 +16,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
-
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
 	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
+	"github.com/stretchr/testify/require"
 )
 
 func TestHostFenceIntentDispositionAPI(t *testing.T) {
@@ -67,11 +67,11 @@ func TestHostFenceIncompleteReplacementDisposableVM(t *testing.T) {
 	require.Equal(t, "libvirt", os.Getenv("SYSBOX_DELETE_CLOSURE_PROVIDER"))
 	runHostFenceAPIContract(t, root, true, true, true, false, true, false, true)
 }
-func checkFenceIntentClosure(t *testing.T, s *Server, store apiStore, fence persistence.HostFenceRecord, absent bool, acceptanceRoot string, unknownSSH bool, discovered *state.Resource, children ...controlplane.ExecutionGrant) {
+func checkFenceIntentClosure(t *testing.T, s *Server, store controlstore.Store, fence persistence.HostFenceRecord, absent bool, acceptanceRoot string, unknownSSH bool, discovered *state.Resource, children ...controlplane.ExecutionGrant) {
 	t.Helper()
 	ctx := context.Background()
 	path := "/v1/topologies/lab/host-fences/" + fence.Request.ID
-	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+	authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 	repo, err := s.actionRepository("lab")
 	require.NoError(t, err)
 	before, actions, err := repo.LoadStateAndActions(ctx, "lab")

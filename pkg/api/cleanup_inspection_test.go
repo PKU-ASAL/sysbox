@@ -11,13 +11,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
-
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCleanupInspectionMissingStateNeverProvesExternalAbsence(t *testing.T) {
@@ -36,7 +36,7 @@ func TestCleanupInspectionMissingStateNeverProvesExternalAbsence(t *testing.T) {
 	require.Equal(t, []any{"run", "node_operation", "guest_execution", "guest_file", "execution_grant", "console_session", "agent_command"}, out["active_operation_kinds"])
 }
 
-type failedInspectionOperations struct{ apiStore }
+type failedInspectionOperations struct{ controlstore.Store }
 
 func (s failedInspectionOperations) LoadRuns(context.Context) ([]controlplane.Run, error) {
 	return nil, errors.New("private-dsn")
@@ -86,7 +86,7 @@ func TestCleanupInspectionIncludesUncommittedCreateAndRemoteScope(t *testing.T) 
 	st, err := repo.LoadState(ctx, "lab")
 	require.NoError(t, err)
 	require.NoError(t, repo.CommitActionIntent(ctx, runtime.ActionRecord{ID: "pending", RunID: "run", Topology: "lab", Resource: address.Resource("sysbox_node", "web"), Action: model.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: st.TopologyUID, ResourceUID: "uid", Generation: 1, Error: "private-error-secret"}))
-	require.NoError(t, s.workspaceService().bindPlacement("lab", "owner-agent", controlplane.AgentProtocolVersion))
+	require.NoError(t, s.workspaceService().BindPlacement("lab", "owner-agent", controlplane.AgentProtocolVersion))
 	rec := httptest.NewRecorder()
 	s.ServeHTTP(rec, httptest.NewRequest("GET", "/v1/topologies/lab/cleanup-inspection", nil))
 	require.Equal(t, 200, rec.Code)

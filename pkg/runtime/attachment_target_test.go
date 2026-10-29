@@ -2,11 +2,12 @@ package runtime
 
 import (
 	"context"
+	"testing"
+
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestAttachmentCarriesNetworkIdentityOnCreateAndRecovery(t *testing.T) {

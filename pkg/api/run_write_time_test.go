@@ -2,11 +2,13 @@ package api
 
 import (
 	"context"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/persistence"
-	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/stretchr/testify/require"
 )
 
 type delayedLeaseWrite struct{ persistence.RunStorage }
@@ -21,15 +23,15 @@ func (s delayedLeaseWrite) UpdateRun(ctx context.Context, id string, fn func(*co
 	})
 }
 func TestRunLeaseCheckedAtStorageWrite(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		var storage persistence.RunStorage
 		switch s := store.(type) {
-		case *localAPIStore:
-			storage = localRunStorage{store: s}
-		case *sqliteAPIStore:
-			storage = sqliteRunStorage{store: s}
-		case *postgresAPIStore:
-			storage = postgresRunStorage{store: s}
+		case *controlstore.Local:
+			storage = controlstore.LocalRunStorage{Store: s}
+		case *controlstore.SQLite:
+			storage = controlstore.SqliteRunStorage{Store: s}
+		case *controlstore.Postgres:
+			storage = controlstore.PostgresRunStorage{Store: s}
 		default:
 			t.Fatal("unknown backend")
 		}

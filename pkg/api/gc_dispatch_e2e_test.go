@@ -71,7 +71,7 @@ func testRemoteDockerGCDispatch(t *testing.T, batch bool, external ...bool) {
 	require.NoError(t, err)
 	refs, err := repo.LoadGCReferences(ctx, "gc-lab")
 	require.NoError(t, err)
-	require.NoError(t, first.workspaceService().bindPlacement("gc-lab", "gc-agent", controlplane.AgentProtocolVersion))
+	require.NoError(t, first.workspaceService().BindPlacement("gc-lab", "gc-agent", controlplane.AgentProtocolVersion))
 	refs, err = repo.LoadGCReferences(ctx, "gc-lab")
 	require.NoError(t, err)
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())

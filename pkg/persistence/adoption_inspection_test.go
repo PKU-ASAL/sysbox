@@ -2,11 +2,12 @@ package persistence
 
 import (
 	"encoding/json"
+	"testing"
+	"time"
+
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/stretchr/testify/require"
-	"testing"
-	"time"
 )
 
 func TestAdoptionInspectionCompletionPreservesCanonicalRequest(t *testing.T) {

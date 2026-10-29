@@ -12,6 +12,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
@@ -125,7 +126,7 @@ func TestRunCancelRequestsCommandStopWithoutCertifyingCompletion(t *testing.T) {
 	for _, command := range commands {
 		if command.Type == "cancel_command" {
 			cancellations++
-			require.Equal(t, runCommandID(*run), command.Operation.ExternalID)
+			require.Equal(t, controlstore.RunCommandID(*run), command.Operation.ExternalID)
 		}
 	}
 	require.Equal(t, 1, cancellations)

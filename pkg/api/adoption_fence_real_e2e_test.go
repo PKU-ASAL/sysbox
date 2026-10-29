@@ -18,13 +18,14 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/stretchr/testify/require"
-
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/stretchr/testify/require"
+
 	libvirtprovider "github.com/oslab/sysbox/pkg/provider/libvirt"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
@@ -191,7 +192,7 @@ func TestAdoptionFenceWholeVMRecoveryE2E(t *testing.T) {
 	cmd, ok, err := s.apiStore.AcquireAgentCommandLease(ctx, adopt.AgentID, op.CommandID, "worker", time.Minute)
 	require.NoError(t, err)
 	require.True(t, ok)
-	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
 	session, err := authority.OpenSession(ctx, adopt.AgentID, "process", "")
 	require.NoError(t, err)
 	oldBoot := ssh("cat /proc/sys/kernel/random/boot_id")

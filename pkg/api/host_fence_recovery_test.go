@@ -11,15 +11,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
-
 	"github.com/oslab/sysbox/pkg/agent"
-	"github.com/oslab/sysbox/pkg/agentexec"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/hostexec"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
 	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
+	"github.com/stretchr/testify/require"
 )
 
 func fenceRecoveryRequest(s *Server, method, path, key string) *httptest.ResponseRecorder {
@@ -43,7 +43,7 @@ func checkFenceBeforeReceipt(t *testing.T, s *Server, fence persistence.HostFenc
 	require.Contains(t, got.Body.String(), "fence_receipt_missing")
 	require.Equal(t, 409, fenceRecoveryRequest(s, "POST", path+"/observe", "first").Code)
 }
-func checkFenceObservationContract(t *testing.T, s *Server, store apiStore, fence persistence.HostFenceRecord) {
+func checkFenceObservationContract(t *testing.T, s *Server, store controlstore.Store, fence persistence.HostFenceRecord) {
 	t.Helper()
 	ctx := context.Background()
 	path := "/v1/topologies/lab/host-fences/" + fence.Request.ID
@@ -221,7 +221,7 @@ func checkFenceObservationContract(t *testing.T, s *Server, store apiStore, fenc
 			if variant == "host-executor" {
 				server := httptest.NewServer(s)
 				defer server.Close()
-				host := agentexec.HostRunExecutor{Bridge: fenceObservationBridge{repository: repo}, Tasks: &hostsupervisor.Dispatcher{AgentID: "agent", HostBootID: binding.HostBootID, HostKey: hostKey}, Authority: hostsupervisor.AuthorityClient{Identity: agent.Identity{ID: "agent", APIURL: server.URL}}}
+				host := hostexec.RunExecutor{Bridge: fenceObservationBridge{repository: repo}, Tasks: &hostsupervisor.Dispatcher{AgentID: "agent", HostBootID: binding.HostBootID, HostKey: hostKey}, Authority: hostsupervisor.AuthorityClient{Identity: agent.Identity{ID: "agent", APIURL: server.URL}}}
 				observed, err := host.Recover(ctx, hostsupervisor.RunRecoveryRequest{CommandID: lease.ID, LeaseOwner: lease.LeaseOwner, Attempt: lease.Attempt})
 				require.NoError(t, err)
 				signed = *observed
@@ -285,7 +285,7 @@ func checkFenceObservationContract(t *testing.T, s *Server, store apiStore, fenc
 // The real host executor uses this canonical repository for observation only.
 // All other bridge capabilities deliberately remain unavailable.
 type fenceObservationBridge struct {
-	agentexec.HostRunBridge
+	hostexec.RunEnvironment
 	repository runtime.ActionRepository
 }
 

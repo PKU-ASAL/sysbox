@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/stretchr/testify/require"
 )
 
@@ -18,7 +19,7 @@ func TestAgentHeartbeatChildProcess(t *testing.T) {
 	if root == "" {
 		return
 	}
-	s := &localAPIStore{runsDir: root}
+	s := &controlstore.Local{RunsDir: root}
 	fmt.Println("ready")
 	_, err := s.HeartbeatAgent(context.Background(), controlplane.Agent{ID: "agent", Version: "new-process"})
 	require.NoError(t, err)
@@ -26,16 +27,16 @@ func TestAgentHeartbeatChildProcess(t *testing.T) {
 func TestAgentHeartbeatRechecksPolicyAfterProcessLock(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	s := &localAPIStore{runsDir: t.TempDir()}
+	s := &controlstore.Local{RunsDir: t.TempDir()}
 	require.NoError(t, s.SaveAgent(ctx, controlplane.Agent{ID: "agent", Status: controlplane.AgentStatusOnline}))
 	// Hold a real storage transaction until the child is blocked on its lock.
 	var processDone chan error
-	storage := localAgentStorage{store: s}
+	storage := controlstore.LocalAgentStorage{Store: s}
 	binary, err := os.Executable()
 	require.NoError(t, err)
 	_, err = storage.UpdateAgent(ctx, "agent", func(current *controlplane.Agent) (*controlplane.Agent, error) {
 		cmd := exec.CommandContext(ctx, binary, "-test.run=^TestAgentHeartbeatChildProcess$", "-test.count=1")
-		cmd.Env = append(os.Environ(), "SYSBOX_TEST_AGENT_HEARTBEAT_ROOT="+s.runsDir)
+		cmd.Env = append(os.Environ(), "SYSBOX_TEST_AGENT_HEARTBEAT_ROOT="+s.RunsDir)
 		stdout, err := cmd.StdoutPipe()
 		require.NoError(t, err)
 		require.NoError(t, cmd.Start())

@@ -6,12 +6,13 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
 )
 
 func TestGuestCancellationCommitsIntentAndOutbox(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		svc := newGuestExecutionService(store, nil, nil)
 		x, err := svc.Create(ctx, "lab", "node", "agent", controlplane.GuestExecutionRequest{Argv: []string{"sleep", "30"}})
@@ -27,7 +28,7 @@ func TestGuestCancellationCommitsIntentAndOutbox(t *testing.T) {
 }
 
 func TestGuestCancellationCollisionDoesNotCommitIntent(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		svc := newGuestExecutionService(store, (&AgentService{store: store}).PublishCommand, nil)
 		x := controlplane.GuestExecution{ID: "execution", AgentID: "agent", Topology: "lab", Node: "node", Status: "queued", Version: 1, CreatedAt: time.Now().UTC()}
@@ -46,7 +47,7 @@ func TestGuestCancellationCollisionDoesNotCommitIntent(t *testing.T) {
 }
 
 func TestGuestCancellationCannotBypassCompoundCommit(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		x := controlplane.GuestExecution{ID: "execution", AgentID: "agent", Topology: "lab", Node: "node", Status: "queued", Version: 1, CreatedAt: time.Now().UTC()}
 		require.NoError(t, store.SaveGuestExecution(ctx, x))
@@ -60,16 +61,16 @@ func TestGuestCancellationCannotBypassCompoundCommit(t *testing.T) {
 }
 
 func TestGuestCancellationSQLWriteFailureRollsBack(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		switch s := store.(type) {
-		case *sqliteAPIStore:
-			db, err := s.open()
+		case *controlstore.SQLite:
+			db, err := s.OpenDB()
 			require.NoError(t, err)
 			_, err = db.ExecContext(ctx, `CREATE TRIGGER reject_cancel BEFORE INSERT ON sysbox_agent_commands WHEN NEW.type='cancel_command' BEGIN SELECT RAISE(ABORT,'injected cancel outbox failure'); END`)
 			require.NoError(t, err)
-		case *postgresAPIStore:
-			pool, err := s.poolFor(ctx)
+		case *controlstore.Postgres:
+			pool, err := s.PoolFor(ctx)
 			require.NoError(t, err)
 			_, err = pool.Exec(ctx, `CREATE FUNCTION reject_cancel() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.data->>'type' = 'cancel_command' THEN RAISE EXCEPTION 'injected cancel outbox failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_cancel BEFORE INSERT ON sysbox_agent_commands FOR EACH ROW EXECUTE FUNCTION reject_cancel()`)
 			require.NoError(t, err)
@@ -93,11 +94,11 @@ func TestGuestCancellationSQLWriteFailureRollsBack(t *testing.T) {
 
 func TestGuestCancellationFileRecoveryRevokesAfterTerminalAndRetirement(t *testing.T) {
 	ctx := context.Background()
-	store := &localAPIStore{runsDir: t.TempDir()}
+	store := &controlstore.Local{RunsDir: t.TempDir()}
 	x := controlplane.GuestExecution{ID: "execution", AgentID: "agent", CommandID: "source", Topology: "lab", Node: "node", Status: "queued", Version: 1, CreatedAt: time.Now().UTC(), Request: controlplane.GuestExecutionRequest{Argv: []string{"private-command"}}}
 	cmd := controlplane.AgentCommand{ID: x.CommandID, AgentID: x.AgentID, Type: "guest_execution", Execution: &x, ExecutionRequest: x.Request, TopologyUID: "topology"}
 	require.NoError(t, store.CreateGuestExecutionDispatch(ctx, x, cmd))
-	storage := apiExecutionGrantStorage{store: store}
+	storage := controlstore.AuthorityStorage{Store: store}
 	authority := persistence.NewExecutionGrantRepository(storage)
 	session, err := authority.OpenSession(ctx, "agent", "host", "")
 	require.NoError(t, err)
@@ -122,13 +123,13 @@ func TestGuestCancellationFileRecoveryRevokesAfterTerminalAndRetirement(t *testi
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.NoError(t, store.DeleteAgentCommand(ctx, "agent", x.CommandID))
-	seeds, err := persistence.NewFilesystemGuestRepository(store.runsDir).FilesystemGuestDispatchCommands(ctx)
+	seeds, err := persistence.NewFilesystemGuestRepository(store.RunsDir).FilesystemGuestDispatchCommands(ctx)
 	require.NoError(t, err)
 	require.Len(t, seeds, 2, "completion and redaction must preserve both immutable seeds")
 	// Model a crash after the combined operation/outbox rename but before
 	// authority publication: only the old authority file survives.
 	require.NoError(t, storage.UpdateExecutionAuthority(ctx, func([]byte) ([]byte, error) { return before, nil }))
-	cold := &localAPIStore{runsDir: store.runsDir}
+	cold := &controlstore.Local{RunsDir: store.RunsDir}
 	require.NoError(t, (&AgentService{store: cold}).reconcileGuestExecutionCancellations(ctx))
 	got, err := authority.InspectGrant(ctx, "agent", grant.Scope)
 	require.NoError(t, err)
@@ -143,12 +144,12 @@ func TestGuestCancellationFileRecoveryRevokesAfterTerminalAndRetirement(t *testi
 }
 
 func TestGuestCancellationSQLAuthorityFailureRollsBackOutbox(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
-		if _, local := store.(*localAPIStore); local {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
+		if _, local := store.(*controlstore.Local); local {
 			t.Skip("SQL rollback injection")
 		}
 		ctx := context.Background()
-		storage := apiExecutionGrantStorage{store: store}
+		storage := controlstore.AuthorityStorage{Store: store}
 		require.NoError(t, persistence.NewExecutionGrantRepository(storage).ObserveTime(ctx))
 		before, err := storage.ReadExecutionAuthority(ctx)
 		require.NoError(t, err)
@@ -156,13 +157,13 @@ func TestGuestCancellationSQLAuthorityFailureRollsBackOutbox(t *testing.T) {
 		x, err := svc.Create(ctx, "lab", "node", "agent", controlplane.GuestExecutionRequest{Argv: []string{"sleep", "30"}})
 		require.NoError(t, err)
 		switch s := store.(type) {
-		case *sqliteAPIStore:
-			db, err := s.open()
+		case *controlstore.SQLite:
+			db, err := s.OpenDB()
 			require.NoError(t, err)
 			_, err = db.ExecContext(ctx, `CREATE TRIGGER reject_authority BEFORE UPDATE ON sysbox_execution_authority BEGIN SELECT RAISE(ABORT,'injected authority failure'); END`)
 			require.NoError(t, err)
-		case *postgresAPIStore:
-			pool, err := s.poolFor(ctx)
+		case *controlstore.Postgres:
+			pool, err := s.PoolFor(ctx)
 			require.NoError(t, err)
 			_, err = pool.Exec(ctx, `CREATE FUNCTION reject_authority() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected authority failure'; END $$; CREATE TRIGGER reject_authority BEFORE UPDATE ON sysbox_execution_authority FOR EACH ROW EXECUTE FUNCTION reject_authority()`)
 			require.NoError(t, err)

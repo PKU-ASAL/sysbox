@@ -3,10 +3,11 @@ package controlplane
 import (
 	"crypto/ed25519"
 	"crypto/rand"
-	"github.com/oslab/sysbox/pkg/substrate"
-	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/substrate"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRebootedTaskReceiptBindsBothBootsAndUnknownResult(t *testing.T) {

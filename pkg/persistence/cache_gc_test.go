@@ -5,12 +5,13 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"github.com/gofrs/flock"
-	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/gofrs/flock"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGlobalCacheGCProtectsReferencesAndRejectsStalePlan(t *testing.T) {

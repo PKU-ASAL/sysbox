@@ -26,7 +26,7 @@ func newGCCacheCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		repo, err := persistence.OpenImportSource(cmd.Context(), location, "")
+		repo, err := persistence.OpenCatalogSource(cmd.Context(), location, "")
 		if err != nil {
 			return err
 		}

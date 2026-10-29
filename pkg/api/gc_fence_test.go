@@ -6,7 +6,6 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
-	"github.com/oslab/sysbox/pkg/agent"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -14,7 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
 )
@@ -25,7 +26,7 @@ func TestGCFenceDispositionClosesUnknownWithoutDeletingAgain(t *testing.T) {
 	}
 }
 func runGCFenceDisposition(t *testing.T, stage string) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		s.agentSvc = newAgentService(s)
@@ -45,7 +46,7 @@ func runGCFenceDisposition(t *testing.T, stage string) {
 		reservation := persistence.GCReservation{ID: "gc-fence-test", AgentID: "host-a", Candidate: c}
 		require.NoError(t, s.reserveGCWithAuthority(ctx, "lab", reservation))
 		require.NoError(t, s.publishGCReservation(ctx, "lab", reservation))
-		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		session, err := authority.OpenSession(ctx, "host-a", "process", "")
 		require.NoError(t, err)
 		cmd, ok, err := store.AcquireAgentCommandLease(ctx, "host-a", reservation.ID, "worker", time.Minute)
@@ -53,7 +54,7 @@ func runGCFenceDisposition(t *testing.T, stage string) {
 		require.True(t, ok)
 		grant, err := s.issueCommandGrant(ctx, "host-a", cmd.ID, ExecutionGrantRequest{SessionID: session.ID, LeaseOwner: cmd.LeaseOwner, Attempt: cmd.Attempt, BootID: "11111111-1111-4111-8111-111111111111"})
 		require.NoError(t, err)
-		request := controlplane.HostFenceRequest{Version: 1, ID: "gcf-test", Topology: "lab", RunID: reservation.ID, LabID: "isolated", ControllerKey: controllerPub, JournalSHA256: gcEvidenceHash(reservation), Grant: *grant}
+		request := controlplane.HostFenceRequest{Version: 1, ID: "gcf-test", Topology: "lab", RunID: reservation.ID, LabID: "isolated", ControllerKey: controllerPub, JournalSHA256: controlstore.GcEvidenceHash(reservation), Grant: *grant}
 		beginBody, _ := json.Marshal(map[string]any{"grant": grant})
 		begin := httptest.NewRequest("POST", "/v1/topologies/lab/gc/"+reservation.ID+"/host-fences", bytes.NewReader(beginBody))
 		begin.Header.Set("Idempotency-Key", "test")
@@ -82,15 +83,15 @@ func runGCFenceDisposition(t *testing.T, stage string) {
 		if stage != "none" {
 			input := gcDispositionCrashInput{Stage: stage, Proof: proof, HostKey: host}
 			switch v := store.(type) {
-			case *localAPIStore:
+			case *controlstore.Local:
 				input.Kind = "file"
-				input.Path = v.runsDir
-			case *sqliteAPIStore:
+				input.Path = v.RunsDir
+			case *controlstore.SQLite:
 				input.Kind = "sqlite"
-				input.Path = v.dbPath
-			case *postgresAPIStore:
+				input.Path = v.DbPath
+			case *controlstore.Postgres:
 				input.Kind = "postgres"
-				input.Path = v.dsn
+				input.Path = v.DSN
 			}
 			path := filepath.Join(t.TempDir(), "crash.json")
 			raw, err := json.Marshal(input)
@@ -143,21 +144,21 @@ func TestGCDispositionCrashChild(t *testing.T) {
 	require.NoError(t, err)
 	var input gcDispositionCrashInput
 	require.NoError(t, json.Unmarshal(raw, &input))
-	var store apiStore
+	var store controlstore.Store
 	switch input.Kind {
 	case "file":
-		store = &localAPIStore{runsDir: input.Path}
+		store = &controlstore.Local{RunsDir: input.Path}
 	case "sqlite":
-		store = &sqliteAPIStore{dbPath: input.Path, runsDir: t.TempDir()}
+		store = &controlstore.SQLite{DbPath: input.Path, RunsDir: t.TempDir()}
 	case "postgres":
-		store = &postgresAPIStore{dsn: input.Path}
+		store = &controlstore.Postgres{DSN: input.Path}
 	default:
 		t.Fatal("invalid child backend")
 	}
 	s := stateDeleteTestServer(t, store)
 	ctx := context.Background()
 	p := input.Proof
-	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+	authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 	require.NoError(t, authority.PrepareGCDisposition(ctx, p, input.HostKey))
 	if input.Stage == "prepared" {
 		os.Exit(73)
@@ -185,7 +186,7 @@ func TestGCDispositionCrashChild(t *testing.T) {
 }
 
 func TestCanonicalGCClaimSurvivesLostHostJournal(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		s.agentSvc = newAgentService(s)
@@ -202,7 +203,7 @@ func TestCanonicalGCClaimSurvivesLostHostJournal(t *testing.T) {
 		rsv := persistence.GCReservation{ID: "gc-once", AgentID: "host", Candidate: c}
 		require.NoError(t, s.reserveGCWithAuthority(ctx, "lab", rsv))
 		require.NoError(t, s.publishGCReservation(ctx, "lab", rsv))
-		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		session, err := authority.OpenSession(ctx, "host", "worker", "")
 		require.NoError(t, err)
 		cmd, ok, err := store.AcquireAgentCommandLease(ctx, "host", rsv.ID, "worker", time.Minute)

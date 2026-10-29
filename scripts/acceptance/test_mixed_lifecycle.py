@@ -56,7 +56,7 @@ class ReleaseArtifactTests(unittest.TestCase):
             root = Path(directory)
             (root/'sysbox').write_bytes(b'cli')
             (root/'sysbox-init').write_bytes(b'helper')
-            target = dict(architecture='amd64', sysbox_sha256=hashlib.sha256(b'cli').hexdigest(),
+            target = dict(os='linux', architecture='amd64', sysbox_sha256=hashlib.sha256(b'cli').hexdigest(),
                           sysbox_init_sha256=hashlib.sha256(b'helper').hexdigest())
             (root/'build-metadata.json').write_text(json.dumps(dict(commit='candidate',targets=[target])))
             binary, helper, metadata = release_inputs(root/'build-metadata.json', root/'sysbox', root/'sysbox-init')

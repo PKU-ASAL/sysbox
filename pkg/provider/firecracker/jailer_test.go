@@ -89,3 +89,16 @@ func TestJailerRequestSeparatesHostAndGuestPaths(t *testing.T) {
 	_, err = jailerArguments(m, j)
 	require.Error(t, err)
 }
+
+func TestJailerRejectsHostNetworkBridgeAttachment(t *testing.T) {
+	m := &vmManifest{VMID: "fc-host-bridge", Handle: HandleState{Attachments: []managedAttachment{{Name: "uplink"}}}}
+	j := jailIdentity{Root: "/j/firecracker/fc-host-bridge/root", UID: 200001, GID: 200001, Cgroup: "sysbox/fc-host-bridge", Executable: "/usr/local/bin/firecracker"}
+	_, err := jailerArguments(m, j)
+	require.ErrorContains(t, err, "named network namespace")
+}
+
+func TestHostNetworkAttachmentRejectedBeforeManifestOrLinkMutation(t *testing.T) {
+ s:=&Substrate{}
+ _,err:=s.attachNIC(context.Background(),substrate.NodeHandle{},linkRequest{})
+ require.ErrorContains(t,err,"named network namespace")
+}

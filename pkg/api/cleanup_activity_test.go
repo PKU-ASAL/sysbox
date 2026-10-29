@@ -9,11 +9,12 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/stretchr/testify/require"
 )
 
 func TestCleanupInspectionReportsUnresolvedConsoleAndCommand(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		uid := grantTestTopologyUID(t, s, "lab")
@@ -45,7 +46,7 @@ func TestCleanupInspectionReportsUnresolvedConsoleAndCommand(t *testing.T) {
 }
 
 type unavailableCleanupActivity struct {
-	apiStore
+	controlstore.Store
 	kind   string
 	called *bool
 }
@@ -55,14 +56,14 @@ func (s unavailableCleanupActivity) ListConsoleSessions(ctx context.Context, w s
 		*s.called = true
 		return nil, errors.New("private-storage-location")
 	}
-	return s.apiStore.ListConsoleSessions(ctx, w)
+	return s.Store.ListConsoleSessions(ctx, w)
 }
 func (s unavailableCleanupActivity) ListAgentCommands(ctx context.Context, a string) ([]controlplane.AgentCommand, error) {
 	if s.kind == "command" {
 		*s.called = true
 		return nil, errors.New("private-storage-location")
 	}
-	return s.apiStore.ListAgentCommands(ctx, a)
+	return s.Store.ListAgentCommands(ctx, a)
 }
 
 func TestCleanupInspectionFailsWhenActivityEnumerationUnavailable(t *testing.T) {
@@ -70,7 +71,7 @@ func TestCleanupInspectionFailsWhenActivityEnumerationUnavailable(t *testing.T) 
 		t.Run(kind, func(t *testing.T) {
 			s := NewServer(t.TempDir(), t.TempDir())
 			called := false
-			s.apiStore = unavailableCleanupActivity{apiStore: s.apiStore, kind: kind, called: &called}
+			s.apiStore = unavailableCleanupActivity{Store: s.apiStore, kind: kind, called: &called}
 			rec := httptest.NewRecorder()
 			s.ServeHTTP(rec, httptest.NewRequest("GET", "/v1/topologies/lab/cleanup-inspection", nil))
 			require.Equal(t, 503, rec.Code)

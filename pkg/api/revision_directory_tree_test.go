@@ -14,6 +14,7 @@ import (
 	"github.com/gofrs/flock"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/state"
+	"github.com/oslab/sysbox/pkg/workspace"
 	"github.com/stretchr/testify/require"
 )
 
@@ -23,7 +24,7 @@ func TestWorkspaceDeleteRetainsPinnedRevisionAndSnapshot(t *testing.T) {
 	files := map[string][]byte{"field.sysbox.hcl": []byte("root"), "modules/main.hcl": []byte("module")}
 	require.NoError(t, w.UpsertProject(context.Background(), "lab", files))
 	pinned := w.HCLFile("lab")
-	lockBefore, err := os.Stat(filepath.Join(w.runsDir, ".workspace-locks", "lab.lock"))
+	lockBefore, err := os.Stat(filepath.Join(w.RunsDir, ".workspace-locks", "lab.lock"))
 	require.NoError(t, err)
 	snapshot, err := w.MaterializeWorkspaceSnapshot("lab", "run")
 	require.NoError(t, err)
@@ -37,11 +38,11 @@ func TestWorkspaceDeleteRetainsPinnedRevisionAndSnapshot(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "module", string(body))
 	}
-	require.NoDirExists(t, filepath.Join(w.workspacesDir, "lab"))
-	require.NoFileExists(t, filepath.Join(w.runsDir, "lab", "runs.jsonl"))
+	require.NoDirExists(t, filepath.Join(w.WorkspacesDir, "lab"))
+	require.NoFileExists(t, filepath.Join(w.RunsDir, "lab", "runs.jsonl"))
 	require.NoError(t, w.UpsertProject(context.Background(), "lab", files))
 	require.FileExists(t, w.HCLFile("lab"))
-	lockAfter, err := os.Stat(filepath.Join(w.runsDir, ".workspace-locks", "lab.lock"))
+	lockAfter, err := os.Stat(filepath.Join(w.RunsDir, ".workspace-locks", "lab.lock"))
 	require.NoError(t, err)
 	require.True(t, os.SameFile(lockBefore, lockAfter), "deletion must not replace the lock inode")
 }
@@ -66,7 +67,7 @@ func TestWorkspacePublicationWaitHonorsCancellationAcrossProcesses(t *testing.T)
 	files := map[string][]byte{"field.sysbox.hcl": []byte("old")}
 	require.NoError(t, w.UpsertProject(context.Background(), "lab", files))
 	pinned := w.HCLFile("lab")
-	lockPath := filepath.Join(w.runsDir, ".workspace-locks", "lab.lock")
+	lockPath := filepath.Join(w.RunsDir, ".workspace-locks", "lab.lock")
 	require.NoError(t, os.MkdirAll(filepath.Dir(lockPath), 0700))
 	cmd := exec.Command(os.Args[0], "-test.run=^TestWorkspacePublicationLockProcess$")
 	cmd.Env = append(os.Environ(), "SYSBOX_TEST_WORKSPACE_LOCK="+lockPath)
@@ -116,10 +117,10 @@ func TestWorkspaceDeleteOrdersConcurrentPublication(t *testing.T) {
 	w := NewServer(t.TempDir(), t.TempDir()).workspaceService()
 	require.NoError(t, w.UpsertProject(context.Background(), "lab", map[string][]byte{"field.sysbox.hcl": []byte("old")}))
 	pinned := w.HCLFile("lab")
-	manager := w.stateManager
-	other := newWorkspaceService(w.runsDir, w.workspacesDir, "", manager, nil)
+	manager := w.StateManager
+	other := workspace.New(w.RunsDir, w.WorkspacesDir, "", manager, nil)
 	entered, release := make(chan struct{}), make(chan struct{})
-	w.stateManager = func(topology string) (*state.Manager, error) {
+	w.StateManager = func(topology string) (*state.Manager, error) {
 		close(entered)
 		<-release
 		return manager(topology)
@@ -275,7 +276,7 @@ func TestUpsertProjectFailedPointerPublishKeepsPinnedRevision(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir()).workspaceService()
 	require.NoError(t, s.UpsertProject(context.Background(), "proj", map[string][]byte{"field.sysbox.hcl": []byte("old")}))
 	pinned := s.HCLFile("proj")
-	current := filepath.Join(s.workspacesDir, "proj", ".current")
+	current := filepath.Join(s.WorkspacesDir, "proj", ".current")
 	require.NoError(t, os.Remove(current))
 	require.NoError(t, os.Mkdir(current, 0700))
 	err := s.UpsertProject(context.Background(), "proj", map[string][]byte{"field.sysbox.hcl": []byte("new")})
@@ -287,9 +288,9 @@ func TestUpsertProjectFailedPointerPublishKeepsPinnedRevision(t *testing.T) {
 
 func TestValidateRelPath(t *testing.T) {
 	for _, p := range []string{"field.sysbox.hcl", "modules/web/main.hcl", "files/run.txt", "a.b/c-d_e"} {
-		require.NoError(t, validateRelPath(p), "path %q must be accepted", p)
+		require.NoError(t, workspace.ValidateRelPath(p), "path %q must be accepted", p)
 	}
 	for _, p := range []string{"", "../evil", "a/../../evil", "/etc/passwd", `a\b`, "a//b", ".", "..", "a/./b", "a/../b"} {
-		require.Error(t, validateRelPath(p), "path %q must be rejected", p)
+		require.Error(t, workspace.ValidateRelPath(p), "path %q must be rejected", p)
 	}
 }

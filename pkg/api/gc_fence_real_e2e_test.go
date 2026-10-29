@@ -20,7 +20,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
+
 	libvirtprovider "github.com/oslab/sysbox/pkg/provider/libvirt"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/stretchr/testify/require"
@@ -124,7 +126,7 @@ func TestGCFenceWholeVMDispositionE2E(t *testing.T) {
 	reservation := persistence.GCReservation{ID: "gc-fencing-real", AgentID: "gc-host", Candidate: candidate}
 	require.NoError(t, s.reserveGCWithAuthority(ctx, "gc-lab", reservation))
 	require.NoError(t, s.publishGCReservation(ctx, "gc-lab", reservation))
-	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
 	session, err := authority.OpenSession(ctx, "gc-host", "process", "")
 	require.NoError(t, err)
 	cmd, ok, err := s.apiStore.AcquireAgentCommandLease(ctx, "gc-host", reservation.ID, "worker", time.Minute)
@@ -135,7 +137,7 @@ func TestGCFenceWholeVMDispositionE2E(t *testing.T) {
 	require.NoError(t, err)
 	signed, err := controlplane.SignExecutionGrant(issuer, *grant, oldBoot, time.Now())
 	require.NoError(t, err)
-	request := controlplane.HostFenceRequest{Version: 1, ID: "gcf-real", Topology: "gc-lab", RunID: reservation.ID, LabID: lab.ID, ControllerKey: controllerPub, JournalSHA256: gcEvidenceHash(reservation), Grant: *grant}
+	request := controlplane.HostFenceRequest{Version: 1, ID: "gcf-real", Topology: "gc-lab", RunID: reservation.ID, LabID: lab.ID, ControllerKey: controllerPub, JournalSHA256: controlstore.GcEvidenceHash(reservation), Grant: *grant}
 	probe := map[string]any{"identity": agent.Identity{ID: "gc-host", Secret: secret, APIURL: strings.Replace(server.URL, "127.0.0.1", "10.0.2.2", 1)}, "issuer_key": issuerPub, "host_key": hostKey, "root": journalRoot, "candidate": candidate, "grant": signed, "fence_id": request.ID, "mode": "intent", "output": "/var/tmp/sysbox-gc-proof.json"}
 	probe["kernel"] = "/var/tmp/gc-vmlinux"
 	probe["rootfs"] = "/var/tmp/gc-rootfs.ext4"

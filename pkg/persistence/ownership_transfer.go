@@ -11,8 +11,6 @@ import (
 	"github.com/oslab/sysbox/pkg/runtime"
 )
 
-const OwnershipRetirementFormatVersion = 10
-
 // RetireOwnership must be called while the source authority storage is locked.
 // It never calls providers and never treats lease expiry as process exclusion.
 func (r *Repository) RetireOwnership(ctx context.Context, plan controlplane.OwnershipTransferPlan, authority []byte) (controlplane.OwnershipRetirementProof, error) {
@@ -73,9 +71,7 @@ func retireOwnership(a *aggregate, plan controlplane.OwnershipTransferPlan, auth
 	a.State.RemoveResource(addr)
 	a.Serial++
 	a.UpdatedAt = time.Now().UTC()
-	if a.Format != OwnershipTargetFormatVersion && a.Format != GCAdmissionFormatVersion && a.Format != IntentDispositionFormatVersion && a.Format != AdoptionRecoveryFormatVersion && a.Format != LegacyAdoptionRecoveryFormatVersion {
-		a.Format = OwnershipRetirementFormatVersion
-	}
+
 	stateRaw, err := json.Marshal(a.State)
 	if err != nil {
 		return zero, err
@@ -92,9 +88,7 @@ func retireOwnership(a *aggregate, plan controlplane.OwnershipTransferPlan, auth
 // binds the retired owner; current state may have a new UID but may never
 // reclaim the same external object or old resource identity.
 func validateOwnershipRetirements(a *aggregate) error {
-	if len(a.OwnershipRetirements) > 0 && a.Format != OwnershipRetirementFormatVersion && a.Format != OwnershipTargetFormatVersion && a.Format != GCAdmissionFormatVersion && a.Format != IntentDispositionFormatVersion && a.Format != AdoptionRecoveryFormatVersion && a.Format != LegacyAdoptionRecoveryFormatVersion {
-		return ErrCorruptRecord
-	}
+
 	for id, proof := range a.OwnershipRetirements {
 		digest, err := proof.Plan.Digest()
 		if err != nil || id != proof.Plan.ID || proof.PlanDigest != digest || proof.SourceEpoch == 0 || proof.SourceStateDigest == "" || proof.RetiredAt.IsZero() {

@@ -7,17 +7,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/stretchr/testify/require"
-	_ "modernc.org/sqlite"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
+	_ "modernc.org/sqlite"
 )
 
 func TestSQLiteAPIStoreRoundTripsResetTargetAndUnsafeState(t *testing.T) {
-	store := &sqliteAPIStore{dbPath: filepath.Join(t.TempDir(), "api.db")}
+	store := &controlstore.SQLite{DbPath: filepath.Join(t.TempDir(), "api.db")}
 	run := controlplane.Run{ID: "reset-1", Topology: "mixed", Operation: "reset", Op: "reset", Status: controlplane.RunQueued, Target: "sysbox_node.web", UnsafeState: true}
 	require.NoError(t, store.SaveRun(context.Background(), run))
 
@@ -28,7 +29,7 @@ func TestSQLiteAPIStoreRoundTripsResetTargetAndUnsafeState(t *testing.T) {
 }
 
 func TestSQLiteAPIStoreRoundTripsDeadlineAt(t *testing.T) {
-	store := &sqliteAPIStore{dbPath: filepath.Join(t.TempDir(), "api.db")}
+	store := &controlstore.SQLite{DbPath: filepath.Join(t.TempDir(), "api.db")}
 	deadline := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
 	run := controlplane.Run{ID: "apply-1", Topology: "mixed", Operation: "apply", Op: "apply", Status: controlplane.RunQueued, DeadlineAt: deadline}
 	require.NoError(t, store.SaveRun(context.Background(), run))
@@ -44,7 +45,7 @@ func TestSQLiteAPIStoreRoundTripsDeadlineAt(t *testing.T) {
 }
 
 func TestSQLiteAgentCommandRoundTripsGuestFilePut(t *testing.T) {
-	store := &sqliteAPIStore{dbPath: filepath.Join(t.TempDir(), "api.db"), runsDir: t.TempDir()}
+	store := &controlstore.SQLite{DbPath: filepath.Join(t.TempDir(), "api.db"), RunsDir: t.TempDir()}
 	want := controlplane.AgentCommand{ID: "cmd-file", AgentID: "host-a", Type: "guest_file_put", FilePut: &controlplane.GuestFilePut{ID: "file-1", Topology: "lab", Node: "web", Path: "/flag", Mode: 0, Size: 3, SHA256: "abc", FetchRef: "/private"}}
 	require.NoError(t, store.SaveAgentCommand(context.Background(), want))
 	got, err := store.ListAgentCommands(context.Background(), "host-a")
@@ -54,9 +55,9 @@ func TestSQLiteAgentCommandRoundTripsGuestFilePut(t *testing.T) {
 }
 
 func TestAgentCommandStoresRejectStaleStatusRegression(t *testing.T) {
-	stores := map[string]apiStore{
-		"local":  &localAPIStore{runsDir: t.TempDir()},
-		"sqlite": &sqliteAPIStore{dbPath: filepath.Join(t.TempDir(), "api.db"), runsDir: t.TempDir()},
+	stores := map[string]controlstore.Store{
+		"local":  &controlstore.Local{RunsDir: t.TempDir()},
+		"sqlite": &controlstore.SQLite{DbPath: filepath.Join(t.TempDir(), "api.db"), RunsDir: t.TempDir()},
 	}
 	for name, store := range stores {
 		t.Run(name, func(t *testing.T) {
@@ -81,9 +82,9 @@ func TestAgentCommandStoresRejectStaleStatusRegression(t *testing.T) {
 }
 
 func TestGlobalRevisionStoreRoundTrip(t *testing.T) {
-	stores := map[string]apiStore{
-		"local":  &localAPIStore{runsDir: t.TempDir()},
-		"sqlite": &sqliteAPIStore{dbPath: filepath.Join(t.TempDir(), "api.db"), runsDir: t.TempDir()},
+	stores := map[string]controlstore.Store{
+		"local":  &controlstore.Local{RunsDir: t.TempDir()},
+		"sqlite": &controlstore.SQLite{DbPath: filepath.Join(t.TempDir(), "api.db"), RunsDir: t.TempDir()},
 	}
 	for name, store := range stores {
 		t.Run(name, func(t *testing.T) {
@@ -112,7 +113,7 @@ func TestGlobalRevisionStoreRoundTrip(t *testing.T) {
 			require.Equal(t, rev.Size, got.Size)
 
 			_, err = store.GetGlobalRevision(ctx, "sha256:unknown")
-			require.ErrorIs(t, err, errGlobalRevisionNotFound)
+			require.ErrorIs(t, err, controlstore.ErrRevisionNotFound)
 		})
 	}
 }
@@ -134,12 +135,12 @@ func TestSQLiteGlobalRevisionOldSchemaRequiresRebuild(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, legacy.Close())
 
-	store := &sqliteAPIStore{dbPath: dbPath, runsDir: t.TempDir()}
+	store := &controlstore.SQLite{DbPath: dbPath, RunsDir: t.TempDir()}
 
 	_, err = store.GetGlobalRevision(context.Background(), "sha256:legacy")
 	require.ErrorIs(t, err, persistence.ErrUnsupportedVersion)
 	require.ErrorContains(t, err, "rebuild")
-	require.NotErrorIs(t, err, errGlobalRevisionNotFound)
+	require.NotErrorIs(t, err, controlstore.ErrRevisionNotFound)
 	legacy, err = sql.Open("sqlite", dbPath)
 	require.NoError(t, err)
 	defer legacy.Close()
@@ -174,12 +175,12 @@ func TestResourceProjectionStoreRoundTrip(t *testing.T) {
 }
 
 func TestLocalAPIStorePersistsRunCheckpointAndHealth(t *testing.T) {
-	store := &localAPIStore{runsDir: t.TempDir()}
+	store := &controlstore.Local{RunsDir: t.TempDir()}
 	ctx := context.Background()
 
 	version, err := store.SchemaVersion(ctx)
 	require.NoError(t, err)
-	require.Equal(t, apiSchemaVersion, version)
+	require.Equal(t, controlstore.SchemaVersion, version)
 
 	run := controlplane.Run{ID: "run-1", Topology: "mixed", Op: "apply", Status: controlplane.RunRunning, StartedAt: time.Now().UTC()}
 	require.NoError(t, store.SaveRun(ctx, run))
@@ -194,39 +195,31 @@ func TestLocalAPIStorePersistsRunCheckpointAndHealth(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "run-1", gotCP.RunID)
 
-	snap := HealthSnapshot{Topology: "mixed", Observed: time.Now().UTC(), Policy: SupervisorPolicyObserveOnly}
+	snap := controlstore.HealthSnapshot{Topology: "mixed", Observed: time.Now().UTC(), Policy: SupervisorPolicyObserveOnly}
 	require.NoError(t, store.SaveHealth(ctx, "mixed", snap))
 	gotHealth, err := store.LoadHealth(ctx, "mixed")
 	require.NoError(t, err)
 	require.Equal(t, "mixed", gotHealth.Topology)
 }
 
-func TestAPISchemaHasNoMigrationLadder(t *testing.T) {
-	require.NotContains(t, apiPostgresSchema, "ALTER TABLE")
-	require.NotContains(t, apiPostgresSchema, "IF NOT EXISTS")
-	for _, shape := range apiPostgresTableShapes {
-		require.Contains(t, apiPostgresSchema, "CREATE TABLE "+shape.table+" (")
-	}
-}
-
 func TestDSNWithoutSysboxQueryPreservesPostgresConnectionOptions(t *testing.T) {
-	got := dsnWithoutSysboxQuery("postgres://user:pass@localhost/sysbox?sslmode=disable&search_path=isolated&topology=lab")
+	got := controlstore.DsnWithoutSysboxQuery("postgres://user:pass@localhost/sysbox?sslmode=disable&search_path=isolated&topology=lab")
 	require.Contains(t, got, "sslmode=disable")
 	require.Contains(t, got, "search_path=isolated")
 	require.NotContains(t, got, "topology=")
 }
 
 func TestPostgresAPIStoreRejectsUnreachableDSN(t *testing.T) {
-	_, err := newAPIStore(t.TempDir(), "postgres://127.0.0.1:1/nonexistent")
+	_, err := controlstore.New(t.TempDir(), "postgres://127.0.0.1:1/nonexistent")
 	require.Error(t, err)
 }
 
 func TestSQLiteRunDispatchRollsBackRunWhenCommandInsertFails(t *testing.T) {
-	store := &sqliteAPIStore{dbPath: filepath.Join(t.TempDir(), "api.db")}
+	store := &controlstore.SQLite{DbPath: filepath.Join(t.TempDir(), "api.db")}
 	ctx := context.Background()
 	require.NoError(t, store.SaveAgentCommand(ctx, controlplane.AgentCommand{ID: "run-conflict", AgentID: "host-a", Type: "existing", Status: controlplane.AgentCommandStatusQueued}))
 	run := controlplane.Run{ID: "op-rollback", Topology: "lab", Operation: "destroy", Op: "destroy", Status: controlplane.RunAssigned, AgentID: "host-a"}
-	_, _, err := store.CreateRunDispatch(ctx, RunDispatchRequest{
+	_, _, err := store.CreateRunDispatch(ctx, controlstore.RunDispatchRequest{
 		Run:         run,
 		Fingerprint: "fingerprint-rollback",
 		Command:     controlplane.AgentCommand{TopologyUID: "owner", ID: "run-conflict", AgentID: "host-a", Type: "run_assigned", Status: controlplane.AgentCommandStatusQueued},
@@ -241,7 +234,7 @@ func TestSQLiteRunDispatchRollsBackRunWhenCommandInsertFails(t *testing.T) {
 }
 
 func TestLocalAPIStorePersistsAgentAndClaimLease(t *testing.T) {
-	store := &localAPIStore{runsDir: t.TempDir()}
+	store := &controlstore.Local{RunsDir: t.TempDir()}
 	ctx := context.Background()
 
 	agent := controlplane.Agent{ID: "host-a", Status: "online", Disabled: true, Capabilities: []string{"docker"}}

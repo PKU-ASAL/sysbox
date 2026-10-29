@@ -7,28 +7,29 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
 )
 
-func eachRunLeaseStore(t *testing.T, test func(*testing.T, apiStore)) {
+func eachRunLeaseStore(t *testing.T, test func(*testing.T, controlstore.Store)) {
 	t.Helper()
 	for _, kind := range []string{"local", "sqlite", "postgres"} {
 		t.Run(kind, func(t *testing.T) {
 			if kind == "postgres" {
-				s := &postgresAPIStore{dsn: isolatedPostgresTestDSN(t)}
-				pool, err := s.poolFor(context.Background())
+				s := &controlstore.Postgres{DSN: isolatedPostgresTestDSN(t)}
+				pool, err := s.PoolFor(context.Background())
 				require.NoError(t, err)
 				t.Cleanup(pool.Close)
 				test(t, s)
 				return
 			}
 			if kind == "local" {
-				test(t, &localAPIStore{runsDir: t.TempDir()})
+				test(t, &controlstore.Local{RunsDir: t.TempDir()})
 				return
 			}
-			s := &sqliteAPIStore{dbPath: filepath.Join(t.TempDir(), "runs.db"), runsDir: t.TempDir()}
-			db, err := s.open()
+			s := &controlstore.SQLite{DbPath: filepath.Join(t.TempDir(), "runs.db"), RunsDir: t.TempDir()}
+			db, err := s.OpenDB()
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, db.Close()) })
 			test(t, s)
@@ -36,7 +37,7 @@ func eachRunLeaseStore(t *testing.T, test func(*testing.T, apiStore)) {
 	}
 }
 func TestRunLeaseRejectsInvalidTTLAndExpiredDeadline(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, s controlstore.Store) {
 		ctx := context.Background()
 		run := controlplane.Run{ID: "run", Topology: "lab", AgentID: "agent", Status: controlplane.RunAssigned}
 		require.NoError(t, s.SaveRun(ctx, run))
@@ -56,7 +57,7 @@ func TestRunLeaseRejectsInvalidTTLAndExpiredDeadline(t *testing.T) {
 	})
 }
 func TestRunLeaseCannotRenewExpiredOrShortenLiveLease(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, s controlstore.Store) {
 		ctx := context.Background()
 		expired := controlplane.Run{ID: "expired", Topology: "lab", AgentID: "agent", Status: controlplane.RunRunning, LeaseOwner: "worker", LeaseUntil: time.Now().Add(-time.Minute)}
 		require.NoError(t, s.SaveRun(ctx, expired))
@@ -75,7 +76,7 @@ func TestRunLeaseCannotRenewExpiredOrShortenLiveLease(t *testing.T) {
 	})
 }
 func TestRunLeaseUsesLatestCompleteSnapshot(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, s controlstore.Store) {
 		ctx := context.Background()
 		old := controlplane.Run{ID: "history", Topology: "lab", AgentID: "old-agent", Status: controlplane.RunQueued, Revision: "old"}
 		require.NoError(t, s.SaveRun(ctx, old))
@@ -97,7 +98,7 @@ func TestRunLeaseUsesLatestCompleteSnapshot(t *testing.T) {
 }
 
 type staleRunScan struct {
-	apiStore
+	controlstore.Store
 	snapshot controlplane.Run
 }
 
@@ -105,13 +106,13 @@ func (s staleRunScan) LoadRuns(context.Context) ([]controlplane.Run, error) {
 	return []controlplane.Run{s.snapshot}, nil
 }
 func TestRunLeaseExpiryDoesNotOverwriteConcurrentRenewal(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, s controlstore.Store) {
 		now := time.Now().UTC()
 		live := controlplane.Run{ID: "renewed", Topology: "lab", AgentID: "agent", Status: controlplane.RunRunning, LeaseOwner: "worker", LeaseUntil: now.Add(time.Hour)}
 		require.NoError(t, s.SaveRun(context.Background(), live))
 		stale := live
 		stale.LeaseUntil = now.Add(-time.Second)
-		jobs := newJobsWithPolicy(t.TempDir(), staleRunScan{apiStore: s, snapshot: stale}, false, time.Minute, "fail_recoverable")
+		jobs := newJobsWithPolicy(t.TempDir(), staleRunScan{Store: s, snapshot: stale}, false, time.Minute, "fail_recoverable")
 		jobs.markExpiredLeases(now)
 		stored, err := s.GetRun(context.Background(), live.ID)
 		require.NoError(t, err)
@@ -120,16 +121,16 @@ func TestRunLeaseExpiryDoesNotOverwriteConcurrentRenewal(t *testing.T) {
 	})
 }
 
-type declinedRunClaim struct{ apiStore }
+type declinedRunClaim struct{ controlstore.Store }
 
 func (s declinedRunClaim) ClaimRun(context.Context, string, string, string, time.Duration) (*controlplane.Run, bool, error) {
 	return nil, false, nil
 }
 func TestRunClaimCannotFallBackToMemoryAuthorization(t *testing.T) {
-	s := &localAPIStore{runsDir: t.TempDir()}
+	s := &controlstore.Local{RunsDir: t.TempDir()}
 	initial := controlplane.Run{ID: "declined", Topology: "lab", AgentID: "agent", Status: controlplane.RunAssigned}
 	require.NoError(t, s.SaveRun(context.Background(), initial))
-	j := newJobsWithRecovery(s.runsDir, declinedRunClaim{apiStore: s}, false)
+	j := newJobsWithRecovery(s.RunsDir, declinedRunClaim{Store: s}, false)
 	_, err := j.claim(initial.ID, initial.AgentID)
 	require.Error(t, err)
 	stored, err := s.GetRun(context.Background(), initial.ID)
@@ -138,7 +139,7 @@ func TestRunClaimCannotFallBackToMemoryAuthorization(t *testing.T) {
 }
 
 func TestRunSaveCannotBypassLeaseOwnershipOrTerminalState(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, s controlstore.Store) {
 		ctx := context.Background()
 		initial := controlplane.Run{ID: "protected", Topology: "lab", AgentID: "agent", Status: controlplane.RunAssigned}
 		require.NoError(t, s.SaveRun(ctx, initial))
@@ -163,10 +164,10 @@ func TestRunSaveCannotBypassLeaseOwnershipOrTerminalState(t *testing.T) {
 	})
 }
 func TestRunDispatchPreservesDeadlineAndSnapshot(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, s controlstore.Store) {
 		ctx := context.Background()
 		run := controlplane.Run{ID: "dispatch-deadline", Topology: "lab", AgentID: "agent", Status: controlplane.RunAssigned, DeadlineAt: time.Now().UTC().Add(-time.Minute), SnapshotPath: "/pinned/field.sysbox.hcl"}
-		_, created, err := s.CreateRunDispatch(ctx, RunDispatchRequest{Run: run, Fingerprint: "fingerprint", Command: controlplane.AgentCommand{TopologyUID: "owner", ID: "command", AgentID: run.AgentID, Status: controlplane.AgentCommandStatusQueued, Type: "run_assigned", Run: &run}})
+		_, created, err := s.CreateRunDispatch(ctx, controlstore.RunDispatchRequest{Run: run, Fingerprint: "fingerprint", Command: controlplane.AgentCommand{TopologyUID: "owner", ID: "command", AgentID: run.AgentID, Status: controlplane.AgentCommandStatusQueued, Type: "run_assigned", Run: &run}})
 		require.NoError(t, err)
 		require.True(t, created)
 		got, err := s.GetRun(ctx, run.ID)
@@ -180,12 +181,12 @@ func TestRunDispatchPreservesDeadlineAndSnapshot(t *testing.T) {
 }
 
 func TestRunDispatchAttachesCommandToExistingAssignedRun(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, s controlstore.Store) {
 		ctx := context.Background()
 		run := controlplane.Run{ID: "assigned-existing", Topology: "lab", AgentID: "agent", Status: controlplane.RunAssigned}
 		require.NoError(t, s.SaveRun(ctx, run))
 		cmd := controlplane.AgentCommand{TopologyUID: "owner", ID: "run-assigned-existing", AgentID: "agent", Type: "run_assigned", Status: controlplane.AgentCommandStatusQueued, Protocol: controlplane.AgentProtocolVersion, Run: &run}
-		_, created, err := s.CreateRunDispatch(ctx, RunDispatchRequest{Run: run, Command: cmd, Fingerprint: "run-dispatch:assigned-existing"})
+		_, created, err := s.CreateRunDispatch(ctx, controlstore.RunDispatchRequest{Run: run, Command: cmd, Fingerprint: "run-dispatch:assigned-existing"})
 		require.NoError(t, err)
 		require.False(t, created)
 		commands, err := s.ListAgentCommands(ctx, "agent")
@@ -195,14 +196,14 @@ func TestRunDispatchAttachesCommandToExistingAssignedRun(t *testing.T) {
 	})
 }
 func TestRunRepositoryRejectsMalformedIdentity(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, s controlstore.Store) {
 		for _, bad := range []controlplane.Run{{ID: "bad/key", Topology: "lab", Status: controlplane.RunQueued}, {ID: "alias", Topology: "lab", Status: controlplane.RunQueued, Operation: "apply", Op: "destroy"}} {
 			require.Error(t, s.SaveRun(context.Background(), bad))
 		}
 	})
 }
 func TestRunRestartRejectsOldIncarnationWrites(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, s controlstore.Store) {
 		ctx := context.Background()
 		initial := controlplane.Run{ID: "repeat", Topology: "lab", Operation: "apply", OperationKey: "request", AgentID: "agent", Status: controlplane.RunAssigned, QueuedAt: time.Now().UTC().Add(-time.Second)}
 		require.NoError(t, s.SaveRun(ctx, initial))
@@ -236,7 +237,7 @@ func TestRunRestartRejectsOldIncarnationWrites(t *testing.T) {
 }
 
 func TestRunClaimDoesNotAttachInputsFromPreviousRound(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, s controlstore.Store) {
 		ctx := context.Background()
 		current := controlplane.Run{ID: "round", Topology: "lab", AgentID: "agent", Status: controlplane.RunAssigned, QueuedAt: time.Now().UTC()}
 		require.NoError(t, s.SaveRun(ctx, current))
@@ -251,13 +252,13 @@ func TestRunClaimDoesNotAttachInputsFromPreviousRound(t *testing.T) {
 	})
 }
 func TestRunClaimRejectsLostApplyInputs(t *testing.T) {
-	s := &localAPIStore{runsDir: t.TempDir()}
-	jobs := newJobsWithRecovery(s.runsDir, s, false)
+	s := &controlstore.Local{RunsDir: t.TempDir()}
+	jobs := newJobsWithRecovery(s.RunsDir, s, false)
 	inputs := map[string]string{"flag": "transient-secret"}
 	revision := "revision"
 	run := jobs.startWithOptions("lab", "apply", runStartOptions{AgentID: "agent", Revision: revision, OperationKey: applyOperationKey(revision, inputs, false), Inputs: inputs})
 	require.NoError(t, jobs.assign(run, "agent"))
-	reloaded := newJobsWithRecovery(s.runsDir, s, false)
+	reloaded := newJobsWithRecovery(s.RunsDir, s, false)
 	_, err := reloaded.claim(run.ID, "agent")
 	require.Error(t, err)
 	stored, err := s.GetRun(context.Background(), run.ID)
@@ -269,7 +270,7 @@ func TestRunClaimRejectsLostApplyInputs(t *testing.T) {
 }
 
 func TestRunCoalescingUsesDurableCurrentRound(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, s controlstore.Store) {
 		a := newJobsWithRecovery(t.TempDir(), s, false)
 		b := newJobsWithRecovery(t.TempDir(), s, false)
 		opts := runStartOptions{OperationKey: "coalesce", AgentID: "agent"}
@@ -290,20 +291,20 @@ func TestRunCoalescingUsesDurableCurrentRound(t *testing.T) {
 	})
 }
 func TestRemoteRunStatusSurvivesAPIReconstruction(t *testing.T) {
-	s := &localAPIStore{runsDir: t.TempDir()}
-	j := newJobsWithRecovery(s.runsDir, s, false)
+	s := &controlstore.Local{RunsDir: t.TempDir()}
+	j := newJobsWithRecovery(s.RunsDir, s, false)
 	run := j.startWithOptions("lab", "apply", runStartOptions{AgentID: "agent"})
 	require.NoError(t, j.assign(run, "agent"))
 	_, err := j.claim(run.ID, "agent")
 	require.NoError(t, err)
-	reloaded := newJobsWithRecovery(s.runsDir, s, true)
+	reloaded := newJobsWithRecovery(s.RunsDir, s, true)
 	got, ok := reloaded.get(run.ID)
 	require.True(t, ok)
 	require.Equal(t, controlplane.RunRunning, got.Status)
 }
 
 func TestStatusReadPreservesInputsForCurrentRound(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, s controlstore.Store) {
 		j := newJobsWithRecovery(t.TempDir(), s, false)
 		inputs := map[string]string{"SECRET": "current-round"}
 		run := j.startWithOptions("lab", "apply", runStartOptions{AgentID: "agent", Inputs: inputs})
@@ -317,20 +318,20 @@ func TestStatusReadPreservesInputsForCurrentRound(t *testing.T) {
 }
 
 type afterRunClaim struct {
-	apiStore
+	controlstore.Store
 	after func()
 }
 
 func (s *afterRunClaim) ClaimRun(ctx context.Context, id, agent, owner string, ttl time.Duration) (*controlplane.Run, bool, error) {
-	run, ok, err := s.apiStore.ClaimRun(ctx, id, agent, owner, ttl)
+	run, ok, err := s.Store.ClaimRun(ctx, id, agent, owner, ttl)
 	if err == nil && ok && s.after != nil {
 		s.after()
 	}
 	return run, ok, err
 }
 func TestRunClaimReturnsValidatedInputsDespiteCacheRefresh(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
-		wrapped := &afterRunClaim{apiStore: s}
+	eachRunLeaseStore(t, func(t *testing.T, s controlstore.Store) {
+		wrapped := &afterRunClaim{Store: s}
 		jobs := newJobsWithRecovery(t.TempDir(), wrapped, false)
 		inputs := map[string]string{"SECRET": "validated"}
 		revision := "revision"
@@ -346,15 +347,15 @@ func TestRunClaimReturnsValidatedInputsDespiteCacheRefresh(t *testing.T) {
 func TestSQLiteRunRejectsConflictingIndexedSnapshot(t *testing.T) {
 	for _, column := range []string{"queued_at", "op", "operation_key"} {
 		t.Run(column, func(t *testing.T) {
-			s := &sqliteAPIStore{dbPath: filepath.Join(t.TempDir(), "runs.db")}
+			s := &controlstore.SQLite{DbPath: filepath.Join(t.TempDir(), "runs.db")}
 			run := controlplane.Run{ID: "record", Topology: "lab", Op: "apply", Status: controlplane.RunQueued, QueuedAt: time.Now().UTC()}
 			require.NoError(t, s.SaveRun(context.Background(), run))
-			db, err := s.open()
+			db, err := s.OpenDB()
 			require.NoError(t, err)
 			defer db.Close()
 			value := "different"
 			if column == "queued_at" {
-				value = formatSQLiteTime(run.QueuedAt.Add(time.Hour))
+				value = controlstore.FormatSQLiteTime(run.QueuedAt.Add(time.Hour))
 			}
 			_, err = db.Exec("UPDATE sysbox_runs SET "+column+"=? WHERE id=?", value, run.ID)
 			require.NoError(t, err)

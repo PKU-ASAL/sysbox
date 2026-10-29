@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
-
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/workspace"
+	"github.com/stretchr/testify/require"
 )
 
 const upsertApplyHCL = `resource "sysbox_node" "web" {
@@ -91,7 +91,7 @@ func TestApplyUpsertCreatesTopologyOnFirstCall(t *testing.T) {
 	rec := httptest.NewRecorder()
 	s.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/topologies/cf-upsert-a", nil))
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	var info WorkspaceInfo
+	var info workspace.Info
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &info))
 	require.True(t, info.HasHCL, "apply must materialize the revision HCL into the workspace")
 	require.Equal(t, "cf-upsert-a", info.Name)

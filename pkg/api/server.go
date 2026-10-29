@@ -13,9 +13,11 @@ import (
 
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/revisiongate"
 	"github.com/oslab/sysbox/pkg/state"
+	"github.com/oslab/sysbox/pkg/workspace"
 )
 
 // Server holds all API state and registers HTTP routes.
@@ -24,12 +26,12 @@ type Server struct {
 	fenceTargets   map[string]hostFenceTarget
 	grantSigner    ed25519.PrivateKey
 	grantHostKeys  map[string]ed25519.PublicKey
-	lifecycleRepositories
+	controlstore.LifecycleRepositories
 	runsDir       string
 	workspacesDir string
 	stateBackend  string
 	cfg           config.ServiceConfig
-	apiStore      apiStore
+	apiStore      controlstore.Store
 	initErr       error
 	agents        *agentRegistry
 	agentSvc      *AgentService
@@ -37,7 +39,7 @@ type Server struct {
 	jobs          *Jobs
 	runService    *RunService
 	scheduler     *SchedulerService
-	workspaces    *WorkspaceService
+	workspaces    *workspace.Catalog
 	nodeService   *NodeOperationService
 	consoleSvc    *ConsoleService
 	guestExecSvc  *GuestExecutionService
@@ -77,11 +79,11 @@ func newServerWithConfig(cfg config.ServiceConfig, recoverInterrupted bool) *Ser
 		workspacesDir = config.DefaultWorkspacesDir()
 	}
 	stateBackend := cfg.State.Backend
-	apiStore, remoteRegistry, initErr := openExecutionStorage(cfg, runsDir, stateBackend)
+	apiStore, remoteRegistry, initErr := controlstore.Open(cfg, runsDir, stateBackend)
 	if initErr != nil {
 		// Keep construction safe for non-Start consumers; Start reports the
 		// error so the API server refuses to bind.
-		apiStore = &localAPIStore{runsDir: runsDir}
+		apiStore = &controlstore.Local{RunsDir: runsDir}
 	}
 	s := &Server{remoteRegistry: remoteRegistry,
 		runsDir:       runsDir,
@@ -112,18 +114,18 @@ func newServerWithConfig(cfg config.ServiceConfig, recoverInterrupted bool) *Ser
 			s.initErr = fmt.Errorf("initialize run history: %w", err)
 		}
 	}
-	s.workspaces = newWorkspaceService(s.runsDir, s.workspacesDir, s.stateBackend, s.stateManager, s.apiStore)
-	s.workspaces.gcSourceID = s.cfg.GCPublicationSource
-	s.workspaces.gcRepository = s.actionRepository
-	s.workspaces.loadRuns = s.apiStore.LoadRuns
-	s.workspaces.loadNodeOperations = s.apiStore.ListNodeOperations
-	s.workspaces.loadGuestActivity = s.apiStore.ListGuestActivity
-	s.workspaces.loadConsoleSessions = s.apiStore.ListConsoleSessions
-	s.workspaces.loadAgentCommands = s.loadMaintenanceCommands
-	s.workspaces.deleteState = s.deleteStateWithAuthority
-	s.workspaces.lockAdmission = s.jobs.lockTopology
-	if p, ok := s.apiStore.(durablePlacementStore); ok {
-		s.workspaces.placementStore = p
+	s.workspaces = workspace.New(s.runsDir, s.workspacesDir, s.stateBackend, s.stateManager, s.apiStore)
+	s.workspaces.GcSourceID = s.cfg.GCPublicationSource
+	s.workspaces.GcRepository = s.actionRepository
+	s.workspaces.LoadRuns = s.apiStore.LoadRuns
+	s.workspaces.LoadNodeOperations = s.apiStore.ListNodeOperations
+	s.workspaces.LoadGuestActivity = s.apiStore.ListGuestActivity
+	s.workspaces.LoadConsoleSessions = s.apiStore.ListConsoleSessions
+	s.workspaces.LoadAgentCommands = s.loadMaintenanceCommands
+	s.workspaces.DeleteState = s.deleteStateWithAuthority
+	s.workspaces.LockAdmission = s.jobs.lockTopology
+	if p, ok := s.apiStore.(controlstore.PlacementStore); ok {
+		s.workspaces.PlacementStore = p
 	}
 	s.scheduler = newSchedulerService(s)
 	s.nodeService = newNodeOperationService(s.workspaceService(), s.scheduling(), s.nodeOps, s.agentService().WakeCommand)
@@ -155,7 +157,7 @@ func (s *Server) stateManager(topology string) (*state.Manager, error) {
 }
 
 func (s *Server) actionRepository(topology string) (*persistence.Repository, error) {
-	return s.lifecycleRepositories.open(s.runsDir, s.stateBackend, topology)
+	return s.LifecycleRepositories.Open(s.runsDir, s.stateBackend, topology)
 }
 
 func (s *Server) runs() *RunService {
@@ -172,20 +174,20 @@ func (s *Server) scheduling() *SchedulerService {
 	return s.scheduler
 }
 
-func (s *Server) workspaceService() *WorkspaceService {
+func (s *Server) workspaceService() *workspace.Catalog {
 	if s.workspaces == nil {
-		s.workspaces = newWorkspaceService(s.runsDir, s.workspacesDir, s.stateBackend, s.stateManager, s.apiStore)
-		s.workspaces.gcSourceID = s.cfg.GCPublicationSource
-		s.workspaces.gcRepository = s.actionRepository
-		s.workspaces.loadRuns = s.apiStore.LoadRuns
-		s.workspaces.loadNodeOperations = s.apiStore.ListNodeOperations
-		s.workspaces.loadGuestActivity = s.apiStore.ListGuestActivity
-		s.workspaces.loadConsoleSessions = s.apiStore.ListConsoleSessions
-		s.workspaces.loadAgentCommands = s.loadMaintenanceCommands
-		s.workspaces.deleteState = s.deleteStateWithAuthority
-		s.workspaces.lockAdmission = s.jobs.lockTopology
-		if p, ok := s.apiStore.(durablePlacementStore); ok {
-			s.workspaces.placementStore = p
+		s.workspaces = workspace.New(s.runsDir, s.workspacesDir, s.stateBackend, s.stateManager, s.apiStore)
+		s.workspaces.GcSourceID = s.cfg.GCPublicationSource
+		s.workspaces.GcRepository = s.actionRepository
+		s.workspaces.LoadRuns = s.apiStore.LoadRuns
+		s.workspaces.LoadNodeOperations = s.apiStore.ListNodeOperations
+		s.workspaces.LoadGuestActivity = s.apiStore.ListGuestActivity
+		s.workspaces.LoadConsoleSessions = s.apiStore.ListConsoleSessions
+		s.workspaces.LoadAgentCommands = s.loadMaintenanceCommands
+		s.workspaces.DeleteState = s.deleteStateWithAuthority
+		s.workspaces.LockAdmission = s.jobs.lockTopology
+		if p, ok := s.apiStore.(controlstore.PlacementStore); ok {
+			s.workspaces.PlacementStore = p
 		}
 	}
 	return s.workspaces

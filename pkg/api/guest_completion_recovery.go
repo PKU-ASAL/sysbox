@@ -4,8 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/oslab/sysbox/pkg/persistence"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/persistence"
 )
 
 func (s *AgentService) reconcileGuestHostCompletions(ctx context.Context) error {

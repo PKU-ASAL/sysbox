@@ -2,9 +2,10 @@ package persistence
 
 import (
 	"encoding/json"
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"strings"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
 )
 
 func EncodeInventory(x controlplane.AgentInventory) ([]byte, error) {

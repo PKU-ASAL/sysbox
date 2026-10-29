@@ -6,13 +6,14 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/stretchr/testify/require"
 )
 
-func newTestAgentService(t *testing.T) (*AgentService, apiStore, *agentRegistry, *Jobs) {
+func newTestAgentService(t *testing.T) (*AgentService, controlstore.Store, *agentRegistry, *Jobs) {
 	t.Helper()
 	runsDir := t.TempDir()
-	store := &localAPIStore{runsDir: runsDir}
+	store := &controlstore.Local{RunsDir: runsDir}
 	registry := newAgentRegistry()
 	jobs := newJobsWithRecovery(runsDir, store, false)
 	consoles := newConsoleSessionHub(store)

@@ -12,6 +12,7 @@ import (
 	"os"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 )
 
@@ -23,7 +24,7 @@ type hostFenceTarget struct {
 func (s *Server) loadHostFenceTargets() error {
 	s.fenceTargets = map[string]hostFenceTarget{}
 	for agent, target := range s.cfg.API.ExecutionGrant.DisposableFenceTargets {
-		if validatePathSegment(agent, "agent") != nil || validatePathSegment(target.LabID, "lab") != nil || target.ControllerPublicKeyFile == "" {
+		if controlstore.ValidatePathSegment(agent, "agent") != nil || controlstore.ValidatePathSegment(target.LabID, "lab") != nil || target.ControllerPublicKeyFile == "" {
 			return fmt.Errorf("invalid disposable fence target")
 		}
 		key, err := os.ReadFile(target.ControllerPublicKeyFile)
@@ -58,7 +59,7 @@ func decodeFenceBody(w http.ResponseWriter, r *http.Request, target any) error {
 }
 func (s *Server) handleBeginHostFence(w http.ResponseWriter, r *http.Request) {
 	topology, key := r.PathValue("topology"), r.Header.Get("Idempotency-Key")
-	if validatePathSegment(topology, "topology") != nil || key == "" || len(key) > 128 {
+	if controlstore.ValidatePathSegment(topology, "topology") != nil || key == "" || len(key) > 128 {
 		writeError(w, 400, fmt.Errorf("valid topology and Idempotency-Key required"))
 		return
 	}
@@ -71,7 +72,7 @@ func (s *Server) handleBeginHostFence(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := fmt.Sprintf("hf-%x", sha256.Sum256([]byte(topology+"\x00"+key)))
-	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
 	prior, err := authority.ReadHostFence(r.Context(), id)
 	if err == nil {
 		a, _ := json.Marshal(prior.Request.Grant)
@@ -130,7 +131,7 @@ func (s *Server) handleBeginHostFence(w http.ResponseWriter, r *http.Request) {
 		}
 		cmd := record.Command
 		g := body.Grant
-		if cmd.Run == nil || cmd.ID != g.CommandID || cmd.AgentID != g.AgentID || cmd.ActionID != g.ActionID || cmd.TopologyUID != g.Scope.TopologyUID || cmd.Attempt < 1 || uint64(cmd.Attempt) < g.Attempt || !persistence.SameRunIncarnation(*run, *cmd.Run) {
+		if cmd.Run == nil || cmd.ID != g.CommandID || cmd.AgentID != g.AgentID || cmd.ActionID != g.ActionID || cmd.TopologyUID != g.Scope.TopologyUID || cmd.Attempt < 1 || uint64(cmd.Attempt) < g.Attempt || !controlplane.SameRunIncarnation(*run, *cmd.Run) {
 			return persistence.ErrConflict
 		}
 		payload, err := canonicalRunGrantRequest(cmd)
@@ -160,10 +161,10 @@ func (s *Server) handleGetHostFence(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) readHostFence(r *http.Request) (persistence.HostFenceRecord, error) {
 	topology, id := r.PathValue("topology"), r.PathValue("fence")
-	if validatePathSegment(topology, "topology") != nil || validatePathSegment(id, "fence") != nil {
+	if controlstore.ValidatePathSegment(topology, "topology") != nil || controlstore.ValidatePathSegment(id, "fence") != nil {
 		return persistence.HostFenceRecord{}, persistence.ErrInvalidRecord
 	}
-	record, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).ReadHostFence(r.Context(), id)
+	record, err := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore}).ReadHostFence(r.Context(), id)
 	if err != nil {
 		return record, err
 	}
@@ -183,7 +184,7 @@ func (s *Server) handleRecordHostFence(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, err)
 		return
 	}
-	repo := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	repo := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
 	if err := repo.RecordHostFence(r.Context(), record.Request.ID, receipt); err != nil {
 		writeError(w, 409, err)
 		return

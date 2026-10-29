@@ -3,10 +3,11 @@ package firecracker
 import (
 	"context"
 	"encoding/json"
-	"github.com/oslab/sysbox/pkg/driver"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/oslab/sysbox/pkg/driver"
 )
 
 func TestAttachNICInjectsEveryIPAndRejectsSecondNamespace(t *testing.T) {

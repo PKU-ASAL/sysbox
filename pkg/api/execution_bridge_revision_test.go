@@ -6,6 +6,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/hostexec"
 )
 
 func TestExecutionBridgeMaterializesOnlyCanonicalRevision(t *testing.T) {
@@ -13,7 +14,7 @@ func TestExecutionBridgeMaterializesOnlyCanonicalRevision(t *testing.T) {
 	cfg.Paths.RunsDir = t.TempDir()
 	cfg.Paths.WorkspacesDir = t.TempDir()
 	server := NewServerWithConfig(cfg)
-	bridge, err := NewExecutionBridge(cfg)
+	bridge, err := hostexec.Open(cfg)
 	requireNoError(t, err)
 	t.Cleanup(func() { _ = bridge.Close() })
 	files := map[string][]byte{"field.sysbox.hcl": []byte("# immutable host revision\n")}

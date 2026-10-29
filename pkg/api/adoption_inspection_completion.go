@@ -2,10 +2,11 @@ package api
 
 import (
 	"encoding/json"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/persistence"
-
 	"net/http"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/persistence"
 )
 
 func (s *Server) completeHostInspection(w http.ResponseWriter, r *http.Request, body HostNodeOperationCompletion) {
@@ -19,7 +20,7 @@ func (s *Server) completeHostInspection(w http.ResponseWriter, r *http.Request, 
 		writeError(w, 400, err)
 		return
 	}
-	if err := validateHostOperationReceipt(r.Context(), s.apiStore, body.Receipt); err != nil {
+	if err := controlstore.ValidateHostOperationReceipt(r.Context(), s.apiStore, body.Receipt); err != nil {
 		writeError(w, 409, err)
 		return
 	}
@@ -29,12 +30,12 @@ func (s *Server) completeHostInspection(w http.ResponseWriter, r *http.Request, 
 	var completed *controlplane.NodeOperation
 	var err error
 	switch store := s.apiStore.(type) {
-	case *localAPIStore:
-		completed, err = store.completeNodeOperation(r.Context(), agentID, id, &body.Receipt, transition)
-	case *sqliteAPIStore:
-		completed, err = store.completeNodeOperation(r.Context(), agentID, id, &body.Receipt, transition)
-	case *postgresAPIStore:
-		completed, err = store.completeNodeOperation(r.Context(), agentID, id, &body.Receipt, transition)
+	case *controlstore.Local:
+		completed, err = store.TransitionNodeOperation(r.Context(), agentID, id, &body.Receipt, transition)
+	case *controlstore.SQLite:
+		completed, err = store.TransitionNodeOperation(r.Context(), agentID, id, &body.Receipt, transition)
+	case *controlstore.Postgres:
+		completed, err = store.TransitionNodeOperation(r.Context(), agentID, id, &body.Receipt, transition)
 	default:
 		err = persistence.ErrUnsupportedVersion
 	}

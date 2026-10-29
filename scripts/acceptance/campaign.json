@@ -1104,7 +1104,7 @@
       "id": "upgrade-aggregate",
       "package": "./pkg/persistence",
       "tests": [
-        "TestFormat5ImportIsExplicitAndPreservesUnknownActions"
+        "TestLegacyAggregateVersionsAreRejectedWithoutImport"
       ],
       "kind": "upgrade",
       "race": true,
@@ -1430,7 +1430,7 @@
     },
     {
       "id": "file-reset-return",
-      "package": "./pkg/agentexec",
+      "package": "./pkg/hostexec",
       "tests": [
         "TestResetReturnCannotPublishRetiredRevision"
       ],
@@ -1980,7 +1980,7 @@
     },
     {
       "id": "intent-create-identity-agent",
-      "package": "./pkg/agentexec",
+      "package": "./pkg/hostexec",
       "tests": [
         "TestMissingIdentityObservationLoadsOnlyPinnedWorkspace"
       ],
@@ -2243,7 +2243,7 @@
     {
       "id": "recovery-inputs-host",
       "kind": "contract",
-      "package": "./pkg/agentexec",
+      "package": "./pkg/hostexec",
       "tests": [
         "TestHostRecoveryCommitsProvenJournalThroughSocketWithoutReplay"
       ],
@@ -2291,7 +2291,7 @@
     {
       "id": "p1-1-agentexec",
       "kind": "contract",
-      "package": "./pkg/agentexec",
+      "package": "./pkg/hostexec",
       "tests": [
         "TestRunWorkspaceLocalPathDoesNotRewriteCanonicalBinding"
       ],
@@ -2316,7 +2316,7 @@
     {
       "id": "p1-2-agentexec",
       "kind": "contract",
-      "package": "./pkg/agentexec",
+      "package": "./pkg/hostexec",
       "tests": [
         "TestHostRunExecutorRejectsChangedCanonicalClaimBeforeMaterialization"
       ],

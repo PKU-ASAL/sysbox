@@ -4,13 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/persistence"
-	"github.com/oslab/sysbox/pkg/state"
-	"github.com/stretchr/testify/require"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/oslab/sysbox/pkg/state"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSnapshotRestoreWorkflowReplaysAfterAPIReconstruction(t *testing.T) {
@@ -31,7 +33,7 @@ func TestSnapshotRestoreWorkflowReplaysAfterAPIReconstruction(t *testing.T) {
 	second, err := cold.restoreSnapshotWorkflow(ctx, "lab", plan)
 	require.NoError(t, err)
 	require.Equal(t, first.Receipt, second.Receipt)
-	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: cold.apiStore})
+	authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: cold.apiStore})
 	barrier, err := authority.BeginMaintenance(ctx, plan.ID, plan.TopologyUID, mustRestoreDigest(t, plan))
 	require.NoError(t, err)
 	require.True(t, barrier.Released)
@@ -71,7 +73,7 @@ func TestSnapshotRestoreHTTPPlanCommitAndAbandon(t *testing.T) {
 	// A separate prepared operation can be abandoned after all grants stop.
 	next, err := repo.PlanSnapshotRestore(ctx, "lab", snapshot.ID, "cancel-me", 0)
 	require.NoError(t, err)
-	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
 	_, err = authority.BeginMaintenance(ctx, next.ID, next.TopologyUID, mustRestoreDigest(t, next))
 	require.NoError(t, err)
 	abandoned := post("/restore-cancel", next)
@@ -90,7 +92,7 @@ func TestSnapshotRestoreWorkflowWaitsForStopAcrossRestart(t *testing.T) {
 	require.NoError(t, err)
 	plan, err := repo.PlanSnapshotRestore(ctx, "lab", snapshot.ID, "restore", 0)
 	require.NoError(t, err)
-	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
 	session, err := authority.OpenSession(ctx, "agent", "session", "")
 	require.NoError(t, err)
 	grant, err := authority.Issue(ctx, controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: plan.TopologyUID}, AgentID: "agent", SessionID: session.ID, ActionID: "action", CommandID: "command", Attempt: 1, Operation: "run_apply", Digest: "digest", TargetBootID: "host"}, time.Minute)

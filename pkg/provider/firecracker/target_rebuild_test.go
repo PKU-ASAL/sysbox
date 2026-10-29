@@ -3,11 +3,12 @@ package firecracker
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"testing"
+
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/stretchr/testify/require"
-	"os"
-	"testing"
 )
 
 func TestOldManifestRequiresExplicitRebuild(t *testing.T) {

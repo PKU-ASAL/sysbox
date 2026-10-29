@@ -212,3 +212,15 @@ func TestGCPublicationSourceIdentifierValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadServiceConfigStrictIgnoresEnvironmentProviderOverrides(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sysbox.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("version: 1\nproviders:\n  firecracker:\n    binary: /trusted/firecracker\n    jailer: /trusted/jailer\n    jail_root: /trusted/jails\n    cgroup_parent: trusted-vms\n"), 0600))
+	t.Setenv("SYSBOX_PROVIDER_FIRECRACKER_BIN", "/attacker/firecracker")
+	t.Setenv("SYSBOX_STATE_BACKEND", "sqlite:///attacker.db")
+	cfg, err := LoadServiceConfigStrict(path)
+	require.NoError(t, err)
+	require.Equal(t, "/trusted/firecracker", cfg.Providers.Firecracker.Binary)
+	require.Equal(t, "", cfg.State.Backend)
+}

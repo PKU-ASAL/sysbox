@@ -2,14 +2,17 @@ package api
 
 import (
 	"context"
-	"github.com/stretchr/testify/require"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/workspace"
+	"github.com/stretchr/testify/require"
 )
 
 func TestMetadataDeleteRetiredPublishersDoesNotReenroll(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		s.cfg.GCPublicationSource = "api"
@@ -37,7 +40,7 @@ func TestMetadataDeleteRetiredPublishersDoesNotReenroll(t *testing.T) {
 }
 
 func TestMetadataDeletionCleanupResumesAfterCommittedReset(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		s.cfg.GCPublicationSource = "api"
@@ -52,13 +55,13 @@ func TestMetadataDeletionCleanupResumesAfterCommittedReset(t *testing.T) {
 			require.NoError(t, repo.RetireGCSource(ctx, "lab", name, st.TopologyUID, source.Version))
 		}
 		w := s.workspaceService()
-		require.NoError(t, w.writeDeletionIntent(deletionIntent{Topology: "lab", UID: st.TopologyUID, Serial: st.Meta.Serial, Created: time.Now()}))
+		require.NoError(t, w.WriteDeletionIntent(workspace.DeletionIntent{Topology: "lab", UID: st.TopologyUID, Serial: st.Meta.Serial, Created: time.Now()}))
 		require.NoError(t, s.deleteStateWithAuthority(ctx, "lab", st.Meta.Serial, st.TopologyUID))
 		// New service instance has no cached deletion state. Recover only the same
 		// committed deletion, then finish local workspace/placement cleanup.
 		cold := *w
 		require.NoError(t, cold.RecoverDeletionIntents(ctx))
-		require.NoDirExists(t, filepath.Join(w.workspacesDir, "lab"))
-		require.NoFileExists(t, w.deletionIntentPath("lab"))
+		require.NoDirExists(t, filepath.Join(w.WorkspacesDir, "lab"))
+		require.NoFileExists(t, w.DeletionIntentPath("lab"))
 	})
 }

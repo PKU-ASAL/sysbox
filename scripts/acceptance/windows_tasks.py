@@ -8,12 +8,42 @@ import shlex
 import subprocess
 import uuid
 import time
+import tarfile
+import hashlib
 import two_vms as lab
+
+
+def release_helper(metadata_path, output):
+    metadata_path=Path(metadata_path).resolve()
+    metadata=json.loads(metadata_path.read_text())
+    target=[t for t in metadata['targets'] if t['os']=='windows' and t['architecture']=='amd64']
+    if len(target)!=1:
+        raise ValueError('exactly one released Windows helper required')
+    target=target[0]
+    if Path(target['archive']).name != target['archive']:
+        raise ValueError('invalid release archive path')
+    archive=metadata_path.parent/target['archive']
+    if lab.file_sha256(archive)!=target['sha256']:
+        raise ValueError('release archive digest mismatch')
+    with tarfile.open(archive) as tar:
+        members=tar.getmembers()
+        if {m.name for m in members}!={'sysbox-windows-task.exe','install.ps1','build-metadata.json'} or len(members)!=3 or not all(m.isfile() for m in members):
+            raise ValueError('unexpected Windows release members')
+        raw={m.name:tar.extractfile(m).read() for m in members}
+    info=json.loads(raw['build-metadata.json'])
+    if info['commit']!=metadata['commit'] or info['version']!=metadata['tag']:
+        raise ValueError('helper source identity mismatch')
+    for name,key in [('sysbox-windows-task.exe','helper_sha256'),('install.ps1','installer_sha256')]:
+        if hashlib.sha256(raw[name]).hexdigest()!=target[key]:
+            raise ValueError('helper/installer digest mismatch')
+        (output/name).write_bytes(raw[name])
+    return metadata['commit']
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', required=True)
+    parser.add_argument('--release-metadata', required=True, type=Path, help='verified release metadata; helper is never rebuilt by acceptance')
     parser.add_argument('--host-reboot', action='store_true', help='power-cycle only the pinned isolated lab after leaving an active task')
     parser.add_argument('--resume-root', help='retained matrix root inside isolated host, after verified guest reboot')
     parser.add_argument('--image', required=True, help='absolute qcow2 path inside execution VM')
@@ -27,13 +57,17 @@ def main():
     env = dict(os.environ, GOCACHE=os.environ.get('GOCACHE', '/tmp/sysbox-gocache'), CGO_ENABLED='0')
     windows = dict(env, GOOS='windows', GOARCH='amd64')
     files = {name: args.output.resolve() / name for name in ('sysbox-windows-task.exe', 'native.test.exe', 'libvirt.test')}
-    subprocess.run(['go', 'build', '-buildvcs=false', '-o', str(files['sysbox-windows-task.exe']), './cmd/sysbox-windows-task'], cwd=source, env=windows, check=True)
+    if subprocess.check_output(['git','status','--porcelain','--untracked-files=all'],cwd=source,text=True).strip():
+        raise ValueError('native test source must be a clean committed checkout')
+    commit=release_helper(args.release_metadata,args.output.resolve())
+    if subprocess.check_output(['git','rev-parse','HEAD'],cwd=source,text=True).strip()!=commit:
+        raise ValueError('native test source must match the release commit')
     subprocess.run(['go', 'test', '-c', '-o', str(files['native.test.exe']), './pkg/windowstask'], cwd=source, env=windows, check=True)
     subprocess.run(['go', 'test', '-c', '-tags=e2e', '-o', str(files['libvirt.test']), './pkg/provider/libvirt'], cwd=source, env=env, check=True)
-    files['install.ps1'] = source / 'scripts/windows/task/install.ps1'
+    files['install.ps1'] = args.output.resolve() / 'install.ps1'
     remote = '/var/tmp/sysbox-windows-tasks-' + uuid.uuid4().hex[:12]
     report = {'version': 1, 'lab_id': manifest['id'], 'image': args.image, 'remote': remote,
-              'status': 'failed', 'resume_root': args.resume_root, 'artifacts': {n: {'sha256': lab.file_sha256(p)} for n, p in files.items()}}
+              'commit':commit,'release_metadata':str(args.release_metadata.resolve()), 'status': 'failed', 'resume_root': args.resume_root, 'artifacts': {n: {'sha256': lab.file_sha256(p)} for n, p in files.items()}}
     lab.save(args.output / 'run.json', report)
     quote = shlex.quote
     result = lab.ssh(root, manifest, 'execution', 'mkdir -m 700 ' + quote(remote))

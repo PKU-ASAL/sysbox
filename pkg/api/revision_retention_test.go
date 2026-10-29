@@ -3,20 +3,22 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"github.com/oslab/sysbox/pkg/address"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/state"
-	"github.com/stretchr/testify/require"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/address"
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/state"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRevisionRetentionProtectsHistoricalRunsAndKeepsNewest(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		now := time.Now().UTC()
@@ -53,7 +55,7 @@ func TestRevisionRetentionRejectsCorruptContent(t *testing.T) {
 }
 
 func TestRevisionRetentionProtectsSnapshotOnlyAndNestedRevision(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		now := time.Now().UTC()
@@ -125,7 +127,7 @@ func TestRevisionRetentionRejectsOversizedRunHistory(t *testing.T) {
 	require.NoError(t, os.MkdirAll(dir, 0700))
 	f, err := os.Create(filepath.Join(dir, "runs.jsonl"))
 	require.NoError(t, err)
-	require.NoError(t, f.Truncate(maxRevisionInventoryBytes+1))
+	require.NoError(t, f.Truncate(controlstore.MaxRevisionInventoryBytes+1))
 	require.NoError(t, f.Close())
 	_, err = s.planRevisionRetention(context.Background(), RevisionRetentionPolicy{OlderThan: time.Now(), Limit: 1})
 	require.Error(t, err)

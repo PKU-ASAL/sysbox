@@ -2,13 +2,15 @@ package api
 
 import (
 	"encoding/json"
-	"github.com/oslab/sysbox/pkg/state"
 	"net/http"
+
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/state"
 )
 
 func (s *Server) handleCreateStateSnapshot(w http.ResponseWriter, r *http.Request) {
 	topology := r.PathValue("topology")
-	if err := validatePathSegment(topology, "topology"); err != nil {
+	if err := controlstore.ValidatePathSegment(topology, "topology"); err != nil {
 		writeError(w, 400, err)
 		return
 	}
@@ -33,11 +35,11 @@ func (s *Server) handleCreateStateSnapshot(w http.ResponseWriter, r *http.Reques
 }
 func (s *Server) handleDeleteStateSnapshot(w http.ResponseWriter, r *http.Request) {
 	topology, id := r.PathValue("topology"), r.PathValue("snapshot")
-	if err := validatePathSegment(topology, "topology"); err != nil {
+	if err := controlstore.ValidatePathSegment(topology, "topology"); err != nil {
 		writeError(w, 400, err)
 		return
 	}
-	if err := validatePathSegment(id, "snapshot"); err != nil {
+	if err := controlstore.ValidatePathSegment(id, "snapshot"); err != nil {
 		writeError(w, 400, err)
 		return
 	}

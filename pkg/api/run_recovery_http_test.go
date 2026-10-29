@@ -9,10 +9,10 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/stretchr/testify/require"
-
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/model"
+	"github.com/stretchr/testify/require"
 )
 
 func remoteRecoveryRequest(t *testing.T, s *Server, method, path string, body any) *httptest.ResponseRecorder {
@@ -127,7 +127,7 @@ func TestRecoveryAuthorizationRejectsDifferentExecutionAndCapability(t *testing.
 }
 
 func TestRecoveryObservationPinsOnlyDefaultImmutableInputs(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		files := map[string][]byte{"field.sysbox.hcl": []byte("# immutable\n")}

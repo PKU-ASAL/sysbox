@@ -7,12 +7,13 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
 )
 
 func TestNodeOperationRepositoryPreservesIdentityAndRejectsOverwrite(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, s controlstore.Store) {
 		ctx := context.Background()
 		op := controlplane.NodeOperation{ID: "operation", Topology: "lab", Workspace: "lab", ProjectID: "project", AgentID: "agent", Operation: "pause", Node: "web", Status: controlplane.NodeOperationStatusQueued, CreatedAt: time.Now().UTC(), CommandID: "command", ActionID: "action", ResourceUID: "resource", Generation: 2, LeaseEpoch: 3, LeaseOwner: "worker", Attempt: 1}
 		require.NoError(t, s.CreateNodeOperation(ctx, op))
@@ -50,7 +51,7 @@ func TestNodeOperationRepositoryPreservesIdentityAndRejectsOverwrite(t *testing.
 }
 
 func TestNodeOperationCASHasOneWinner(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, s controlstore.Store) {
 		ctx := context.Background()
 		op := controlplane.NodeOperation{ID: "race", Topology: "lab", AgentID: "agent", Status: controlplane.NodeOperationStatusQueued}
 		require.NoError(t, s.CreateNodeOperation(ctx, op))

@@ -4,9 +4,10 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"path/filepath"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
 )
 
 // CommitFilesystemFenceIntent requires the caller's operation/admission lock.

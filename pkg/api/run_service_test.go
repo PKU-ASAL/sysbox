@@ -12,14 +12,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
-
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
+	"github.com/oslab/sysbox/pkg/workspace"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDestroyHTTPIdempotencyKeyDispatchesOnceAcrossConcurrencyAndRestart(t *testing.T) {
@@ -228,7 +228,7 @@ func assertLegacyRunDispatchAdopted(t *testing.T, cfg config.ServiceConfig) {
 	legacy.QueuedAt = legacy.QueuedAt.Truncate(time.Microsecond)
 	legacy.StartedAt = legacy.StartedAt.Truncate(time.Microsecond)
 	require.NoError(t, server.apiStore.SaveRun(context.Background(), *legacy))
-	command := controlplaneRunAssignedCommand(legacy)
+	command := workspace.ControlplaneRunAssignedCommand(legacy)
 	command.ID = "run-" + legacy.ID
 	command.AgentID = "host-a"
 	command.Status = controlplane.AgentCommandStatusQueued
@@ -288,7 +288,7 @@ func TestRunServiceStartApplyDispatchesAssignedRun(t *testing.T) {
 
 func TestRunServiceStartResetPersistsExactTargetAndDispatches(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
-	manager, err := s.workspaceService().stateManager("lab")
+	manager, err := s.workspaceService().StateManager("lab")
 	require.NoError(t, err)
 	canonical, err := manager.LoadWithContext(context.Background())
 	require.NoError(t, err)

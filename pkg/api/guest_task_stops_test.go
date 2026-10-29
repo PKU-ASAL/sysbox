@@ -13,13 +13,14 @@ import (
 
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/guesttask"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
 )
 
 func TestGuestTaskStopDiscoveryRequiresOwnerAndRevocation(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		s.agentSvc = newAgentService(s)
@@ -28,7 +29,7 @@ func TestGuestTaskStopDiscoveryRequiresOwnerAndRevocation(t *testing.T) {
 		require.NoError(t, s.ConfigureExecutionGrantSigner(key))
 		require.NoError(t, store.SaveAgent(ctx, controlplane.Agent{ID: "agent", AuthSecret: "secret", SecretHash: agent.SecretHash("secret")}))
 		x, cmd, digest := admitGuestStopCandidate(t, store, "agent", 0)
-		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		session, err := authority.OpenSession(ctx, "agent", "host", "")
 		require.NoError(t, err)
 		grant, err := authority.Issue(ctx, controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: cmd.TopologyUID, ResourceUID: cmd.ResourceUID, Generation: 1}, AgentID: "agent", SessionID: session.ID, CommandID: cmd.ID, ActionID: x.ID, Attempt: 1, Operation: "guest_task", Digest: digest, TargetBootID: "guest"}, time.Minute)
@@ -78,14 +79,14 @@ func TestGuestTaskStopDiscoveryRequiresOwnerAndRevocation(t *testing.T) {
 
 func TestGuestTaskStopDiscoveryPagesPastBadSourceWithStableCeiling(t *testing.T) {
 	ctx := context.Background()
-	store := &localAPIStore{runsDir: t.TempDir()}
+	store := &controlstore.Local{RunsDir: t.TempDir()}
 	s := stateDeleteTestServer(t, store)
 	s.agentSvc = newAgentService(s)
 	_, key, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
 	require.NoError(t, s.ConfigureExecutionGrantSigner(key))
 	require.NoError(t, store.SaveAgent(ctx, controlplane.Agent{ID: "agent", AuthSecret: "secret", SecretHash: agent.SecretHash("secret")}))
-	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+	authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 	session, err := authority.OpenSession(ctx, "agent", "host", "")
 	require.NoError(t, err)
 	create := func(index int, admitted bool) *controlplane.ExecutionGrant {
@@ -130,7 +131,7 @@ func TestGuestTaskStopDiscoveryPagesPastBadSourceWithStableCeiling(t *testing.T)
 }
 
 func TestGuestTaskStopDiscoveryRejectsMalformedCursor(t *testing.T) {
-	store := &localAPIStore{runsDir: t.TempDir()}
+	store := &controlstore.Local{RunsDir: t.TempDir()}
 	s := stateDeleteTestServer(t, store)
 	s.agentSvc = newAgentService(s)
 	_, key, err := ed25519.GenerateKey(rand.Reader)
@@ -148,7 +149,7 @@ func TestGuestTaskStopDiscoveryRejectsMalformedCursor(t *testing.T) {
 	}
 }
 
-func admitGuestStopCandidate(t *testing.T, store apiStore, owner string, index int) (controlplane.GuestExecution, controlplane.AgentCommand, string) {
+func admitGuestStopCandidate(t *testing.T, store controlstore.Store, owner string, index int) (controlplane.GuestExecution, controlplane.AgentCommand, string) {
 	t.Helper()
 	id := fmt.Sprintf("task-%s-%d", owner, index)
 	x := controlplane.GuestExecution{ID: id, CommandID: id, AgentID: owner, Topology: "lab", Node: fmt.Sprintf("node-%d", index), Status: "queued", Version: 1, CreatedAt: time.Now().UTC(), Request: controlplane.GuestExecutionRequest{Argv: []string{"true"}}}

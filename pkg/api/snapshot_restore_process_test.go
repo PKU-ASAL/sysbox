@@ -11,6 +11,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/stretchr/testify/require"
@@ -24,7 +25,7 @@ type restoreCrashInput struct {
 func TestSnapshotRestoreIndependentProcessCrashMatrix(t *testing.T) {
 	for _, stage := range []string{"barrier", "committed", "released"} {
 		t.Run(stage, func(t *testing.T) {
-			eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+			eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 				ctx := context.Background()
 				s := stateDeleteTestServer(t, store)
 				repo, err := s.actionRepository("lab")
@@ -44,7 +45,7 @@ func TestSnapshotRestoreIndependentProcessCrashMatrix(t *testing.T) {
 				require.NoError(t, err)
 				plan, err := repo.PlanSnapshotRestore(ctx, "lab", snapshot.ID, "restore-crash", 0)
 				require.NoError(t, err)
-				authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+				authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 				session, err := authority.OpenSession(ctx, "agent", "worker", "")
 				require.NoError(t, err)
 				grant, err := authority.Issue(ctx, controlplane.ExecutionGrant{AgentID: "agent", SessionID: session.ID, ActionID: "old", CommandID: "old", Attempt: 1, Operation: "run_apply", Digest: "old", TargetBootID: "old-boot", Scope: controlplane.ExecutionScope{TopologyUID: stale.TopologyUID}}, time.Minute)
@@ -52,15 +53,15 @@ func TestSnapshotRestoreIndependentProcessCrashMatrix(t *testing.T) {
 				require.NoError(t, authority.AcceptHostStop(ctx, *grant, "verified-original-stop"))
 				input := restoreCrashInput{Stage: stage, Plan: plan}
 				switch v := store.(type) {
-				case *localAPIStore:
+				case *controlstore.Local:
 					input.Kind = "file"
-					input.Path = v.runsDir
-				case *sqliteAPIStore:
+					input.Path = v.RunsDir
+				case *controlstore.SQLite:
 					input.Kind = "sqlite"
-					input.Path = v.dbPath
-				case *postgresAPIStore:
+					input.Path = v.DbPath
+				case *controlstore.Postgres:
 					input.Kind = "postgres"
-					input.Path = v.dsn
+					input.Path = v.DSN
 				}
 				path := filepath.Join(t.TempDir(), "input.json")
 				raw, err := json.Marshal(input)
@@ -106,20 +107,20 @@ func TestSnapshotRestoreCrashChild(t *testing.T) {
 	require.NoError(t, err)
 	var input restoreCrashInput
 	require.NoError(t, json.Unmarshal(raw, &input))
-	var store apiStore
+	var store controlstore.Store
 	switch input.Kind {
 	case "file":
-		store = &localAPIStore{runsDir: input.Path}
+		store = &controlstore.Local{RunsDir: input.Path}
 	case "sqlite":
-		store = &sqliteAPIStore{dbPath: input.Path, runsDir: t.TempDir()}
+		store = &controlstore.SQLite{DbPath: input.Path, RunsDir: t.TempDir()}
 	case "postgres":
-		store = &postgresAPIStore{dsn: input.Path}
+		store = &controlstore.Postgres{DSN: input.Path}
 	default:
 		t.Fatal("unknown backend")
 	}
 	s := stateDeleteTestServer(t, store)
 	ctx := context.Background()
-	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+	authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 	digest, err := input.Plan.Digest()
 	require.NoError(t, err)
 	barrier, err := authority.BeginMaintenance(ctx, input.Plan.ID, input.Plan.TopologyUID, digest)
@@ -138,7 +139,7 @@ func TestSnapshotRestoreCrashChild(t *testing.T) {
 }
 
 func TestSnapshotRestoreRevokesLiveWorkerAcrossIndependentRestart(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		repo, err := s.actionRepository("lab")
@@ -147,7 +148,7 @@ func TestSnapshotRestoreRevokesLiveWorkerAcrossIndependentRestart(t *testing.T) 
 		require.NoError(t, err)
 		plan, err := repo.PlanSnapshotRestore(ctx, "lab", snapshot.ID, "restore-live", 0)
 		require.NoError(t, err)
-		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		session, err := authority.OpenSession(ctx, "agent", "old-process", "")
 		require.NoError(t, err)
 		grant, err := authority.Issue(ctx, controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: plan.TopologyUID}, AgentID: "agent", SessionID: session.ID, ActionID: "active", CommandID: "active", Attempt: 1, Operation: "run_apply", Digest: "active", TargetBootID: "boot"}, time.Minute)
@@ -158,15 +159,15 @@ func TestSnapshotRestoreRevokesLiveWorkerAcrossIndependentRestart(t *testing.T) 
 		require.Equal(t, "waiting_for_stop_or_reconciliation", result.Status)
 		input := restoreOldWorkerInput{Grant: *grant}
 		switch v := store.(type) {
-		case *localAPIStore:
+		case *controlstore.Local:
 			input.Kind = "file"
-			input.Path = v.runsDir
-		case *sqliteAPIStore:
+			input.Path = v.RunsDir
+		case *controlstore.SQLite:
 			input.Kind = "sqlite"
-			input.Path = v.dbPath
-		case *postgresAPIStore:
+			input.Path = v.DbPath
+		case *controlstore.Postgres:
 			input.Kind = "postgres"
-			input.Path = v.dsn
+			input.Path = v.DSN
 		}
 		raw, err := json.Marshal(input)
 		require.NoError(t, err)
@@ -206,18 +207,18 @@ func TestRestoreOldWorkerChild(t *testing.T) {
 	require.NoError(t, err)
 	var input restoreOldWorkerInput
 	require.NoError(t, json.Unmarshal(raw, &input))
-	var store apiStore
+	var store controlstore.Store
 	switch input.Kind {
 	case "file":
-		store = &localAPIStore{runsDir: input.Path}
+		store = &controlstore.Local{RunsDir: input.Path}
 	case "sqlite":
-		store = &sqliteAPIStore{dbPath: input.Path, runsDir: t.TempDir()}
+		store = &controlstore.SQLite{DbPath: input.Path, RunsDir: t.TempDir()}
 	case "postgres":
-		store = &postgresAPIStore{dsn: input.Path}
+		store = &controlstore.Postgres{DSN: input.Path}
 	default:
 		t.Fatal("invalid backend")
 	}
-	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+	authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 	require.Error(t, authority.Authorize(context.Background(), input.Grant))
 	_, err = authority.Renew(context.Background(), input.Grant, time.Minute)
 	require.Error(t, err)

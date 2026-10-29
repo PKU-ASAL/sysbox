@@ -2,8 +2,9 @@ package persistence
 
 import (
 	"context"
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
 )
 
 type GuestCompletion struct {

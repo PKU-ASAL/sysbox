@@ -3,9 +3,10 @@ package persistence
 import (
 	"context"
 	"database/sql"
+	"sort"
+
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/oslab/sysbox/pkg/controlplane"
-	"sort"
 )
 
 // NodeOperationRepository reuses the physical atomic record adapters. Save is

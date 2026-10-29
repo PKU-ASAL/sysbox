@@ -8,16 +8,17 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/oslab/sysbox/pkg/workspace"
 )
 
 type AgentService struct {
-	store           apiStore
+	store           controlstore.Store
 	registry        *agentRegistry
 	jobs            *Jobs
-	workspaces      *WorkspaceService
+	workspaces      *workspace.Catalog
 	consoles        *consoleSessionHub
 	commandTTL      func() time.Duration
 	agentOfflineTTL func() time.Duration
@@ -218,7 +219,7 @@ func (s *AgentService) RepublishPendingCommands(ctx context.Context) error {
 			s.dispatchRetry[cmd.ID] = retry
 			s.dispatchMu.Unlock()
 			if s.store != nil {
-				_ = s.store.SaveDispatchRetry(ctx, DispatchRetryRecord{CommandID: cmd.ID, Failures: retry.failures, Next: retry.next, LastError: retry.lastError})
+				_ = s.store.SaveDispatchRetry(ctx, controlstore.DispatchRetryRecord{CommandID: cmd.ID, Failures: retry.failures, Next: retry.next, LastError: retry.lastError})
 			}
 			continue
 		}
@@ -250,19 +251,19 @@ func (s *AgentService) RepublishAssignedRuns(ctx context.Context) error {
 	present := map[string]bool{}
 	for _, cmd := range commands {
 		if cmd.Run != nil {
-			present[runCommandID(*cmd.Run)] = true
+			present[controlstore.RunCommandID(*cmd.Run)] = true
 		}
 	}
-	for _, run := range latestRunsByID(runs) {
-		if run.Status != controlplane.RunAssigned || run.AgentID == "" || present[runCommandID(run)] {
+	for _, run := range controlstore.LatestRunsByID(runs) {
+		if run.Status != controlplane.RunAssigned || run.AgentID == "" || present[controlstore.RunCommandID(run)] {
 			continue
 		}
-		cmd, err := s.workspaces.runAssignedCommand(ctx, &run)
+		cmd, err := s.workspaces.RunAssignedCommand(ctx, &run)
 		if err != nil {
 			return err
 		}
 		fingerprint := runAssignmentFingerprint(run)
-		if _, _, err := s.store.CreateRunDispatch(ctx, RunDispatchRequest{Run: run, Command: cmd, Fingerprint: fingerprint}); err != nil {
+		if _, _, err := s.store.CreateRunDispatch(ctx, controlstore.RunDispatchRequest{Run: run, Command: cmd, Fingerprint: fingerprint}); err != nil {
 			return err
 		}
 	}
@@ -348,7 +349,7 @@ func (s *AgentService) guestCommandTerminalState(ctx context.Context, cmd contro
 	switch cmd.Type {
 	case "node_operation":
 		op, err := s.store.GetNodeOperation(ctx, cmd.Operation.ID)
-		if err != nil || !nodeCommandMatchesOperation(cmd, op) {
+		if err != nil || !controlstore.NodeCommandMatchesOperation(cmd, op) {
 			return "", time.Time{}, false
 		}
 		switch op.Status {
@@ -385,7 +386,7 @@ func (s *AgentService) guestCommandTerminalState(ctx context.Context, cmd contro
 		if err != nil || run == nil {
 			return "", time.Time{}, false
 		}
-		if !persistence.SameRunIncarnation(*run, *cmd.Run) {
+		if !controlplane.SameRunIncarnation(*run, *cmd.Run) {
 			return controlplane.AgentCommandStatusCancelled, time.Now().UTC(), true
 		}
 		if run.Status.IsTerminal() {

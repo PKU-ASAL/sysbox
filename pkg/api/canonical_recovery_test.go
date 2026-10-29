@@ -11,17 +11,17 @@ import (
 	"time"
 
 	"github.com/hashicorp/hcl/v2"
-	"github.com/stretchr/testify/require"
-
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
+	"github.com/stretchr/testify/require"
 )
 
 type recoveryResource struct {
@@ -100,7 +100,7 @@ func TestCanonicalRecoveryRejectsFreezeStartedDuringObservation(t *testing.T) {
 			require.NoError(t, err)
 			provider.onRead = func() {
 				provider.onRead = nil
-				_, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).BeginMaintenance(ctx, "freeze-during-read", before.TopologyUID, "restore-digest")
+				_, err := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore}).BeginMaintenance(ctx, "freeze-during-read", before.TopologyUID, "restore-digest")
 				require.NoError(t, err)
 			}
 			manager, err := s.stateManager("lab")
@@ -130,7 +130,7 @@ func TestCanonicalRecoveryAndCleanupRefuseMaintenanceBeforeProviderAccess(t *tes
 			require.NoError(t, err)
 			journal, err := repo.LoadActions(ctx, "lab")
 			require.NoError(t, err)
-			authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+			authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
 			_, err = authority.BeginMaintenance(ctx, "maintenance", before.TopologyUID, "restore-digest")
 			require.NoError(t, err)
 			reads, deletes := provider.reads, provider.deletes

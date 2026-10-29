@@ -9,8 +9,8 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"github.com/oslab/sysbox/pkg/driver"
 	"io"
 	"net/http/httptest"
 	"os"
@@ -20,24 +20,29 @@ import (
 	"testing"
 	"time"
 
-	"errors"
 	"github.com/google/uuid"
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/effectgate"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
 	"github.com/oslab/sysbox/pkg/persistence"
+
 	dockerprovider "github.com/oslab/sysbox/pkg/provider/docker"
+
 	fcprovider "github.com/oslab/sysbox/pkg/provider/firecracker"
+
+	"net/http"
+	"strings"
+
 	libvirtprovider "github.com/oslab/sysbox/pkg/provider/libvirt"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"net/http"
-	"strings"
 )
 
 func TestDockerOwnershipTransferPublicLifecycleE2E(t *testing.T) {
@@ -122,7 +127,7 @@ func testTransferHostBoundary(t *testing.T, providerName, phase string) {
 	target, err = targetRepo.LoadState(ctx, "target")
 	require.NoError(t, err)
 	for _, name := range []string{"source", "target"} {
-		require.NoError(t, s.workspaceService().bindPlacement(name, "host", controlplane.AgentProtocolVersion))
+		require.NoError(t, s.workspaceService().BindPlacement(name, "host", controlplane.AgentProtocolVersion))
 	}
 	old := substrate.OperationIdentity{ActionID: "create", OwnerUID: source.TopologyUID, TopologyUID: source.TopologyUID, ResourceUID: "old", Generation: 1}
 	next := substrate.OperationIdentity{ActionID: "transfer", OwnerUID: target.TopologyUID, TopologyUID: target.TopologyUID, ResourceUID: "new", Generation: 2}
@@ -277,7 +282,7 @@ func testTransferHostBoundary(t *testing.T, providerName, phase string) {
 	cmd, ok, err := s.apiStore.AcquireAgentCommandLease(ctx, "host", op.CommandID, "worker", time.Minute)
 	require.NoError(t, err)
 	require.True(t, ok)
-	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
 	session, err := authority.OpenSession(ctx, "host", "worker", "")
 	require.NoError(t, err)
 	grant, err := s.issueCommandGrant(ctx, "host", cmd.ID, ExecutionGrantRequest{SessionID: session.ID, LeaseOwner: cmd.LeaseOwner, Attempt: cmd.Attempt, BootID: "boot"})

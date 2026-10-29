@@ -2,11 +2,13 @@ package api
 
 import (
 	"net/http"
+
+	"github.com/oslab/sysbox/pkg/controlstore"
 )
 
 func (s *Server) handleGetNodeOperation(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("operation")
-	if err := validatePathSegment(id, "operation"); err != nil {
+	if err := controlstore.ValidatePathSegment(id, "operation"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}

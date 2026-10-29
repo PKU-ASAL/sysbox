@@ -3,9 +3,10 @@ package persistence
 import (
 	"context"
 	"fmt"
+	"time"
+
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/runtime"
-	"time"
 )
 
 func (r *Repository) ProveCleanup(ctx context.Context, run controlplane.Run) (*controlplane.CleanupReceipt, error) {

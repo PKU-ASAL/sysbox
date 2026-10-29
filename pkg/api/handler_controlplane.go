@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
 	"github.com/oslab/sysbox/pkg/artifact"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/state"
 )
 
@@ -42,7 +42,7 @@ func (s *Server) handleListProjectWorkspaces(w http.ResponseWriter, r *http.Requ
 
 func (s *Server) handleGetStackState(w http.ResponseWriter, r *http.Request) {
 	topology := r.PathValue("topology")
-	if err := validatePathSegment(topology, "topology"); err != nil {
+	if err := controlstore.ValidatePathSegment(topology, "topology"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -63,7 +63,7 @@ func (s *Server) handleGetStackState(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGetWorkspaceLease(w http.ResponseWriter, r *http.Request) {
 	topology := r.PathValue("topology")
-	if err := validatePathSegment(topology, "topology"); err != nil {
+	if err := controlstore.ValidatePathSegment(topology, "topology"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -82,7 +82,7 @@ func (s *Server) handleGetWorkspaceLease(w http.ResponseWriter, r *http.Request)
 
 func (s *Server) handleListWorkspaceSnapshots(w http.ResponseWriter, r *http.Request) {
 	topology := r.PathValue("topology")
-	if err := validatePathSegment(topology, "topology"); err != nil {
+	if err := controlstore.ValidatePathSegment(topology, "topology"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -100,7 +100,7 @@ func (s *Server) handleListWorkspaceSnapshots(w http.ResponseWriter, r *http.Req
 
 func (s *Server) handleListRunEvents(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if err := validatePathSegment(id, "id"); err != nil {
+	if err := controlstore.ValidatePathSegment(id, "id"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -132,7 +132,7 @@ func (s *Server) handleListRunEvents(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getRunRecord(ctx context.Context, id string) (*controlplane.Run, error) {
 	if run, ok := s.jobs.get(id); ok {
-		normalizeRunProductFields(run)
+		controlstore.NormalizeRunProductFields(run)
 		return run, nil
 	}
 	return s.apiStore.GetRun(ctx, id)
@@ -165,7 +165,7 @@ func (s *Server) handleListArtifacts(w http.ResponseWriter, _ *http.Request) {
 func (s *Server) handleListPolicies(w http.ResponseWriter, r *http.Request) {
 	workspace := r.URL.Query().Get("workspace")
 	if workspace != "" {
-		if err := validatePathSegment(workspace, "workspace"); err != nil {
+		if err := controlstore.ValidatePathSegment(workspace, "workspace"); err != nil {
 			writeError(w, http.StatusBadRequest, err)
 			return
 		}

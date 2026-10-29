@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 )
 
@@ -38,7 +39,7 @@ func (s *Server) handleHostObservation(w http.ResponseWriter, r *http.Request) {
 	}
 	records := []persistence.ExecutionObservation{{AgentID: id, SessionID: inv.SessionID, Kind: "inventory", Sequence: inv.Sequence, Data: raw}}
 	for _, p := range observation.Projections {
-		if p.AgentID != id || p.SessionID != observation.SessionID || p.Sequence != observation.Sequence || !controlplane.FreshHostObservation(p.ObservedAt, time.Now()) || validatePathSegment(p.Topology, "topology") != nil {
+		if p.AgentID != id || p.SessionID != observation.SessionID || p.Sequence != observation.Sequence || !controlplane.FreshHostObservation(p.ObservedAt, time.Now()) || controlstore.ValidatePathSegment(p.Topology, "topology") != nil {
 			writeError(w, 400, persistence.ErrInvalidRecord)
 			return
 		}
@@ -49,7 +50,7 @@ func (s *Server) handleHostObservation(w http.ResponseWriter, r *http.Request) {
 		}
 		records = append(records, persistence.ExecutionObservation{AgentID: id, SessionID: p.SessionID, Kind: "projection/" + p.Topology, Sequence: p.Sequence, Data: raw})
 	}
-	if err = persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).PublishObservations(r.Context(), records); err != nil {
+	if err = persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore}).PublishObservations(r.Context(), records); err != nil {
 		writeError(w, agentRepositoryErrorStatus(err), err)
 		return
 	}

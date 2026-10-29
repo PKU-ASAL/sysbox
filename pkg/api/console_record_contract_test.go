@@ -8,12 +8,13 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
 )
 
 func TestConsoleStoresPreserveCompleteRecordAndWorkspace(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		sess := controlplane.ConsoleSession{ID: "session", ProjectID: "project", Workspace: "workspace", Topology: "lab", AgentID: "agent", Node: "node", Status: controlplane.ConsoleSessionStatusQueued, CreatedAt: time.Now().UTC(), Roles: []string{"operator"}}
 		require.NoError(t, store.SaveConsoleSession(ctx, sess))
@@ -39,8 +40,8 @@ func TestConsoleStoresPreserveCompleteRecordAndWorkspace(t *testing.T) {
 }
 
 func TestSQLiteConsoleRejectsMalformedFullRecord(t *testing.T) {
-	store := &sqliteAPIStore{dbPath: filepath.Join(t.TempDir(), "api.db")}
-	db, err := store.open()
+	store := &controlstore.SQLite{DbPath: filepath.Join(t.TempDir(), "api.db")}
+	db, err := store.OpenDB()
 	require.NoError(t, err)
 	defer db.Close()
 	for _, raw := range []string{`null`, `{`, `{"id":"other"}`, `{"id":"session","audit":"invalid"}`, `{"id":"session","created_at":"not-time"}`} {
@@ -56,24 +57,24 @@ func TestSQLiteConsoleRejectsMalformedFullRecord(t *testing.T) {
 
 func TestAPIConsoleColumnSchemaRequiresRebuild(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "api.db")
-	store := &sqliteAPIStore{dbPath: path}
-	db, err := store.open()
+	store := &controlstore.SQLite{DbPath: path}
+	db, err := store.OpenDB()
 	require.NoError(t, err)
 	_, err = db.Exec("UPDATE sysbox_api_schema_migrations SET version=9 WHERE name='api'")
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
-	_, err = (&sqliteAPIStore{dbPath: path}).open()
+	_, err = (&controlstore.SQLite{DbPath: path}).OpenDB()
 	require.ErrorIs(t, err, persistence.ErrUnsupportedVersion)
 }
 
 func TestSQLiteConsoleSchemaValidatesFullRecordColumn(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "api.db")
-	store := &sqliteAPIStore{dbPath: path}
-	db, err := store.open()
+	store := &controlstore.SQLite{DbPath: path}
+	db, err := store.OpenDB()
 	require.NoError(t, err)
 	_, err = db.Exec("ALTER TABLE sysbox_console_sessions RENAME COLUMN data TO obsolete_payload")
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
-	_, err = (&sqliteAPIStore{dbPath: path}).open()
+	_, err = (&controlstore.SQLite{DbPath: path}).OpenDB()
 	require.ErrorIs(t, err, persistence.ErrUnsupportedVersion)
 }

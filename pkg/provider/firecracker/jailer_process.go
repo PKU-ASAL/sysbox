@@ -70,7 +70,14 @@ func verifyJailedProcess(m *vmManifest, p processIdentity) error {
 	if err != nil {
 		return err
 	}
-	sharedNetwork := m.Handle.NetnsName != "" || len(m.Handle.Attachments) > 0
+	hostNet, err := os.Stat("/proc/self/ns/net")
+	if err != nil {
+		return err
+	}
+	if os.SameFile(actualNet, hostNet) {
+		return fmt.Errorf("VMM shares host network namespace")
+	}
+	sharedNetwork := m.Handle.NetnsName != ""
 	if sharedNetwork == !os.SameFile(actualNet, expectedNet) {
 		return fmt.Errorf("VMM network namespace mismatch")
 	}

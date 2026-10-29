@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 )
 
@@ -46,7 +47,7 @@ func (s *Server) restoreSnapshotWorkflow(ctx context.Context, topology string, r
 			return result, persistence.ErrConflict
 		}
 	}
-	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
 	if request.MaintenanceEpoch != 0 {
 		existing, err := authority.InspectMaintenance(ctx, request.ID)
 		if err != nil {
@@ -69,7 +70,7 @@ func (s *Server) restoreSnapshotWorkflow(ctx context.Context, topology string, r
 		if barrier.Released {
 			return result, persistence.ErrConflict
 		}
-		if err := s.workspaceService().ensureTopologyQuiescent(ctx, topology); err != nil {
+		if err := s.workspaceService().EnsureTopologyQuiescent(ctx, topology); err != nil {
 			if errors.Is(err, persistence.ErrConflict) {
 				result.Status = "waiting_for_stop"
 				return result, nil
