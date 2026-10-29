@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/oslab/sysbox/pkg/address"
-	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/state"
 )
 
@@ -50,7 +50,7 @@ func TestSensitiveInputNeverPersisted(t *testing.T) {
 	require.NoError(t, s.saveHealthSnapshot(topology, HealthSnapshot{
 		Topology: topology,
 		Observed: time.Now().UTC(),
-		Health:   controlplane.TopologyHealth{Status: controlplane.ResourceHealthHealthy, Healthy: 1},
+		Health:   model.TopologyHealth{Status: model.ResourceHealthHealthy, Healthy: 1},
 		Policy:   SupervisorPolicyObserveOnly,
 	}))
 

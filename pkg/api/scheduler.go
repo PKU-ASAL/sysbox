@@ -38,14 +38,18 @@ func (s *WorkspaceService) runAssignedCommand(ctx context.Context, run *controlp
 	command.ExpectedSerial = canonical.Meta.Serial
 	if run.Target != "" {
 		target, err := address.Parse(run.Target)
-		if err != nil || target.Type != "sysbox_node" {
-			return controlplane.AgentCommand{}, fmt.Errorf("remote Run target must be a node address")
+		if err != nil || !target.Equal(address.Resource(target.Type, target.Name)) || run.Op != "apply" && target.Type != "sysbox_node" {
+			return controlplane.AgentCommand{}, fmt.Errorf("invalid remote Run target")
 		}
 		resource := canonical.FindResource(target)
-		if resource == nil || resource.OwnerUID != canonical.TopologyUID || resource.ResourceUID == "" || resource.Generation < 1 {
+		if run.Op == "apply" && (resource == nil || target.Type != "sysbox_node") {
+			// A first creation has no resource identity yet. The signed request
+			// still binds its exact target, topology and expected state serial.
+		} else if resource == nil || resource.OwnerUID != canonical.TopologyUID || resource.ResourceUID == "" || resource.Generation < 1 {
 			return controlplane.AgentCommand{}, fmt.Errorf("remote Run target has no canonical node identity: %s", run.Target)
+		} else {
+			command.ResourceUID, command.Generation = resource.ResourceUID, resource.Generation
 		}
-		command.ResourceUID, command.Generation = resource.ResourceUID, resource.Generation
 	}
 	command.ID = runCommandID(*run)
 	command.AgentID = run.AgentID

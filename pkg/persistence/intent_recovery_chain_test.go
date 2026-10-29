@@ -10,11 +10,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
-	"github.com/stretchr/testify/require"
 )
 
 func TestSignedRecoveryObligationSurvivesFailedRebuildAndLaterDestroy(t *testing.T) {
@@ -27,12 +29,12 @@ func TestSignedRecoveryObligationSurvivesFailedRebuildAndLaterDestroy(t *testing
 	life.Serial = 1
 	resource := state.Resource{Address: address.Resource("sysbox_node", "node"), Driver: "docker", ExternalID: "generation-1", OwnerUID: "owner", ResourceUID: "resource", Generation: 1}
 	require.NoError(t, resource.SetProviderState(json.RawMessage(`{"identity":"generation-1"}`)))
-	first := runtime.ActionRecord{ID: "create", Topology: "lab", RunID: "first", RunQueuedAt: time.Now().UTC(), RunRevision: "revision", Resource: resource.Address, Action: controlplane.PlanActionCreate, Revision: 1, Status: runtime.ActionUncertain, OwnerUID: "owner", ResourceUID: "resource", Generation: 1, StateSerial: 1, ExpectedSerial: 1, Candidate: &resource, ReplayForbidden: true}
+	first := runtime.ActionRecord{ID: "create", Topology: "lab", RunID: "first", RunQueuedAt: time.Now().UTC(), RunRevision: "revision", Resource: resource.Address, Action: model.PlanActionCreate, Revision: 1, Status: runtime.ActionUncertain, OwnerUID: "owner", ResourceUID: "resource", Generation: 1, StateSerial: 1, ExpectedSerial: 1, Candidate: &resource, ReplayForbidden: true}
 	life.Actions[first.ID] = first
-	apply := func(action runtime.ActionRecord, choice string, observation controlplane.RecoveredResource) *aggregate {
+	apply := func(action runtime.ActionRecord, choice string, observation model.RecoveredResource) *aggregate {
 		t.Helper()
 		run := controlplane.Run{ID: action.RunID, Topology: "lab", AgentID: "agent", Op: "apply", Operation: "apply", Status: controlplane.RunRunning, Attempt: 1, QueuedAt: action.RunQueuedAt, Revision: action.RunRevision}
-		if action.Action == controlplane.PlanActionReset {
+		if action.Action == model.PlanActionReset {
 			run.Op = "reset"
 			run.Operation = "reset"
 		}
@@ -52,7 +54,7 @@ func TestSignedRecoveryObligationSurvivesFailedRebuildAndLaterDestroy(t *testing
 		require.NoError(t, authority.RecordHostFence(ctx, request.ID, receipt))
 		hostPub, hostKey, err := ed25519.GenerateKey(rand.Reader)
 		require.NoError(t, err)
-		report := controlplane.RunRecoveryReport{CommandID: "observe-" + run.ID, RunID: run.ID, AgentID: run.AgentID, QueuedAt: run.QueuedAt, Revision: run.Revision, RunAttempt: 1, Mode: controlplane.RunRecoveryObserve, TopologyUID: "owner", StateSerial: life.Serial, ObservedAt: time.Now().UTC(), Resources: []controlplane.RecoveredResource{observation}}
+		report := controlplane.RunRecoveryReport{CommandID: "observe-" + run.ID, RunID: run.ID, AgentID: run.AgentID, QueuedAt: run.QueuedAt, Revision: run.Revision, RunAttempt: 1, Mode: controlplane.RunRecoveryObserve, TopologyUID: "owner", StateSerial: life.Serial, ObservedAt: time.Now().UTC(), Resources: []model.RecoveredResource{observation}}
 		report, err = controlplane.SignFenceObservation(hostKey, report, controlplane.FenceObservationBinding{RequestSHA256: digest, HostBootID: receipt.NewBootID}, "observer", 1)
 		require.NoError(t, err)
 		observed := CommandRecord{Retired: true, Command: controlplane.AgentCommand{ID: report.CommandID, AgentID: run.AgentID, ActionID: request.ID, Type: controlplane.RunRecoveryCommand, RecoveryMode: controlplane.RunRecoveryObserve, TopologyUID: "owner", ExpectedSerial: life.Serial, Run: &run, Status: controlplane.AgentCommandStatusCompleted, LeaseOwner: "observer", Attempt: 1}, Recovery: &report}
@@ -75,14 +77,14 @@ func TestSignedRecoveryObligationSurvivesFailedRebuildAndLaterDestroy(t *testing
 		require.NoError(t, err)
 		return result
 	}
-	observation := controlplane.RecoveredResource{ActionID: first.ID, Resource: resource.Address.String(), OwnerUID: "owner", ResourceUID: "resource", Generation: 1, ExternalID: resource.ExternalID, Status: "present", JournalStatus: "uncertain", ProviderScope: "local-only"}
+	observation := model.RecoveredResource{ActionID: first.ID, Resource: resource.Address.String(), OwnerUID: "owner", ResourceUID: "resource", Generation: 1, ExternalID: resource.ExternalID, Status: "present", JournalStatus: "uncertain", ProviderScope: "local-only"}
 	life = apply(first, "retain-incomplete", observation)
 	source := life.State.Resources[0]
 	replacement := source
 	replacement.Generation = 2
 	replacement.ExternalID = "generation-2"
 	require.NoError(t, replacement.SetProviderState(json.RawMessage(`{"identity":"generation-2"}`)))
-	second := runtime.ActionRecord{ID: "reset", Topology: "lab", RunID: "second", RunQueuedAt: time.Now().UTC(), RunRevision: "revision", Resource: resource.Address, Action: controlplane.PlanActionReset, Phase: "applying", Revision: 1, Status: runtime.ActionUncertain, OwnerUID: "owner", ResourceUID: "resource", Generation: 2, StateSerial: life.Serial, ExpectedSerial: life.Serial, Candidate: &source, Replacement: &replacement, ReplayForbidden: true}
+	second := runtime.ActionRecord{ID: "reset", Topology: "lab", RunID: "second", RunQueuedAt: time.Now().UTC(), RunRevision: "revision", Resource: resource.Address, Action: model.PlanActionReset, Phase: "applying", Revision: 1, Status: runtime.ActionUncertain, OwnerUID: "owner", ResourceUID: "resource", Generation: 2, StateSerial: life.Serial, ExpectedSerial: life.Serial, Candidate: &source, Replacement: &replacement, ReplayForbidden: true}
 	life.Actions[second.ID] = second
 	old := observation
 	old.ActionID = second.ID
@@ -102,12 +104,12 @@ func TestSignedRecoveryObligationSurvivesFailedRebuildAndLaterDestroy(t *testing
 	require.Equal(t, IntentRecoveryTransfer{DispositionID: "second", ActionID: "reset"}, life.IntentDispositions["first"].Transfers["create"])
 	require.Equal(t, int64(2), life.State.Resources[0].Generation)
 	require.True(t, life.State.Resources[0].RecoveryRequired())
-	cleanup := runtime.ActionRecord{ID: "cleanup", Topology: "lab", RunID: "cleanup-run", Resource: resource.Address, Action: controlplane.PlanActionDelete, Status: runtime.ActionIntentCommitted, OwnerUID: "owner", ResourceUID: "resource", Generation: 2, StateSerial: life.Serial, ExpectedSerial: life.Serial, Candidate: &life.State.Resources[0]}
+	cleanup := runtime.ActionRecord{ID: "cleanup", Topology: "lab", RunID: "cleanup-run", Resource: resource.Address, Action: model.PlanActionDelete, Status: runtime.ActionIntentCommitted, OwnerUID: "owner", ResourceUID: "resource", Generation: 2, StateSerial: life.Serial, ExpectedSerial: life.Serial, Candidate: &life.State.Resources[0]}
 	require.NoError(t, commitActionIntent(life, cleanup))
 	cleanup = life.Actions[cleanup.ID]
 	cleanup.Status = runtime.ActionSucceeded
 	cleanup.EffectComplete = true
-	require.NoError(t, applyActionOutcome(life, cleanup, &runtime.StatePatch{Resource: resource.Address.String(), Action: controlplane.PlanActionDelete, Op: runtime.StatePatchDelete}))
+	require.NoError(t, applyActionOutcome(life, cleanup, &runtime.StatePatch{Resource: resource.Address.String(), Action: model.PlanActionDelete, Op: runtime.StatePatchDelete}))
 	raw, err := json.Marshal(life)
 	require.NoError(t, err)
 	_, err = decodeAggregate(raw)

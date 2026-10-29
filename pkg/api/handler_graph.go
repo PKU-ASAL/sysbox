@@ -5,8 +5,8 @@ import (
 	"strings"
 
 	"github.com/oslab/sysbox/pkg/address"
-
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
@@ -50,7 +50,7 @@ func (s *Server) handleGetGraph(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	g, _, st, _, _, err := runtime.LoadWorkspaceWithManager(s.workspaceService().HCLFile(topology), mgr)
+	g, _, st, _, _, err := runtime.LoadWorkspaceWithManager(s.workspaceService().HCLFile(topology), mgr, driver.DefaultRegistry)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return

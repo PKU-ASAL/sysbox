@@ -22,5 +22,10 @@ func (h *HostRunExecutor) PrepareRun(ctx context.Context, req hostsupervisor.Run
 	if run == nil || run.Topology != req.Topology || run.Revision != req.Revision || run.Op != req.Action || run.Target != req.Target || run.AgentID != h.Tasks.AgentID || run.Status != controlplane.RunRunning || run.LeaseOwner == "" || !run.LeaseUntil.After(time.Now()) {
 		return controlplane.Run{}, fmt.Errorf("host run canonical claim changed")
 	}
+	inputs := hostsupervisor.RunInputs(ctx)
+	if err := controlplane.ValidateRunInputs(*run, inputs); err != nil {
+		return controlplane.Run{}, err
+	}
+	run.Inputs = inputs
 	return *run, nil
 }

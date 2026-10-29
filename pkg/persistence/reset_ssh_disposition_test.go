@@ -11,13 +11,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/ssh"
+
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
-	"github.com/stretchr/testify/require"
-	"golang.org/x/crypto/ssh"
 )
 
 func resetSSHDispositionFixture(t *testing.T) (*aggregate, runtime.ActionRecord, controlplane.IntentDispositionDecision) {
@@ -45,7 +47,7 @@ func resetSSHDispositionFixture(t *testing.T) (*aggregate, runtime.ActionRecord,
 	a.State.TopologyUID = "owner"
 	a.Serial = 1
 	a.State.Resources = []state.Resource{source, previous}
-	action := runtime.ActionRecord{ID: "reset", Topology: "lab", RunID: "run", RunQueuedAt: time.Now().UTC(), RunRevision: "revision", Resource: source.Address, Action: controlplane.PlanActionReset, Phase: "verifying", ReplayForbidden: true, EffectComplete: true, Revision: 1, Status: runtime.ActionUncertain, OwnerUID: "owner", ResourceUID: "node", Generation: 2, ExpectedSerial: 1, Candidate: &next, Replacement: &next, ResetSSH: []runtime.ResetSSHDependency{{Previous: previous, DesiredDigest: "desired", ActionID: depID, Config: cfg, Started: true, Result: &result}}}
+	action := runtime.ActionRecord{ID: "reset", Topology: "lab", RunID: "run", RunQueuedAt: time.Now().UTC(), RunRevision: "revision", Resource: source.Address, Action: model.PlanActionReset, Phase: "verifying", ReplayForbidden: true, EffectComplete: true, Revision: 1, Status: runtime.ActionUncertain, OwnerUID: "owner", ResourceUID: "node", Generation: 2, ExpectedSerial: 1, Candidate: &next, Replacement: &next, ResetSSH: []runtime.ResetSSHDependency{{Previous: previous, DesiredDigest: "desired", ActionID: depID, Config: cfg, Started: true, Result: &result}}}
 	a.Actions[action.ID] = action
 	d := controlplane.IntentDispositionDecision{Version: 1, ID: "decision", FenceID: "fence", Topology: "lab", RunID: action.RunID, RunQueuedAt: action.RunQueuedAt, RunRevision: action.RunRevision, Reason: "retain observed new node and committed SSH after lost parent publication", ExpectedSerial: a.Serial, Actions: []controlplane.IntentDispositionAction{{ActionID: action.ID, Decision: "retain", ResourceUID: action.ResourceUID, Generation: action.Generation, ExternalID: next.ExternalID}}}
 	require.NoError(t, action.ValidateResetSSH(a.State))
@@ -69,7 +71,7 @@ func TestResetSSHDispositionPublishesNodeAndSSHAtomically(t *testing.T) {
 				extra := action
 				extra.ID = "ssh-action"
 				extra.Resource = action.ResetSSH[0].Previous.Address
-				extra.Action = controlplane.PlanActionRead
+				extra.Action = model.PlanActionRead
 				extra.Candidate = &action.ResetSSH[0].Previous
 				extra.Replacement = nil
 				extra.ResetSSH = nil
@@ -135,7 +137,7 @@ func testResetSSHSignedDisposition(t *testing.T, lost bool, quarantine ...bool) 
 			}
 		}
 		discovered = &candidate
-		action.Action = controlplane.PlanActionCreate
+		action.Action = model.PlanActionCreate
 		action.Phase = ""
 		action.EffectComplete = false
 		action.DesiredDigest = "desired"
@@ -181,7 +183,7 @@ func testResetSSHSignedDisposition(t *testing.T, lost bool, quarantine ...bool) 
 	if missingCreate {
 		source = discovered
 	}
-	o := controlplane.RecoveredResource{ActionID: action.ID, Resource: action.Resource.String(), OwnerUID: action.OwnerUID, ResourceUID: action.ResourceUID, Generation: action.Generation, ExternalID: discovered.ExternalID, JournalStatus: string(action.Status), Status: "present", ProviderScope: "local-only"}
+	o := model.RecoveredResource{ActionID: action.ID, Resource: action.Resource.String(), OwnerUID: action.OwnerUID, ResourceUID: action.ResourceUID, Generation: action.Generation, ExternalID: discovered.ExternalID, JournalStatus: string(action.Status), Status: "present", ProviderScope: "local-only"}
 	old := o
 	old.Generation = source.Generation
 	old.ExternalID = source.ExternalID
@@ -200,7 +202,7 @@ func testResetSSHSignedDisposition(t *testing.T, lost bool, quarantine ...bool) 
 		if lost {
 			r = recorded
 		}
-		o.ResetSSH = append(o.ResetSSH, controlplane.RecoveredResource{ActionID: dep.ActionID, Resource: r.Address.String(), OwnerUID: r.OwnerUID, ResourceUID: r.ResourceUID, Generation: r.Generation, ExternalID: r.ExternalID, JournalStatus: string(action.Status), Status: "present"})
+		o.ResetSSH = append(o.ResetSSH, model.RecoveredResource{ActionID: dep.ActionID, Resource: r.Address.String(), OwnerUID: r.OwnerUID, ResourceUID: r.ResourceUID, Generation: r.Generation, ExternalID: r.ExternalID, JournalStatus: string(action.Status), Status: "present"})
 	}
 	if lost && !unknown {
 		var saved struct {
@@ -214,7 +216,7 @@ func testResetSSHSignedDisposition(t *testing.T, lost bool, quarantine ...bool) 
 	if unknown && !missingCreate {
 		o.ResetSSH[0].Status = "unknown"
 	}
-	report := controlplane.RunRecoveryReport{CommandID: "observe", RunID: run.ID, AgentID: run.AgentID, QueuedAt: run.QueuedAt, Revision: run.Revision, RunAttempt: 1, Mode: controlplane.RunRecoveryObserve, TopologyUID: a.State.TopologyUID, StateSerial: a.Serial, ObservedAt: time.Now().UTC(), Resources: []controlplane.RecoveredResource{o}}
+	report := controlplane.RunRecoveryReport{CommandID: "observe", RunID: run.ID, AgentID: run.AgentID, QueuedAt: run.QueuedAt, Revision: run.Revision, RunAttempt: 1, Mode: controlplane.RunRecoveryObserve, TopologyUID: a.State.TopologyUID, StateSerial: a.Serial, ObservedAt: time.Now().UTC(), Resources: []model.RecoveredResource{o}}
 	report, err = controlplane.SignFenceObservation(hostKey, report, controlplane.FenceObservationBinding{RequestSHA256: digest, HostBootID: receipt.NewBootID}, "observer", 1)
 	require.NoError(t, err)
 	decision.ObservationSHA256 = evidenceHash(report)
@@ -280,7 +282,7 @@ func testResetSSHSignedDisposition(t *testing.T, lost bool, quarantine ...bool) 
 	require.False(t, ledger.Fences[decision.FenceID].IntentDisposition.ReleasedAt.IsZero())
 	// Signed identity coverage is mandatory even if all node checks succeeded.
 	changed := report
-	changed.Resources = append([]controlplane.RecoveredResource(nil), report.Resources...)
+	changed.Resources = append([]model.RecoveredResource(nil), report.Resources...)
 	changed.Resources[0].ResetSSH = nil
 	if missingCreate {
 		changed.Resources[0].Discovered = nil

@@ -27,7 +27,7 @@ func TestRemotePowerRequiresSupervisorWithoutStateAccess(t *testing.T) {
 func TestRemotePowerRunnerNeverLoadsLocalProviderState(t *testing.T) {
 	dir := t.TempDir()
 	bridge := &nodeOperationProofBridge{LocalBridge: NewLocalBridge(LocalOptions{Topology: "lab", RunsDir: dir, StatePath: filepath.Join(dir, "state.json")})}
-	runner := newCommandRunner(NewExecutorWithBridge(bridge), Options{})
+	runner := newCommandRunner(Options{})
 	cmd := controlplane.AgentCommand{ID: "command", Type: "node_operation", Operation: controlplane.NodeOperation{ID: "op", Topology: "lab", Node: "web", Operation: "pause"}}
 	var terminal controlplane.AgentCommandEvent
 	runner.Execute(context.Background(), &cmd, func(event controlplane.AgentCommandEvent) { terminal = event })

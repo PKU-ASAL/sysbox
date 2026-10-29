@@ -11,13 +11,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
-	"github.com/stretchr/testify/require"
 )
 
 func TestHostRunCompletionRecoversRetiredCommandAndExpiredLease(t *testing.T) {
@@ -144,8 +146,8 @@ func hostRunCompletionRecoversRetiredCommand(t *testing.T, action string) {
 		forged.ID = "injected-proof"
 		require.ErrorIs(t, store.SaveRun(ctx, forged), persistence.ErrConflict, "ordinary save cannot mint host evidence")
 		if action == "reset" {
-			bridge := &ExecutionBridge{server: s}
-			hostBridge := &HostExecutionBridge{ExecutionBridge: bridge}
+			bridge := &ExecutionBridge{cfg: s.cfg, store: s.apiStore, workspaces: s.workspaceService(), logs: s.jobs.logs, hostKeys: s.grantHostKeys}
+			hostBridge := bridge
 			require.NoError(t, hostBridge.BindHostIdentity("agent", pub))
 			require.NoError(t, hostBridge.BindHostIdentity("agent", pub))
 			foreign, _, err := ed25519.GenerateKey(rand.Reader)
@@ -171,7 +173,7 @@ func hostRunCompletionRecoversRetiredCommand(t *testing.T, action string) {
 		require.Equal(t, 200, response.Code, response.Body.String())
 		require.NoError(t, authority.Authorize(ctx, *successor))
 		if action == "reset" {
-			bridge := &ExecutionBridge{server: s}
+			bridge := &ExecutionBridge{cfg: s.cfg, store: s.apiStore, workspaces: s.workspaceService(), logs: s.jobs.logs, hostKeys: s.grantHostKeys}
 			require.NoError(t, bridge.VerifyResetContinuation(ctx, &controlplane.Run{ID: "continuation", Topology: "lab", Op: "reset", ParentID: done.ID}, done), "historical stop remains verifiable after successor admission")
 		}
 
@@ -209,7 +211,7 @@ func hostRunCompletionRecoversRetiredCommand(t *testing.T, action string) {
 func assertResetActionRunMapping(t *testing.T, s *Server, parent *controlplane.Run) {
 	t.Helper()
 	ctx := context.Background()
-	bridge := &ExecutionBridge{server: s}
+	bridge := &ExecutionBridge{cfg: s.cfg, store: s.apiStore, workspaces: s.workspaceService(), logs: s.jobs.logs, hostKeys: s.grantHostKeys}
 	child := controlplane.Run{ID: "mapped-continuation", Topology: parent.Topology, Op: "reset", ParentID: parent.ID, Revision: parent.Revision, AgentID: parent.AgentID, QueuedAt: time.Now().UTC(), Status: controlplane.RunFailed, EndedAt: time.Now().UTC()}
 	require.NoError(t, s.apiStore.SaveRun(ctx, child))
 	_, err := bridge.ActionRun(ctx, parent.Topology, child.ID)
@@ -222,13 +224,13 @@ func assertResetActionRunMapping(t *testing.T, s *Server, parent *controlplane.R
 	res := state.Resource{Address: address.Resource("sysbox_node", "web"), OwnerUID: st.TopologyUID, ResourceUID: "web", Generation: 1, ExternalID: "old-web"}
 	st.Resources = append(st.Resources, res)
 	require.NoError(t, mgr.Save(st))
-	a := runtime.ActionRecord{ID: "original-reset-action", RunID: parent.ID, Topology: parent.Topology, RunQueuedAt: parent.QueuedAt, RunRevision: parent.Revision, Resource: res.Address, OwnerUID: res.OwnerUID, ResourceUID: res.ResourceUID, Generation: 2, Action: controlplane.PlanActionReset, Status: runtime.ActionIntentCommitted, Phase: "accepted", StateSerial: st.Meta.Serial, ExpectedSerial: st.Meta.Serial, Candidate: &res}
+	a := runtime.ActionRecord{ID: "original-reset-action", RunID: parent.ID, Topology: parent.Topology, RunQueuedAt: parent.QueuedAt, RunRevision: parent.Revision, Resource: res.Address, OwnerUID: res.OwnerUID, ResourceUID: res.ResourceUID, Generation: 2, Action: model.PlanActionReset, Status: runtime.ActionIntentCommitted, Phase: "accepted", StateSerial: st.Meta.Serial, ExpectedSerial: st.Meta.Serial, Candidate: &res}
 	require.NoError(t, repo.CommitResetIntents(ctx, []runtime.ActionRecord{a}))
 	a.Revision = 1
 	path := filepath.Join(t.TempDir(), "checkpoint.json")
 	recorder := runtime.NewFileRecorder(path, parent.ID, parent.Topology)
 	recorder.SetStateSerialBefore(st.Meta.Serial)
-	require.NoError(t, recorder.Begin("reset", &runtime.Plan{Actions: []controlplane.PlannedChange{{Address: res.Address, Action: controlplane.PlanActionReset}}}))
+	require.NoError(t, recorder.Begin("reset", &runtime.Plan{Actions: []model.PlannedChange{{Address: res.Address, Action: model.PlanActionReset}}}))
 	cp, err := runtime.LoadCheckpointFile(path)
 	require.NoError(t, err)
 	_, err = repo.CommitResetContinuation(ctx, runtime.ResetContinuationRequest{ID: child.ID, TopologyUID: st.TopologyUID, RunQueuedAt: parent.QueuedAt, RunRevision: parent.Revision, ExpectedSerial: st.Meta.Serial, Checkpoint: *cp, Existing: []runtime.ActionRecord{a}})

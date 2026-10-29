@@ -2,12 +2,15 @@ package runtime
 
 import (
 	"context"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
-	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestSSHDeleteRejectsForeignPathBeforeConnection(t *testing.T) {
@@ -19,7 +22,7 @@ func TestSSHDeleteRejectsForeignPathBeforeConnection(t *testing.T) {
 	node := address.Resource("sysbox_node", "web")
 	require.NoError(t, g.AddNode(node, nil))
 	require.NoError(t, g.SetData(node, &config.NodeConfig{Connections: []config.ConnectionConfig{{User: "ubuntu"}}}))
-	pc := &ProviderContext{exec: NewExecutor(g, &state.State{TopologyUID: "owner"})}
+	pc := &ProviderContext{exec: NewExecutor(g, &state.State{TopologyUID: "owner"}, driver.DefaultRegistry)}
 	for _, path := range []string{"/home/other/.ssh/authorized_keys.d/sysbox-access", "/home/ubuntu/.ssh/authorized_keys.d/sysbox-other"} {
 		current.Attributes["path"] = path
 		err := (SSHAccessResourceHandler{}).Delete(context.Background(), pc, current)

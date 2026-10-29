@@ -2,8 +2,6 @@ package api
 
 import (
 	"context"
-	"github.com/oslab/sysbox/pkg/artifact"
-	"github.com/oslab/sysbox/pkg/substrate"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,10 +10,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
+	"github.com/oslab/sysbox/pkg/artifact"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/persistence"
-	"github.com/stretchr/testify/require"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 func TestGCProductionWorkspaceAndPlacementPublishBeforeUse(t *testing.T) {
@@ -53,12 +54,14 @@ func TestGCProductionArtifactResolutionPublishesAndFencesCache(t *testing.T) {
 	cfg.GCPublicationSource = "host-a"
 	cfg.Paths.RunsDir = t.TempDir()
 	cfg.Paths.WorkspacesDir = t.TempDir()
-	bridge := NewExecutionBridge(cfg)
+	bridge, err := NewExecutionBridge(cfg)
+	requireNoError(t, err)
+	t.Cleanup(func() { _ = bridge.Close() })
 	run := &controlplane.Run{Topology: "lab"}
 	ctx, release, err := bridge.PrepareExecution(ctx, run)
 	require.NoError(t, err)
 	defer release()
-	repo, err := bridge.server.actionRepository("lab")
+	repo, err := bridge.actionRepository("lab")
 	require.NoError(t, err)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, err := repo.LoadGCReferences(context.Background(), "lab")
@@ -90,7 +93,9 @@ func TestGCProductionPublisherCrashRemainsIncomplete(t *testing.T) {
 		cfg.GCPublicationSource = "crash-host"
 		cfg.Paths.RunsDir = os.Getenv("SYSBOX_GC_PRODUCER_ROOT")
 		cfg.Paths.WorkspacesDir = filepath.Join(cfg.Paths.RunsDir, "workspaces")
-		bridge := NewExecutionBridge(cfg)
+		bridge, err := NewExecutionBridge(cfg)
+		requireNoError(t, err)
+		t.Cleanup(func() { _ = bridge.Close() })
 		ctx, release, err := bridge.PrepareExecution(context.Background(), &controlplane.Run{Topology: "lab"})
 		require.NoError(t, err)
 		defer release()
@@ -124,8 +129,10 @@ func TestGCProductionPublisherCrashRemainsIncomplete(t *testing.T) {
 	cfg.GCPublicationSource = "crash-host"
 	cfg.Paths.RunsDir = root
 	cfg.Paths.WorkspacesDir = filepath.Join(root, "workspaces")
-	cold := NewExecutionBridge(cfg)
-	repo, err := cold.server.actionRepository("lab")
+	cold, err := NewExecutionBridge(cfg)
+	requireNoError(t, err)
+	t.Cleanup(func() { _ = cold.Close() })
+	repo, err := cold.actionRepository("lab")
 	require.NoError(t, err)
 	_, err = repo.LoadGCReferences(context.Background(), "lab")
 	require.ErrorIs(t, err, persistence.ErrConflict)
@@ -151,8 +158,10 @@ func TestGCProductionMissingConfigurationCannotBypassEnrollment(t *testing.T) {
 	cold := NewServerWithConfig(cfg)
 	require.Error(t, cold.workspaceService().UpsertProject(context.Background(), "lab", files))
 	require.Error(t, cold.workspaceService().bindPlacement("lab", "other", controlplane.AgentProtocolVersion))
-	bridge := NewExecutionBridge(cfg)
-	_, _, err := bridge.PrepareExecution(context.Background(), &controlplane.Run{Topology: "lab"})
+	bridge, err := NewExecutionBridge(cfg)
+	requireNoError(t, err)
+	t.Cleanup(func() { _ = bridge.Close() })
+	_, _, err = bridge.PrepareExecution(context.Background(), &controlplane.Run{Topology: "lab"})
 	require.Error(t, err)
 }
 

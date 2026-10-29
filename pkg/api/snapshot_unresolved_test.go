@@ -4,12 +4,13 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/oslab/sysbox/pkg/address"
-	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
-	"github.com/stretchr/testify/require"
 )
 
 func TestSnapshotRestorePreservesIdenticalUnresolvedJournal(t *testing.T) {
@@ -20,7 +21,7 @@ func TestSnapshotRestorePreservesIdenticalUnresolvedJournal(t *testing.T) {
 		require.NoError(t, err)
 		st, err := repo.LoadState(ctx, "lab")
 		require.NoError(t, err)
-		intent := runtime.ActionRecord{ID: "pending", Topology: "lab", RunID: "interrupted", Resource: address.Resource("sysbox_node", "web"), Action: controlplane.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: st.TopologyUID, ResourceUID: "node", Generation: 1, ProviderOperationID: "pending", ProviderOperationAnchor: "action:pending", Quiescence: "unknown"}
+		intent := runtime.ActionRecord{ID: "pending", Topology: "lab", RunID: "interrupted", Resource: address.Resource("sysbox_node", "web"), Action: model.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: st.TopologyUID, ResourceUID: "node", Generation: 1, ProviderOperationID: "pending", ProviderOperationAnchor: "action:pending", Quiescence: "unknown"}
 		require.NoError(t, repo.CommitActionIntent(ctx, intent))
 		before, err := repo.LoadActions(ctx, "lab")
 		require.NoError(t, err)

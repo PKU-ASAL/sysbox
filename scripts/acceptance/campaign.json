@@ -909,7 +909,19 @@
       "tests": [
         "TestCanonicalUnlockRevokesAndWaitsForHostStopsAcrossRestart",
         "TestCanonicalLockHTTPReportsExecutionAuthority",
-        "TestStateMaintenanceRejectsIncompleteActivityRegistry"
+        "TestStateMaintenanceRejectsIncompleteActivityRegistry",
+        "TestAgentSignatureCannotBecomeAdministratorToken",
+        "TestBoundaryWorkerCannotCompleteRunWithoutHost",
+        "TestBoundaryWorkerCannotForgeHostCapabilities",
+        "TestBoundaryWorkerCannotAdmitAdoption",
+        "TestBoundaryWorkerCannotReverseHostObservationOrder",
+        "TestHostObservationRejectsForgeryAndPublishesAtomically",
+        "TestHostObservationRejectsExpiredSnapshot",
+        "TestPowerHostCompletionSurvivesDeliveryLeaseReplacement",
+        "TestFileHostCompletionAfterRealRetirement",
+        "TestCleanupReceiptRejectsForgedBindingAndAllowsExpiredLease",
+        "TestHostRunCommitFailureKeepsGrantAndObservation",
+        "TestHostRunCompletionReplayPreservesSignedObservationAcrossRestart"
       ],
       "kind": "contract",
       "race": true,
@@ -2292,7 +2304,9 @@
       "tests": [
         "TestUpsertProjectRejectsTraversal",
         "TestUpsertProjectKeepsPreviousTreeWhenStagingFails",
-        "TestUpsertProjectConcurrentReadersSeeCompleteRevision"
+        "TestUpsertProjectConcurrentReadersSeeCompleteRevision",
+        "TestRevisionSnapshotRejectsDigestMismatch",
+        "TestExecutionBridgeMaterializesOnlyCanonicalRevision"
       ],
       "race": true,
       "requires_env": [
@@ -2304,7 +2318,7 @@
       "kind": "contract",
       "package": "./pkg/agentexec",
       "tests": [
-        "TestRunDeliveryRejectsTamperedRevisionBeforeMaterializing"
+        "TestHostRunExecutorRejectsChangedCanonicalClaimBeforeMaterialization"
       ],
       "race": true
     },

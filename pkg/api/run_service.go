@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"regexp"
-	"sort"
 	"strings"
 	"time"
 
@@ -120,7 +119,10 @@ func (s *RunService) StartApply(ctx context.Context, topology string, req RunSta
 		return nil, runError(runServiceBadRequest, errors.New("revision must be an immutable global digest; republish old workspace revisions"))
 	}
 	if req.OperationKey != "" {
-		return s.startKeyedApply(ctx, topology, req)
+		return s.startKeyedRevisionRun(ctx, topology, "apply", req)
+	}
+	if req.Target != "" {
+		return nil, runError(runServiceBadRequest, errors.New("targeted apply requires Idempotency-Key"))
 	}
 	// Serialize the whole apply (HCL upsert + run creation) per-topology so
 	// concurrent applies cannot race on the shared HCL file write.
@@ -205,20 +207,7 @@ func (s *RunService) StartApply(ctx context.Context, topology string, req RunSta
 // plaintext. (Run.Inputs is transient: Jobs.persist strips it before the run is
 // durably stored, so sensitive inputs never enter the state backend.)
 func applyOperationKey(revision string, inputs map[string]string, allowUnsafe bool) string {
-	keys := make([]string, 0, len(inputs))
-	for k := range inputs {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	var b strings.Builder
-	fmt.Fprintf(&b, "revision:%d:%s\n", len(revision), revision)
-	fmt.Fprintf(&b, "allow_unsafe_state:%t\n", allowUnsafe)
-	for _, k := range keys {
-		v := inputs[k]
-		fmt.Fprintf(&b, "input:%d:%s=%d:%s\n", len(k), k, len(v), v)
-	}
-	sum := sha256.Sum256([]byte(b.String()))
-	return fmt.Sprintf("%x", sum[:])
+	return controlplane.ApplyOperationKey(revision, inputs, allowUnsafe)
 }
 
 func (s *RunService) StartRepair(ctx context.Context, topology string, req RunStartRequest) (*controlplane.Run, error) {
@@ -247,6 +236,9 @@ func (s *RunService) StartRepair(ctx context.Context, topology string, req RunSt
 }
 
 func (s *RunService) StartReset(ctx context.Context, topology string, req RunStartRequest) (*controlplane.Run, error) {
+	if req.OperationKey != "" {
+		return s.startKeyedRevisionRun(ctx, topology, "reset", req)
+	}
 	unlock := s.jobs.lockTopology(topology)
 	defer unlock()
 	if err := s.rejectActiveTopology(ctx, topology, ""); err != nil {
@@ -515,12 +507,39 @@ func (s *RunService) waitForCompletion(ctx context.Context, run *controlplane.Ru
 }
 
 func (s *RunService) Resume(ctx context.Context, runID string) (*controlplane.Run, *controlplane.Run, error) {
+	return s.ResumeWithKey(ctx, runID, "")
+}
+
+func (s *RunService) ResumeWithKey(ctx context.Context, runID, key string) (*controlplane.Run, *controlplane.Run, error) {
+	if key != "" {
+		if err := validateOperationKey(key); err != nil {
+			return nil, nil, runError(runServiceBadRequest, err)
+		}
+	}
 	parent, ok := s.jobs.get(runID)
 	if !ok {
 		return nil, nil, runError(runServiceNotFound, fmt.Errorf("run not found"))
 	}
 	unlock := s.jobs.lockTopology(parent.Topology)
 	defer unlock()
+	var keyed *controlplane.Run
+	if key != "" {
+		target := parent.Target
+		if parent.Op == "reset" {
+			target = ""
+		}
+		keyed = newRun(parent.Topology, parent.Op, runStartOptions{ParentID: parent.ID, SnapshotPath: parent.SnapshotPath, Revision: parent.Revision, Target: target, AgentID: parent.AgentID, UnsafeState: parent.UnsafeState, OperationKey: key})
+		keyed.ID = fmt.Sprintf("continuation-%x", sha256.Sum256([]byte(parent.ID+"\x00"+key)))
+		keyed.RequestFingerprint = fmt.Sprintf("continuation-request:%x", sha256.Sum256([]byte(parent.ID+"\x00"+parent.QueuedAt.UTC().Format(time.RFC3339Nano)+"\x00"+parent.Revision)))
+		existing, found, err := s.jobs.store.GetRunDispatch(ctx, keyed.ID, keyed.RequestFingerprint)
+		if err != nil {
+			return nil, parent, dispatchError(err)
+		}
+		if found {
+			s.jobs.remember(existing)
+			return existing, parent, nil
+		}
+	}
 	if parent.Status == controlplane.RunRunning {
 		return nil, parent, runError(runServiceConflict, fmt.Errorf("run %s is still running", runID))
 	}
@@ -549,6 +568,10 @@ func (s *RunService) Resume(ctx context.Context, runID string) (*controlplane.Ru
 		if _, err := runtime.ResumeResetPlan(checkpoint, &runtime.Plan{Actions: checkpoint.Plan}); err != nil {
 			return nil, parent, runError(runServiceConflict, err)
 		}
+	}
+	if keyed != nil {
+		run, err := s.dispatchKeyedRun(ctx, keyed, keyed.RequestFingerprint, nil)
+		return run, parent, err
 	}
 	run, err := s.jobs.startChild(parent)
 	if err != nil {

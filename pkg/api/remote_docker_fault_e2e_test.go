@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -25,23 +26,62 @@ import (
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/client"
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/ssh"
+
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/agentexec"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
+	"github.com/oslab/sysbox/pkg/model"
 	dockerprovider "github.com/oslab/sysbox/pkg/provider/docker"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/substrate"
-	"github.com/stretchr/testify/require"
-	"golang.org/x/crypto/ssh"
 )
 
 // Production Agent HTTP/WS, host-supervisor Unix RPC and real Docker share
 // canonical SQLite but use separate revision directories. Reconstruction is
 // in-process; independent process/VM faults have separate acceptance gates.
+// These cases exercise the separately built CLI against the same production
+// admission/Agent/supervisor chain, including reconstruction and signed cleanup.
+func TestServiceCLIDockerLifecycleE2E(t *testing.T) {
+	if os.Getenv("SYSBOX_CLI_BINARY") == "" {
+		t.Skip("requires current SYSBOX_CLI_BINARY")
+	}
+	testRemoteDockerCompletionLossRecovery(t, false, true, false, false, true)
+}
+
+func TestServiceCLINodePowerE2E(t *testing.T) {
+	if os.Getenv("SYSBOX_CLI_BINARY") == "" {
+		t.Skip("requires current CLI binary")
+	}
+	testRemoteDockerCompletionLossRecovery(t, false, false)
+}
+
+func TestServiceCLIInputsE2E(t *testing.T) {
+	if os.Getenv("SYSBOX_CLI_BINARY") == "" {
+		t.Skip("requires CLI")
+	}
+	testRemoteDockerCompletionLossRecovery(t, false, false)
+}
+
+func TestServiceCLIManagedSSHRotationE2E(t *testing.T) {
+	if os.Getenv("SYSBOX_CLI_BINARY") == "" || os.Getenv("SYSBOX_GUESTTASK_HELPER") == "" {
+		t.Skip("requires CLI and guest helper")
+	}
+	testRemoteDockerCompletionLossRecovery(t, true, true)
+}
+
 func TestRemoteDockerCompletionLossRecoveryE2E(t *testing.T) {
+	testRemoteDockerCompletionLossRecovery(t, false, false)
+}
+
+func TestServiceConsoleDockerE2E(t *testing.T) {
+	if os.Getenv("SYSBOX_GUESTTASK_HELPER") == "" {
+		t.Skip("requires current guest helper")
+	}
 	testRemoteDockerCompletionLossRecovery(t, false, false)
 }
 
@@ -71,7 +111,7 @@ type failDeletePublication struct {
 }
 
 func (r failDeletePublication) ProveCleanup(ctx context.Context, run controlplane.Run) (*controlplane.CleanupReceipt, error) {
-	return r.ActionRepository.(runtime.CleanupProver).ProveCleanup(ctx, run)
+	return r.ActionRepository.(agentexec.CleanupProver).ProveCleanup(ctx, run)
 }
 
 func (r failDeletePublication) CommitResetIntents(ctx context.Context, actions []runtime.ActionRecord) error {
@@ -115,7 +155,7 @@ func (d *countedDockerDeletion) DestroyNode(ctx context.Context, h substrate.Nod
 }
 
 func (r failDeletePublication) CommitActionOutcome(ctx context.Context, a runtime.ActionRecord, patch *runtime.StatePatch) error {
-	if r.resetDestroyed != nil && patch == nil && a.Action == controlplane.PlanActionReset && a.Phase == "destroyed" && r.secondFault.CompareAndSwap(true, false) {
+	if r.resetDestroyed != nil && patch == nil && a.Action == model.PlanActionReset && a.Phase == "destroyed" && r.secondFault.CompareAndSwap(true, false) {
 		if err := r.ActionRepository.CommitActionOutcome(ctx, a, nil); err != nil {
 			return err
 		}
@@ -123,7 +163,7 @@ func (r failDeletePublication) CommitActionOutcome(ctx context.Context, a runtim
 		<-ctx.Done()
 		return ctx.Err()
 	}
-	if r.resetPrepared != nil && patch == nil && a.Action == controlplane.PlanActionReset && a.Phase == "prepared" && r.fail.CompareAndSwap(true, false) {
+	if r.resetPrepared != nil && patch == nil && a.Action == model.PlanActionReset && a.Phase == "prepared" && r.fail.CompareAndSwap(true, false) {
 		if err := r.ActionRepository.CommitActionOutcome(ctx, a, nil); err != nil {
 			return err
 		}
@@ -131,7 +171,7 @@ func (r failDeletePublication) CommitActionOutcome(ctx context.Context, a runtim
 		<-ctx.Done()
 		return ctx.Err()
 	}
-	if patch != nil && a.Action == controlplane.PlanActionDelete && r.fail.CompareAndSwap(true, false) {
+	if patch != nil && a.Action == model.PlanActionDelete && r.fail.CompareAndSwap(true, false) {
 		if r.returned != nil {
 			close(r.returned)
 			<-ctx.Done()
@@ -143,7 +183,7 @@ func (r failDeletePublication) CommitActionOutcome(ctx context.Context, a runtim
 }
 
 type destroyFailureHostBridge struct {
-	*HostExecutionBridge
+	*ExecutionBridge
 	fail           *atomic.Bool
 	returned       chan struct{}
 	resetPrepared  chan struct{}
@@ -152,7 +192,7 @@ type destroyFailureHostBridge struct {
 }
 
 func (b destroyFailureHostBridge) ActionRepository(topology string) (runtime.ActionRepository, error) {
-	r, err := b.HostExecutionBridge.ActionRepository(topology)
+	r, err := b.ExecutionBridge.ActionRepository(topology)
 	return failDeletePublication{ActionRepository: r, fail: b.fail, returned: b.returned, resetPrepared: b.resetPrepared, resetDestroyed: b.resetDestroyed, secondFault: b.secondFault}, err
 }
 
@@ -178,6 +218,7 @@ func testRemoteDockerCompletionLossRecovery(t *testing.T, managedSSH, targetedRe
 	if os.Getenv("SYSBOX_REMOTE_DOCKER_E2E") != "1" {
 		t.Skip("requires real Docker daemon; set SYSBOX_REMOTE_DOCKER_E2E=1")
 	}
+	unprivileged := t.Name() == "TestUnprivilegedAgentDockerE2E"
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
 	privateDir := func() string { p := t.TempDir(); require.NoError(t, os.Chmod(p, 0700)); return p }
@@ -187,6 +228,8 @@ func testRemoteDockerCompletionLossRecovery(t *testing.T, managedSSH, targetedRe
 	require.NoError(t, err)
 	keyPath := filepath.Join(privateDir(), "issuer.pub")
 	require.NoError(t, os.WriteFile(keyPath, pub, 0600))
+	hostKeyPath := filepath.Join(privateDir(), "host.pub")
+	require.NoError(t, os.WriteFile(hostKeyPath, hostPub, 0644))
 	docker, err := dockerprovider.New()
 	require.NoError(t, err)
 	defer docker.Close()
@@ -199,8 +242,11 @@ func testRemoteDockerCompletionLossRecovery(t *testing.T, managedSSH, targetedRe
 	driver.DefaultRegistry = driver.NewRegistry()
 	defer func() { driver.DefaultRegistry = previous }()
 	deletions := &countedDockerDeletion{Substrate: docker}
-	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "docker", Version: "1", Node: deletions, NIC: docker, NodeState: docker, Artifact: docker, ImageEntry: docker, GuestExec: docker, GuestNetwork: docker, Reset: deletions}))
+	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "docker", Version: "1", Node: deletions, NIC: docker, NodeState: docker, Artifact: docker, ImageEntry: docker, Power: docker, GuestExec: docker, GuestNetwork: docker, Reset: deletions}))
 	cfg := config.DefaultServiceConfig()
+	if unprivileged {
+		cfg.API.Token = "test-administrator-token"
+	}
 	cfg.Paths.RunsDir, cfg.Paths.WorkspacesDir = privateDir(), privateDir()
 	cfg.State.Backend = "sqlite://" + filepath.Join(privateDir(), "canonical.db")
 	newAPI := func() *Server {
@@ -211,12 +257,9 @@ func testRemoteDockerCompletionLossRecovery(t *testing.T, managedSSH, targetedRe
 		return s
 	}
 	first := newAPI()
-	agentCfg := cfg
-	agentCfg.Paths.RunsDir = t.TempDir()
-	agentCfg.Paths.WorkspacesDir = t.TempDir()
-	// Remote observation must not depend on worker access to canonical state.
-	agentCfg.State.Backend = "sqlite://" + filepath.Join(t.TempDir(), "worker-local.db")
-	bridge := NewExecutionBridge(agentCfg)
+	if unprivileged {
+		require.NoError(t, first.apiStore.SaveAgent(ctx, controlplane.Agent{ID: "fault-agent", AuthSecret: "test-agent-secret", SecretHash: agent.SecretHash("test-agent-secret"), Capabilities: []string{"docker", "veth", controlplane.RunRecoveryCapability, controlplane.RunRecoveryInputsCapability}, Protocol: controlplane.AgentProtocolVersion, LastHeartbeat: time.Now()}))
+	}
 	topology := "remote-e2e-" + uuid.NewString()[:8]
 	repository, err := first.actionRepository(topology)
 	require.NoError(t, err)
@@ -236,7 +279,7 @@ func testRemoteDockerCompletionLossRecovery(t *testing.T, managedSSH, targetedRe
 	var current atomic.Pointer[Server]
 	current.Store(first)
 	type observedCompletion struct {
-		controlplane.RunCompletion
+		controlplane.HostRunResult
 		Proof hostRunCompletion
 	}
 	lost := make(chan observedCompletion, 1)
@@ -249,7 +292,7 @@ func testRemoteDockerCompletionLossRecovery(t *testing.T, managedSSH, targetedRe
 	faultOperation.Store("run_apply")
 	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(r.URL.Path, "/v1/hosts/") || !strings.Contains(r.URL.Path, "/runs/") || !strings.HasSuffix(r.URL.Path, "/completed") {
-			current.Load().ServeHTTP(w, r)
+			authMiddleware(current.Load()).ServeHTTP(w, r)
 			return
 		}
 		raw, err := io.ReadAll(r.Body)
@@ -265,7 +308,7 @@ func testRemoteDockerCompletionLossRecovery(t *testing.T, managedSSH, targetedRe
 		completion.Cleanup = completion.Run.Cleanup
 		r.Body = io.NopCloser(bytes.NewReader(raw))
 		record := httptest.NewRecorder()
-		current.Load().ServeHTTP(record, r)
+		authMiddleware(current.Load()).ServeHTTP(record, r)
 		if record.Code == 200 {
 			// Bind the fault to this phase; a delayed Apply retry must not
 			// consume Destroy's fault injection.
@@ -297,6 +340,12 @@ func testRemoteDockerCompletionLossRecovery(t *testing.T, managedSSH, targetedRe
 	boot, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
 	require.NoError(t, err)
 	root, socketDir := privateDir(), privateDir()
+	var workerRoot string
+	if unprivileged {
+		workerRoot = workerTestRoot(t)
+		socketDir = filepath.Join(workerRoot, "socket")
+		require.NoError(t, os.Mkdir(socketDir, 0750))
+	}
 	var failPublication atomic.Bool
 	var returned chan struct{}
 	var resetPrepared chan struct{}
@@ -315,7 +364,7 @@ func testRemoteDockerCompletionLossRecovery(t *testing.T, managedSSH, targetedRe
 	hostErrors := make(chan error, 1)
 	socket := filepath.Join(socketDir, "host.sock")
 	startHost := func() (context.CancelFunc, <-chan error) {
-		bridge, err := NewHostExecutionBridge(hostCfg)
+		bridge, err := NewExecutionBridge(hostCfg)
 		require.NoError(t, err)
 		require.NoError(t, bridge.BindHostIdentity("fault-agent", hostPub))
 		resolver := hostsupervisor.CanonicalResolver{RunsDir: hostCfg.Paths.RunsDir, Backend: cfg.State.Backend, AgentID: "fault-agent"}
@@ -338,11 +387,18 @@ func testRemoteDockerCompletionLossRecovery(t *testing.T, managedSSH, targetedRe
 			}}
 		executor := &agentexec.HostRunExecutor{Bridge: bridge, Tasks: tasks, Resolver: resolver, Authority: authority}
 		if len(destroyPublicationFault) != 0 && destroyPublicationFault[0] || resetPrepared != nil {
-			executor.Bridge = destroyFailureHostBridge{HostExecutionBridge: bridge, fail: &failPublication, returned: returned, resetPrepared: resetPrepared, resetDestroyed: resetDestroyed, secondFault: &secondFault}
+			executor.Bridge = destroyFailureHostBridge{ExecutionBridge: bridge, fail: &failPublication, returned: returned, resetPrepared: resetPrepared, resetDestroyed: resetDestroyed, secondFault: &secondFault}
 		}
 		runs.PrepareRun = executor.PrepareRun
 		runs.RecoverInterruptedRun = executor.RecoverInterruptedRun
 		srv := &hostsupervisor.Server{Socket: socket, GroupID: -1, Dispatcher: tasks, Runs: runs, RunEffect: executor.Execute, RunRecovery: executor.Recover}
+		if unprivileged {
+			srv.GroupID = 32000
+		}
+		srv.Observer = &hostsupervisor.Observer{AgentID: tasks.AgentID, BootID: tasks.HostBootID, Key: hostKey, Collect: func(ctx context.Context) (controlplane.AgentInventory, []controlplane.ResourceProjection, error) {
+			return agentexec.CollectHostObservation(ctx, agentexec.HostObservationOptions{ID: tasks.AgentID, Capabilities: []string{"docker", "veth"}, CapacityPath: hostCfg.Paths.Home}, bridge)
+		}}
+		srv.Power = &hostsupervisor.PowerDispatcher{Root: filepath.Join(root, "power"), AgentID: tasks.AgentID, HostBootID: tasks.HostBootID, IssuerKey: pub, HostKey: hostKey, Authorize: checkedAuthorize, ReportStop: authority.ReportStop, Resolve: resolver.ResolveNode}
 		sshBase := *tasks
 		sshBase.Root = filepath.Join(root, "guest-ssh")
 		srv.SSHGuest = &hostsupervisor.SSHGuestDispatcher{Dispatcher: &sshBase, Report: authority.ReportNodeOperation, ReportDerived: authority.ReportDerivedSSHAccess}
@@ -350,7 +406,7 @@ func testRemoteDockerCompletionLossRecovery(t *testing.T, managedSSH, targetedRe
 		service, stop := context.WithCancel(ctx)
 		t.Cleanup(stop)
 		done := make(chan error, 1)
-		go func() { defer close(done); done <- srv.Serve(service) }()
+		go func() { defer close(done); defer bridge.Close(); done <- srv.Serve(service) }()
 		require.Eventually(t, func() bool {
 			conn, err := net.DialTimeout("unix", socket, 10*time.Millisecond)
 			if err != nil {
@@ -383,8 +439,12 @@ func testRemoteDockerCompletionLossRecovery(t *testing.T, managedSSH, targetedRe
 	agentCtx, stopAgent := context.WithCancel(ctx)
 	agentDone := make(chan error, 1)
 	opts := agentexec.Options{ExecutionSessionFile: filepath.Join(t.TempDir(), "session.json"), APIURL: host.URL, ID: "fault-agent", Secret: "test-agent-secret", Capabilities: []string{"docker", "veth"}, PollInterval: 20 * time.Millisecond, Policy: cfg.Agent.Policy}
-	opts.HostSupervisorSocket, opts.RequireHostSupervisor, opts.ExecutionGrantPublicKeyFile = socket, true, keyPath
-	go func() { agentDone <- agentexec.Run(agentCtx, opts, bridge) }()
+	opts.HostSupervisorSocket, opts.ExecutionGrantPublicKeyFile, opts.HostPublicKeyFile = socket, keyPath, hostKeyPath
+	launchWorker := func(ctx context.Context, done chan<- error) { go func() { done <- agentexec.Run(ctx, opts) }() }
+	if unprivileged {
+		launchWorker = independentWorker(t, workerRoot, &opts, pub, hostPub, strings.TrimPrefix(cfg.State.Backend, "sqlite://"))
+	}
+	launchWorker(agentCtx, agentDone)
 	defer func() {
 		stopAgent()
 		select {
@@ -395,11 +455,64 @@ func testRemoteDockerCompletionLossRecovery(t *testing.T, managedSSH, targetedRe
 	}()
 	require.Eventually(t, func() bool { _, err := first.apiStore.GetAgent(ctx, opts.ID); return err == nil }, 5*time.Second, 20*time.Millisecond)
 	request := func(method, path string, body any, key string) (int, []byte) {
+		if strings.HasPrefix(t.Name(), "TestServiceCLI") && method == "POST" {
+			operation := ""
+			for _, candidate := range []string{"apply", "reset", "destroy"} {
+				if path == "/v1/topologies/"+topology+"/"+candidate {
+					operation = candidate
+				}
+			}
+			resume := strings.HasPrefix(path, "/v1/runs/") && strings.HasSuffix(path, "/resume")
+			if operation != "" || resume {
+				if resume {
+					operation = "reset"
+				}
+				if key == "" {
+					key = "cli-" + strings.ReplaceAll(path, "/", "_")
+				}
+				args := []string{operation, "--api", host.URL, "--topology", topology, "--key", key, "--auto-approve", "--detach"}
+				if values, ok := body.(map[string]any); ok {
+					for _, field := range []string{"revision", "target"} {
+						if value, ok := values[field].(string); ok && value != "" {
+							args = append(args, "--"+field, value)
+						}
+					}
+				}
+				if values, ok := body.(map[string]any); ok && values["inputs"] != nil {
+					inputPath := filepath.Join(t.TempDir(), "inputs.json")
+					raw, err := json.Marshal(values["inputs"])
+					require.NoError(t, err)
+					require.NoError(t, os.WriteFile(inputPath, raw, 0600))
+					args = append(args, "--inputs", inputPath)
+				}
+				if resume {
+					args = append(args, "--resume", strings.TrimSuffix(strings.TrimPrefix(path, "/v1/runs/"), "/resume"))
+				}
+				command := exec.CommandContext(ctx, os.Getenv("SYSBOX_CLI_BINARY"), args...)
+				// A service client must not load provider configuration or keys.
+				command.Env = append(os.Environ(), "SYSBOX_CONFIG=/nonexistent-client-config", "DOCKER_HOST=invalid://client-must-not-connect")
+				output, err := command.CombinedOutput()
+				require.NoError(t, err, string(output))
+				id := ""
+				for _, line := range strings.Split(string(output), "\n") {
+					if strings.HasPrefix(line, "Run: ") {
+						id = strings.TrimPrefix(line, "Run: ")
+					}
+				}
+				require.NotEmpty(t, id, string(output))
+				encoded, _ := json.Marshal(map[string]string{"run_id": id})
+				return 202, encoded
+			}
+		}
+
 		raw, marshalErr := json.Marshal(body)
 		require.NoError(t, marshalErr)
 		req, newErr := http.NewRequestWithContext(ctx, method, host.URL+path, bytes.NewReader(raw))
 		require.NoError(t, newErr)
 		req.Header.Set("Content-Type", "application/json")
+		if cfg.API.Token != "" {
+			req.Header.Set("Authorization", "Bearer "+cfg.API.Token)
+		}
 		req.Header.Set("X-Sysbox-Roles", "admin")
 		if key != "" {
 			req.Header.Set("Idempotency-Key", key)
@@ -437,11 +550,21 @@ resource "sysbox_node" "%s" {
 		hcl = strings.Replace(hcl, "  provider \"docker\" {", fmt.Sprintf("  connection {\n    type = \"ssh\"\n    user = \"root\"\n  }\n  provider \"docker\" {\n    binds = [%q, %q]", helper+":/usr/local/bin/sysbox-guest-task:ro", keyPath+":/etc/sysbox/grant-public-key:ro"), 1)
 		hcl += fmt.Sprintf("resource \"sysbox_ssh_access\" \"admin\" {\n  node = sysbox_node.%s.id\n  authorized_keys = [%q]\n}\n", strings.ReplaceAll(topology, "-", "_"), strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key))))
 	}
+	if t.Name() == "TestServiceConsoleDockerE2E" {
+		hcl = strings.Replace(hcl, "  provider \"docker\" {", fmt.Sprintf("  provider \"docker\" {\n    privileged = true\n    cgroupns_mode = \"private\"\n    binds = [%q, %q]", os.Getenv("SYSBOX_GUESTTASK_HELPER")+":/usr/local/bin/sysbox-guest-task:ro", keyPath+":/etc/sysbox/grant-public-key:ro"), 1)
+	}
+	if t.Name() == "TestServiceCLIInputsE2E" {
+		hcl = "variable \"message\" { default = \"default-value\" }\nvariable \"flag\" { sensitive = true }\n" + hcl
+		hcl = strings.Replace(hcl, "  image = sysbox_image.base.id", "  image = sysbox_image.base.id\n  env = { MESSAGE = var.message, FLAG = var.flag }", 1)
+	}
 	status, raw := request("POST", "/v1/revisions", map[string]any{"files": map[string]string{"field.sysbox.hcl": hcl}}, "")
 	require.Equal(t, 201, status, string(raw))
 	var revision map[string]string
 	require.NoError(t, json.Unmarshal(raw, &revision))
 	applyBody := map[string]any{"revision": revision["revision"]}
+	if t.Name() == "TestServiceCLIInputsE2E" {
+		applyBody["inputs"] = map[string]string{"message": "explicit-value", "flag": "cli-secret-canary"}
+	}
 	status, raw = request("POST", "/v1/topologies/"+topology+"/apply", applyBody, "request-one")
 	require.Equal(t, 202, status, string(raw))
 	var accepted map[string]any
@@ -457,7 +580,7 @@ resource "sysbox_node" "%s" {
 	}
 	require.Equal(t, controlplane.RunDone, completion.Run.Status, completion.Run.Err)
 	require.NoError(t, controlplane.VerifyRunStopReceipt(hostPub, completion.Proof.Receipt, completion.Proof.Evidence))
-	hostBridge, err := NewHostExecutionBridge(hostCfg)
+	hostBridge, err := NewExecutionBridge(hostCfg)
 	require.NoError(t, err)
 	localRevision, err := hostBridge.MaterializeRunRevision(ctx, topology, completion.Run.Revision)
 	require.NoError(t, err)
@@ -486,6 +609,19 @@ resource "sysbox_node" "%s" {
 	inspected, err := cli.ContainerInspect(ctx, externalID)
 	require.NoError(t, err)
 	require.True(t, inspected.State.Running)
+	if t.Name() == "TestServiceCLIInputsE2E" {
+		require.Contains(t, inspected.Config.Env, "MESSAGE=explicit-value")
+		require.Contains(t, inspected.Config.Env, "FLAG=cli-secret-canary")
+		persisted, err := json.Marshal(state)
+		require.NoError(t, err)
+		require.NotContains(t, string(persisted), "cli-secret-canary")
+		stored, err := current.Load().apiStore.GetRun(ctx, runID)
+		require.NoError(t, err)
+		raw, err := json.Marshal(stored)
+		require.NoError(t, err)
+		require.NotContains(t, string(raw), "cli-secret-canary")
+	}
+
 	stopAgent()
 	select {
 	case <-agentDone:
@@ -499,8 +635,7 @@ resource "sysbox_node" "%s" {
 	stopHost, hostDone = startHost()
 	agentCtx, stopAgent = context.WithCancel(ctx)
 	agentDone = make(chan error, 1)
-	reopenedBridge := NewExecutionBridge(agentCfg)
-	go func() { agentDone <- agentexec.Run(agentCtx, opts, reopenedBridge) }()
+	launchWorker(agentCtx, agentDone)
 	hold.Store(false)
 	awaitReceipt(completion.Proof)
 	status, raw = request("POST", "/v1/topologies/"+topology+"/apply", applyBody, "request-one")
@@ -523,10 +658,10 @@ resource "sysbox_node" "%s" {
 	require.Equal(t, opts.ID, workspace.PlacementAgentID)
 	status, raw = request("POST", "/v1/agents/"+opts.ID+"/runs/"+runID+"/claim", controlplane.RunClaim{QueuedAt: stored.QueuedAt.Add(-time.Second), Revision: stored.Revision}, "")
 	require.Equal(t, 409, status, string(raw))
-	stale := completion.RunCompletion
+	stale := completion.HostRunResult
 	stale.Run.LeaseOwner = "superseded-worker"
 	status, raw = request("POST", "/v1/agents/"+opts.ID+"/runs/"+runID+"/complete", stale, "")
-	require.Equal(t, 409, status, string(raw))
+	require.Equal(t, 404, status, string(raw))
 	forged := completion.Proof
 	forged.Evidence, err = json.Marshal(stale.Run)
 	require.NoError(t, err)
@@ -559,6 +694,66 @@ resource "sysbox_node" "%s" {
 		}
 	}
 	require.True(t, observed, "owning-agent live observation must identify the exact Docker container")
+	if t.Name() == "TestServiceConsoleDockerE2E" {
+		testServiceConsoleSessions(t, ctx, host.URL, topology, strings.ReplaceAll(topology, "-", "_"), externalID, request)
+	}
+	if t.Name() == "TestServiceCLINodePowerE2E" || unprivileged {
+		node := "sysbox_node." + strings.ReplaceAll(topology, "-", "_")
+		callPower := func(operation, key string) string {
+			command := exec.CommandContext(ctx, os.Getenv("SYSBOX_CLI_BINARY"), operation, node, "--api", host.URL, "--topology", topology, "--key", key)
+			command.Env = append(os.Environ(), "SYSBOX_CONFIG=/nonexistent-client-config", "DOCKER_HOST=invalid://no-provider-client", "SYSBOX_API_TOKEN="+cfg.API.Token)
+			output, err := command.CombinedOutput()
+			require.NoError(t, err, string(output))
+			for _, line := range strings.Split(string(output), "\n") {
+				if strings.HasPrefix(line, "Operation: ") {
+					return strings.TrimPrefix(line, "Operation: ")
+				}
+			}
+			t.Fatal("CLI did not return operation identity")
+			return ""
+		}
+		paused := callPower("pause", "pause-once")
+		container, err := cli.ContainerInspect(ctx, externalID)
+		require.NoError(t, err)
+		require.True(t, container.State.Paused)
+		require.Equal(t, paused, callPower("pause", "pause-once"))
+		callPower("resume", "resume-once")
+		container, err = cli.ContainerInspect(ctx, externalID)
+		require.NoError(t, err)
+		require.False(t, container.State.Paused)
+		// Replaying the older successful request must not pause the resumed node.
+		require.Equal(t, paused, callPower("pause", "pause-once"))
+		container, err = cli.ContainerInspect(ctx, externalID)
+		require.NoError(t, err)
+		require.False(t, container.State.Paused)
+		t.Log("independent CLI pause/resume used the signed host path; historical key replay did not reapply pause")
+	}
+	if managedSSH && strings.HasPrefix(t.Name(), "TestServiceCLI") {
+		rotated, _, err := ed25519.GenerateKey(rand.Reader)
+		require.NoError(t, err)
+		oldKey, err := ssh.NewPublicKey(pub)
+		require.NoError(t, err)
+		newKey, err := ssh.NewPublicKey(rotated)
+		require.NoError(t, err)
+		hcl = strings.ReplaceAll(hcl, strings.TrimSpace(string(ssh.MarshalAuthorizedKey(oldKey))), strings.TrimSpace(string(ssh.MarshalAuthorizedKey(newKey))))
+		code, data := request("POST", "/v1/revisions", map[string]any{"files": map[string]string{"field.sysbox.hcl": hcl}}, "")
+		require.Equal(t, 201, code, string(data))
+		require.NoError(t, json.Unmarshal(data, &revision))
+		code, data = request("POST", "/v1/topologies/"+topology+"/apply", map[string]any{"revision": revision["revision"], "target": "sysbox_ssh_access.admin"}, "rotate-ssh")
+		require.Equal(t, 202, code, string(data))
+		var accepted map[string]string
+		require.NoError(t, json.Unmarshal(data, &accepted))
+		require.Eventually(t, func() bool {
+			run, err := current.Load().apiStore.GetRun(ctx, accepted["run_id"])
+			return err == nil && run.Status.IsTerminal()
+		}, 20*time.Second, 50*time.Millisecond)
+		rotatedRun, err := current.Load().apiStore.GetRun(ctx, accepted["run_id"])
+		require.NoError(t, err)
+		require.Equal(t, controlplane.RunDone, rotatedRun.Status, rotatedRun.Err)
+		keys, err := exec.CommandContext(ctx, "docker", "exec", externalID, "/usr/local/bin/sysbox-guest-task", "--ssh-authorized-keys", "root").CombinedOutput()
+		require.NoError(t, err, string(keys))
+		require.Equal(t, strings.TrimSpace(string(ssh.MarshalAuthorizedKey(newKey))), strings.TrimSpace(string(keys)))
+	}
 	if targetedReset {
 		if resetPrepared != nil {
 			failPublication.Store(true)
@@ -644,7 +839,7 @@ resource "sysbox_node" "%s" {
 			require.NoError(t, err)
 			resets := 0
 			for _, action := range actions {
-				if action.Action != controlplane.PlanActionReset {
+				if action.Action != model.PlanActionReset {
 					continue
 				}
 				resets++
@@ -683,7 +878,11 @@ resource "sysbox_node" "%s" {
 				require.NoError(t, err)
 				require.NoError(t, json.Unmarshal(raw, &saved))
 				handle = saved.Handle
-				require.EqualValues(t, 2, resource.Generation)
+				expectedGeneration := int64(2)
+				if strings.HasPrefix(t.Name(), "TestServiceCLI") {
+					expectedGeneration = 3
+				} // Rotation already advanced the SSH resource once.
+				require.EqualValues(t, expectedGeneration, resource.Generation)
 			}
 			require.Equal(t, replacement, handle.NodeID)
 			require.EqualValues(t, 2, handle.Generation)

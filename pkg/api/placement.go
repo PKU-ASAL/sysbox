@@ -57,8 +57,15 @@ func (s *WorkspaceService) placementFile(topology string) string {
 }
 
 func (s *WorkspaceService) loadPlacement(topology string) (*topologyPlacement, error) {
+	return s.loadPlacementContext(context.Background(), topology)
+}
+
+func (s *WorkspaceService) loadPlacementContext(ctx context.Context, topology string) (*topologyPlacement, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if s.placementStore != nil {
-		return s.placementStore.GetTopologyPlacement(context.Background(), topology)
+		return s.placementStore.GetTopologyPlacement(ctx, topology)
 	}
 	data, err := os.ReadFile(s.placementFile(topology))
 	if os.IsNotExist(err) {

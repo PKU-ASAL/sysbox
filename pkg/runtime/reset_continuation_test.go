@@ -6,11 +6,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/state"
-	"github.com/stretchr/testify/require"
 )
 
 type continuationActions struct {
@@ -58,13 +60,13 @@ func TestResetContinuationAdmitsBeforeEffectsAndReusesReceipt(t *testing.T) {
 	digest, err := planActionsSHA256(plan.Actions)
 	require.NoError(t, err)
 	cp := &OperationCheckpoint{RunID: original.runID, Topology: original.topology, Operation: "reset", Plan: plan.Actions, PlanSHA256: digest}
-	cp.Steps = []OperationStep{{Kind: "resource", Resource: plan.Actions[0].Address.String(), Action: controlplane.PlanActionReset, Status: OperationDone}}
+	cp.Steps = []OperationStep{{Kind: "resource", Resource: plan.Actions[0].Address.String(), Action: model.PlanActionReset, Status: OperationDone}}
 	first, err := original.newAction(context.Background(), plan.Actions[0])
 	require.NoError(t, err)
 	first.Phase = "accepted"
 	m := &continuationActions{memoryActions: original.actions.(*memoryActions)}
 	require.NoError(t, m.CommitActionIntent(context.Background(), first))
-	cold := NewExecutor(g, st)
+	cold := NewExecutor(g, st, driver.DefaultRegistry)
 	cold.SetRunContext(original.topology, "continuation-execution")
 	cold.SetActionRepository(m)
 	req, err := cold.PrepareResetContinuation(context.Background(), cp, queued, "config-revision")
@@ -91,7 +93,7 @@ func TestResetContinuationAdmitsBeforeEffectsAndReusesReceipt(t *testing.T) {
 	}
 	require.Equal(t, 2, prepares, "checkpoint step completion cannot override pending durable actions")
 	before := append([]string(nil), sub.resetLifecycle...)
-	coldAgain := NewExecutor(g, st)
+	coldAgain := NewExecutor(g, st, driver.DefaultRegistry)
 	coldAgain.SetRunContext(original.topology, "another-process")
 	coldAgain.SetActionRepository(m)
 	retry, err := coldAgain.PrepareResetContinuation(context.Background(), cp, queued, "config-revision")

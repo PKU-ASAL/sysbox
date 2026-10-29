@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"time"
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
@@ -50,7 +51,7 @@ func (s *Server) guestExecutionOwner(ctx context.Context, topology string) (stri
 		if err != nil {
 			continue
 		}
-		if inv.Stale {
+		if inv.Stale || !controlplane.FreshHostObservation(inv.ObservedAt, time.Now()) {
 			continue
 		}
 		for _, item := range inv.Topologies {

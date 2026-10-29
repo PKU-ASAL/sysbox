@@ -118,13 +118,13 @@ func TestClaimReceiptReplayDoesNotRenewOrChangeAttempt(t *testing.T) {
 	require.False(t, ok)
 }
 
-func TestRunCompletionProjectionCannotBeInjected(t *testing.T) {
+func TestRunHostCompletionProofCannotBeInjected(t *testing.T) {
 	storage := &runStorageFixture{}
 	repo := NewRunRepository(storage)
-	run := controlplane.Run{ID: "injected", Topology: "lab", Status: controlplane.RunQueued, CompletionProjection: &controlplane.Projection{Serial: 999}}
+	run := controlplane.Run{ID: "injected", Topology: "lab", Status: controlplane.RunQueued, HostCompletion: &controlplane.RunHostCompletionProof{}}
 	require.ErrorIs(t, repo.SaveRun(context.Background(), run), ErrConflict)
-	run.CompletionProjection = nil
+	run.HostCompletion = nil
 	require.NoError(t, repo.SaveRun(context.Background(), run))
-	run.CompletionProjection = &controlplane.Projection{Serial: 999}
+	run.HostCompletion = &controlplane.RunHostCompletionProof{}
 	require.ErrorIs(t, repo.SaveRun(context.Background(), run), ErrConflict)
 }

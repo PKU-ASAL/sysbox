@@ -5,11 +5,11 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"github.com/oslab/sysbox/pkg/address"
 	"sort"
 	"time"
 
-	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/address"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 )
@@ -140,7 +140,7 @@ func gcReferencesAt(a *aggregate, now time.Time) (GCReferenceSnapshot, error) {
 					if resolved, err := runtime.IntentWithDiscoveredIdentity(old, record.Observation.Resources); err == nil {
 						old = resolved
 					}
-					if old.Action == controlplane.PlanActionReset && len(old.ResetSSH) > 0 {
+					if old.Action == model.PlanActionReset && len(old.ResetSSH) > 0 {
 						if resolved, err := runtime.ResetSSHWithObservedResults(old, record.Observation.Resources); err == nil {
 							old = resolved
 						}

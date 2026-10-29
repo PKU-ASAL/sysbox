@@ -19,7 +19,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/creack/pty"
 	"github.com/oslab/sysbox/pkg/vsockrpc"
 	"golang.org/x/sys/unix"
 )
@@ -174,8 +173,6 @@ func dispatchVsockRequest(conn net.Conn, w io.Writer, reader *bufio.Reader, req 
 		sendFrame(w, vsockrpc.Frame{Pong: true, Done: true})
 	case vsockrpc.OpExec:
 		handleExec(w, reader, req)
-	case vsockrpc.OpConsole:
-		handleConsole(conn, req)
 	case vsockrpc.OpWriteFile:
 		handleWriteFile(w, reader, req)
 	case vsockrpc.OpTask:
@@ -283,54 +280,6 @@ func handleExec(w io.Writer, reader io.Reader, req vsockrpc.Request) {
 		}
 	}
 	sendFrame(w, final)
-}
-
-func handleConsole(conn net.Conn, req vsockrpc.Request) {
-	cmdArgs := req.Cmd
-	if len(cmdArgs) == 0 {
-		cmdArgs = []string{"/bin/sh"}
-	}
-	cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
-	if len(req.Env) > 0 {
-		cmd.Env = os.Environ()
-		for k, v := range req.Env {
-			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
-		}
-	} else {
-		cmd.Env = os.Environ()
-	}
-	rows, cols := req.Rows, req.Cols
-	if rows <= 0 {
-		rows = 32
-	}
-	if cols <= 0 {
-		cols = 120
-	}
-	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: uint16(rows), Cols: uint16(cols)})
-	if err != nil {
-		sendFrame(conn, vsockrpc.Frame{Done: true, Error: err.Error()})
-		return
-	}
-	defer ptmx.Close()
-
-	done := make(chan error, 2)
-	go func() {
-		_, err := io.Copy(ptmx, conn)
-		done <- err
-	}()
-	go func() {
-		_, err := io.Copy(conn, ptmx)
-		done <- err
-	}()
-
-	waitCh := make(chan error, 1)
-	go func() { waitCh <- cmd.Wait() }()
-	select {
-	case <-done:
-		_ = cmd.Process.Kill()
-		<-waitCh
-	case <-waitCh:
-	}
 }
 
 func pumpToFrames(w io.Writer, r io.Reader, isStdout bool, done chan<- struct{}) {

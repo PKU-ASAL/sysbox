@@ -205,6 +205,9 @@ func (e *Engine) verify(r taskprotocol.Request) (string, time.Duration, error) {
 	return digest, budget, err
 }
 func (e *Engine) Start(ctx context.Context, request taskprotocol.Request) (taskprotocol.Record, error) {
+	if request.Terminal != nil {
+		return taskprotocol.Record{}, fmt.Errorf("Windows durable tasks do not support interactive terminals")
+	}
 	var zero taskprotocol.Record
 	unlock, err := e.lock(ctx)
 	if err != nil {

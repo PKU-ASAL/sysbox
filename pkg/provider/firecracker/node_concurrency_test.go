@@ -16,9 +16,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type lifecycleTestSubstrate struct{ *Substrate }
+
+func (s *lifecycleTestSubstrate) StartNode(ctx context.Context, h substrate.NodeHandle) error {
+	return s.startManifestProcess(ctx, h, func(_ context.Context, m *vmManifest) (*exec.Cmd, error) {
+		return exec.Command(s.firecrackerBin, "--config-file", m.Handle.ConfigPath, "--api-sock", m.Handle.Socket), nil
+	})
+}
+
 // The executable ignores Firecracker arguments and becomes a harmless child.
 // No VM, tap, namespace, or listening socket is created by these tests.
-func lifecycleFixture(t *testing.T, readiness bool) (*Substrate, substrate.NodeHandle, *vmProcess) {
+func lifecycleFixture(t *testing.T, readiness bool) (*lifecycleTestSubstrate, substrate.NodeHandle, *vmProcess) {
 	t.Helper()
 	s, h, m, _ := manifestFixture(t, false)
 	hs := h.Provider.(*HandleState)
@@ -42,7 +50,7 @@ func lifecycleFixture(t *testing.T, readiness bool) (*Substrate, substrate.NodeH
 		// cleanup only after a fresh observation rather than weakening identity.
 		require.EventuallyWithT(t, func(c *assert.CollectT) { require.NoError(c, s.DestroyNode(ctx, h)) }, 3*time.Second, time.Millisecond)
 	})
-	return s, h, vm
+	return &lifecycleTestSubstrate{s}, h, vm
 }
 func TestLifecycleWaitsForStartAndHonorsCancellation(t *testing.T) {
 	s, h, vm := lifecycleFixture(t, true)
@@ -194,7 +202,7 @@ func TestDestroyWaitCancellationPreservesTrackedProcessForRetry(t *testing.T) {
 	vm.done = make(chan struct{})
 	vm.mu.Unlock()
 	var once sync.Once
-	seedOwnedManifest(t, s, h.ID, h.Provider.(*HandleState), cmd)
+	seedOwnedManifest(t, s.Substrate, h.ID, h.Provider.(*HandleState), cmd)
 	reap := func() { once.Do(func() { go reapVMProcess(vm, cmd) }) }
 	t.Cleanup(reap)
 	// Isolate the delayed-reaper case from the separate procfs exit race:

@@ -10,10 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/coder/websocket"
-
 	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
@@ -234,40 +231,8 @@ func (b *LocalBridge) ParentRun(ctx context.Context, id string) (*controlplane.R
 	return parent, nil
 }
 
-func (b *LocalBridge) ReconcileParentJournal(_, _ *controlplane.Run) error {
-	return fmt.Errorf("run resume requires the API control plane")
-}
-
 func (b *LocalBridge) Preflight(context.Context, *controlplane.Run, io.Writer) error {
 	return nil
-}
-
-func (b *LocalBridge) OpenConsole(ctx context.Context, sess controlplane.ConsoleSession, req controlplane.ConsoleRequest, ws *websocket.Conn) error {
-	mgr, err := b.StateManager(sess.Topology)
-	if err != nil {
-		return err
-	}
-	st, err := mgr.Load()
-	if err != nil {
-		return err
-	}
-	return OpenConsoleFromState(ctx, st, sess, req, ws)
-}
-
-func (b *LocalBridge) FilterApplyPlan(plan *runtime.Plan) (*runtime.Plan, error) {
-	if b.opts.Target == "" {
-		return plan, nil
-	}
-	typ, name, err := splitAddr(b.opts.Target)
-	if err != nil {
-		return nil, fmt.Errorf("--target: %w", err)
-	}
-	fmt.Fprintf(b.opts.Log, "Targeting: %s.%s\n", typ, name)
-	return runtime.FilterPlanByTarget(plan, typ, name), nil
-}
-
-func (b *LocalBridge) RefreshApply() bool {
-	return b.opts.Refresh
 }
 
 func (b *LocalBridge) BeforeApply(plan *runtime.Plan) error {
@@ -277,20 +242,6 @@ func (b *LocalBridge) BeforeApply(plan *runtime.Plan) error {
 	return b.opts.BeforeApply(plan)
 }
 
-func (b *LocalBridge) BuildDestroyPlan(st *state.State) (*runtime.Plan, error) {
-	plan := &runtime.Plan{}
-	for i := len(st.Resources) - 1; i >= 0; i-- {
-		r := st.Resources[i]
-		if r.LifecyclePreventDestroy() {
-			return nil, fmt.Errorf("%s: lifecycle.prevent_destroy blocks deletion", r.Address)
-		}
-		plan.Actions = append(plan.Actions, controlplane.PlannedChange{
-			Address: r.Address, Action: controlplane.PlanActionDelete, Reason: "destroy requested",
-		})
-	}
-	return plan, nil
-}
-
 func (b *LocalBridge) BeforeDestroy(plan *runtime.Plan) error {
 	if b.opts.BeforeDestroy == nil {
 		return nil
@@ -298,12 +249,7 @@ func (b *LocalBridge) BeforeDestroy(plan *runtime.Plan) error {
 	return b.opts.BeforeDestroy(plan)
 }
 
-func (b *LocalBridge) BuildResetPlan(g *graph.Graph, st *state.State, target string) (*runtime.Plan, error) {
-	if target == "" {
-		target = b.opts.Target
-	}
-	return runtime.BuildResetPlan(g, st, target)
-}
+func (b *LocalBridge) OperationTarget() string { return b.opts.Target }
 
 func (b *LocalBridge) BeforeReset(plan *runtime.Plan) error {
 	if b.opts.BeforeReset == nil {

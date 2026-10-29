@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/oslab/sysbox/pkg/diag"
-
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/diag"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
@@ -201,7 +200,7 @@ func (s *Server) handleGetOutputs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	_, _, _, root, evalCtx, err := runtime.LoadWorkspaceWithManager(s.workspaceService().HCLFile(topology), mgr)
+	_, _, _, root, evalCtx, err := runtime.LoadWorkspaceWithManager(s.workspaceService().HCLFile(topology), mgr, driver.DefaultRegistry)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -261,12 +260,12 @@ func (s *Server) handleGetPlan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	g, _, st, _, _, err := runtime.LoadWorkspaceWithManager(s.workspaceService().HCLFile(topology), mgr)
+	g, _, st, _, _, err := runtime.LoadWorkspaceWithManager(s.workspaceService().HCLFile(topology), mgr, driver.DefaultRegistry)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	plan, err := runtime.ComputePlan(g, st)
+	plan, err := runtime.ComputePlan(g, st, driver.DefaultRegistry)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -288,7 +287,7 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 	}
 	run, err := s.runs().StartApply(r.Context(), topology, RunStartRequest{
 		OperationKey: r.Header.Get("Idempotency-Key"),
-		Revision:     req.Revision, AgentID: req.AgentID, AllowUnsafeState: req.AllowUnsafeState, Inputs: req.Inputs, DeadlineAt: req.DeadlineAt,
+		Revision:     req.Revision, AgentID: req.AgentID, Target: req.Target, AllowUnsafeState: req.AllowUnsafeState, Inputs: req.Inputs, DeadlineAt: req.DeadlineAt,
 	})
 	if err != nil {
 		writeError(w, runServiceStatus(err), err)
@@ -337,7 +336,7 @@ func (s *Server) handleReset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	run, err := s.runs().StartReset(r.Context(), topology, RunStartRequest{
-		Revision: req.Revision, AgentID: req.AgentID, Target: req.Target, AllowUnsafeState: req.AllowUnsafeState,
+		OperationKey: r.Header.Get("Idempotency-Key"), Revision: req.Revision, AgentID: req.AgentID, Target: req.Target, AllowUnsafeState: req.AllowUnsafeState,
 	})
 	if err != nil {
 		writeError(w, runServiceStatus(err), err)
@@ -368,6 +367,7 @@ func decodeResetRequest(r *http.Request) (resetRequest, error) {
 }
 
 type applyRequest struct {
+	Target           string            `json:"target,omitempty"`
 	Revision         string            `json:"revision,omitempty"`
 	AgentID          string            `json:"agent_id,omitempty"`
 	AllowUnsafeState bool              `json:"allow_unsafe_state,omitempty"`
@@ -483,38 +483,12 @@ func (s *Server) handleResumeRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	run, parent, err := s.runs().Resume(r.Context(), id)
+	run, parent, err := s.runs().ResumeWithKey(r.Context(), id, r.Header.Get("Idempotency-Key"))
 	if err != nil {
 		writeError(w, runServiceStatus(err), err)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"run_id": run.ID, "parent_id": parent.ID, "agent_id": run.AgentID})
-}
-
-func (s *Server) reconcileParentJournal(parent, run *controlplane.Run) error {
-	mgr, err := s.stateManager(parent.Topology)
-	if err != nil {
-		return err
-	}
-	report, err := s.reconcileCanonicalActions(context.Background(), parent.Topology, parent.ID, mgr)
-	if err != nil {
-		return err
-	}
-	if report == nil {
-		return nil
-	}
-	logs := s.jobs.logWriter(run.ID)
-	for _, action := range report.Recovered {
-		_, _ = logs.Write([]byte(fmt.Sprintf("[resume] %s %s", action.Status, action.Resource)))
-		if action.ExternalID != "" {
-			_, _ = logs.Write([]byte(fmt.Sprintf(" (%s)", action.ExternalID)))
-		}
-		_, _ = logs.Write([]byte("\n"))
-	}
-	for _, action := range report.Skipped {
-		_, _ = logs.Write([]byte(fmt.Sprintf("[resume] skipped %s: %s\n", action.Resource, action.Status)))
-	}
-	return nil
 }
 
 func (s *Server) handleCleanupRun(w http.ResponseWriter, r *http.Request) {

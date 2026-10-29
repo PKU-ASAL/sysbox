@@ -130,34 +130,3 @@ func TestAgentServiceLeavesLiveGuestCommandPending(t *testing.T) {
 	require.False(t, terminal)
 	require.Equal(t, controlplane.AgentCommandStatusDelivered, reconciled.Status)
 }
-
-func TestAgentServiceCompleteRunStoresProjection(t *testing.T) {
-	svc, _, registry, jobs := newTestAgentService(t)
-	run := jobs.start("mixed", "apply")
-	require.NoError(t, jobs.assign(run, "host-a"))
-	claimed, err := jobs.claim(run.ID, "host-a")
-	require.NoError(t, err)
-
-	completion, err := svc.CompleteRun("host-a", run.ID, controlplane.RunCompletion{
-		Run: controlplane.Run{
-			ID:         run.ID,
-			AgentID:    "host-a",
-			Topology:   "mixed",
-			Workspace:  "mixed",
-			Status:     controlplane.RunDone,
-			LeaseOwner: claimed.LeaseOwner, Attempt: claimed.Attempt,
-		},
-	})
-	require.NoError(t, err)
-	require.Equal(t, "host-a", completion.Projection.AgentID)
-	require.Equal(t, "mixed", completion.Projection.Topology)
-	require.Equal(t, "mixed", completion.Projection.Workspace)
-
-	got, ok := jobs.get(run.ID)
-	require.True(t, ok)
-	require.Equal(t, controlplane.RunDone, got.Status)
-
-	projections := registry.ListProjections("host-a")
-	require.Len(t, projections, 1)
-	require.Equal(t, "mixed", projections[0].Topology)
-}

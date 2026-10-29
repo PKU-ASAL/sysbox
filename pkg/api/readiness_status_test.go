@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 )
 
 func condition(t *testing.T, s *controlplane.TopologyStatus, typ string) controlplane.Condition {
@@ -58,7 +59,7 @@ func TestGetTopologyReportsReadinessConditions(t *testing.T) {
 	// A healthy observation.
 	require.NoError(t, s.saveHealthSnapshot("lab", HealthSnapshot{
 		Topology: "lab",
-		Health:   controlplane.TopologyHealth{Status: controlplane.ResourceHealthHealthy},
+		Health:   model.TopologyHealth{Status: model.ResourceHealthHealthy},
 	}))
 
 	body := getTopology(t, s, "lab")

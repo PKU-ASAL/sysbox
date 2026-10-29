@@ -6,11 +6,12 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/oslab/sysbox/pkg/address"
-	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
-	"github.com/stretchr/testify/require"
 )
 
 func TestWorkspaceDeletePreservesUnresolvedLifecycleAction(t *testing.T) {
@@ -22,7 +23,7 @@ func TestWorkspaceDeletePreservesUnresolvedLifecycleAction(t *testing.T) {
 	require.NoError(t, err)
 	st, err := repo.LoadState(ctx, "lab")
 	require.NoError(t, err)
-	a := runtime.ActionRecord{ID: "pending", RunID: "run", Topology: "lab", Resource: address.Resource("sysbox_node", "web"), Action: controlplane.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: st.TopologyUID, ResourceUID: "web-uid", Generation: 1}
+	a := runtime.ActionRecord{ID: "pending", RunID: "run", Topology: "lab", Resource: address.Resource("sysbox_node", "web"), Action: model.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: st.TopologyUID, ResourceUID: "web-uid", Generation: 1}
 	require.NoError(t, repo.CommitActionIntent(ctx, a))
 	for _, force := range []bool{false, true} {
 		require.ErrorIs(t, w.Delete(ctx, "lab", force), persistence.ErrConflict)

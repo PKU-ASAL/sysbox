@@ -8,11 +8,12 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	_ "modernc.org/sqlite"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
-	_ "modernc.org/sqlite"
 )
 
 func TestSQLiteAPIStoreRoundTripsResetTargetAndUnsafeState(t *testing.T) {
@@ -156,7 +157,7 @@ func TestResourceProjectionStoreRoundTrip(t *testing.T) {
 	proj := controlplane.ResourceProjection{
 		SessionID: observationTestSession(t, s.apiStore, "agent-1"), Sequence: 1,
 		AgentID: "agent-1", Topology: "web", ObservedAt: observed,
-		Resources: []controlplane.ResourceHealth{{Resource: "sysbox_node.web", Status: controlplane.ResourceHealthHealthy}},
+		Resources: []model.ResourceHealth{{Resource: "sysbox_node.web", Status: model.ResourceHealthHealthy}},
 	}
 	require.NoError(t, s.apiStore.SaveResourceProjection(context.Background(), proj))
 	got, err := s.apiStore.LoadResourceProjection(context.Background(), "web")
@@ -164,7 +165,7 @@ func TestResourceProjectionStoreRoundTrip(t *testing.T) {
 	require.NotNil(t, got)
 	require.Equal(t, "agent-1", got.AgentID)
 	require.Equal(t, "sysbox_node.web", got.Resources[0].Resource)
-	require.Equal(t, controlplane.ResourceHealthHealthy, got.Resources[0].Status)
+	require.Equal(t, model.ResourceHealthHealthy, got.Resources[0].Status)
 	require.True(t, got.ObservedAt.Equal(observed))
 
 	missing, err := s.apiStore.LoadResourceProjection(context.Background(), "missing")

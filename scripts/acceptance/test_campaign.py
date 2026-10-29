@@ -34,6 +34,31 @@ class CampaignTests(unittest.TestCase):
         copied=json.loads(json.dumps(catalog));copied['gates'][0]['tests']=['TestDoesNotExist']
         with self.assertRaises(ValueError): campaign.validate_catalog(copied,root)
 
+    def test_archived_requirements_reject_corrupted_archive_or_source_digest(self):
+        repository = Path(__file__).resolve().parents[2]
+        original = repository / 'docs/archive'
+        archive_name = '2026-10-27-documentation.tar.gz'
+        manifest_name = '2026-10-27-documentation.json'
+        source = 'docs/design/2026-10-07-full-migration-distributed-execution-plan.md'
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / 'docs/archive'
+            target.mkdir(parents=True)
+            raw = (original / archive_name).read_bytes()
+            manifest = json.loads((original / manifest_name).read_text())
+            (target / archive_name).write_bytes(raw)
+            (target / manifest_name).write_text(json.dumps(manifest))
+            self.assertEqual(campaign.original_requirements(root),
+                             campaign.original_requirements(repository))
+            (target / archive_name).write_bytes(raw + b'corrupted')
+            with self.assertRaisesRegex(ValueError, 'archive digest mismatch'):
+                campaign.original_requirements(root)
+            (target / archive_name).write_bytes(raw)
+            manifest['files'][source]['sha256'] = '0' * 64
+            (target / manifest_name).write_text(json.dumps(manifest))
+            with self.assertRaisesRegex(ValueError, 'source digest mismatch'):
+                campaign.original_requirements(root)
+
     def test_evidence_requires_matching_source_and_untampered_raw_events(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);path=root/'gate.jsonl';path.write_text(events('TestOne').replace('\"pkg\"','\"github.com/oslab/sysbox/pkg/example\"'))

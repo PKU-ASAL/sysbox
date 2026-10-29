@@ -2,6 +2,7 @@ package persistence
 
 import (
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/runtime"
 )
 
@@ -28,7 +29,7 @@ func ValidateIntentDispositionChoice(d controlplane.IntentDispositionDecision, r
 		choices[choice.ActionID] = choice
 	}
 	seen := map[string]bool{}
-	byID := map[string]controlplane.RecoveredResource{}
+	byID := map[string]model.RecoveredResource{}
 	for _, o := range report.Resources {
 		if seen[o.ActionID] {
 			return ErrConflict
@@ -61,7 +62,7 @@ func ValidateIntentDispositionChoice(d controlplane.IntentDispositionDecision, r
 				return ErrConflict
 			}
 			candidate = a.Replacement
-		} else if choice.Decision == "retain-incomplete" && a.Action == controlplane.PlanActionReset && !a.ResetSSHIncompleteSupported() {
+		} else if choice.Decision == "retain-incomplete" && a.Action == model.PlanActionReset && !a.ResetSSHIncompleteSupported() {
 			return ErrConflict
 		}
 		if !ok || choice.ResourceUID != a.ResourceUID || choice.Generation != a.Generation || candidate == nil || choice.ExternalID != candidate.ExternalID {

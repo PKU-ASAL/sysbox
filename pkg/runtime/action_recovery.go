@@ -3,8 +3,9 @@ package runtime
 import (
 	"context"
 	"fmt"
-	"github.com/oslab/sysbox/pkg/controlplane"
+
 	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/secret"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -79,7 +80,7 @@ func (e *Executor) recoverActions(ctx context.Context, plan *Plan) error {
 	if err != nil {
 		return err
 	}
-	allowed := map[string]controlplane.PlannedChange{}
+	allowed := map[string]model.PlannedChange{}
 	for _, change := range plan.Actions {
 		if plan.excluded[change.Address.String()] {
 			continue
@@ -93,18 +94,18 @@ func (e *Executor) recoverActions(ctx context.Context, plan *Plan) error {
 		if ActionSettled(record) {
 			continue
 		}
-		if record.Action == controlplane.PlanActionReset && !record.EffectComplete {
+		if record.Action == model.PlanActionReset && !record.EffectComplete {
 			return fmt.Errorf("%w: reset %s must resume through reset phase observation", ErrActionUncertain, record.ID)
 		}
 		if current := e.state.FindResource(record.Resource); current != nil {
 			generationMatches := current.Generation == record.Generation
-			if record.Action == controlplane.PlanActionReset && record.EffectComplete && current.Generation == record.Generation-1 {
+			if record.Action == model.PlanActionReset && record.EffectComplete && current.Generation == record.Generation-1 {
 				generationMatches = true
 			}
 			if !generationMatches || current.OwnerUID != record.OwnerUID || current.ResourceUID != record.ResourceUID {
 				return fmt.Errorf("%w: pending action %s does not own current resource generation", ErrObservationUnknown, record.ID)
 			}
-			if record.Action != controlplane.PlanActionReset && record.Candidate != nil && current.ExternalID != record.Candidate.ExternalID {
+			if record.Action != model.PlanActionReset && record.Candidate != nil && current.ExternalID != record.Candidate.ExternalID {
 				return fmt.Errorf("%w: pending action external identity changed", ErrObservationUnknown)
 			}
 		}
@@ -121,7 +122,7 @@ func (e *Executor) recoverActions(ctx context.Context, plan *Plan) error {
 				return fmt.Errorf("%w: pending action target changed", ErrPlanStale)
 			}
 		}
-		if record.Action != controlplane.PlanActionDelete && (record.ReplayForbidden || requiresCompositeCompletion(record.Resource.Type, record.Action)) && !record.EffectComplete {
+		if record.Action != model.PlanActionDelete && (record.ReplayForbidden || requiresCompositeCompletion(record.Resource.Type, record.Action)) && !record.EffectComplete {
 			return fmt.Errorf("%w: action %s guest initialization, provisioners, or image entry may be incomplete; manual resolution required", ErrActionUncertain, record.ID)
 		}
 		// Validate scope, ownership and composite completion before querying
@@ -141,7 +142,7 @@ func (e *Executor) recoverActions(ctx context.Context, plan *Plan) error {
 		var observed ResourceReadResult
 		observeCtx := substrate.WithOperationIdentity(ctx, actionIdentity(record))
 		if record.Candidate != nil {
-			observed, err = checkedRead(observeCtx, handler, *record.Candidate, e.state)
+			observed, err = checkedRead(observeCtx, handler, *record.Candidate, e.state, e.providers)
 		} else {
 			observed, err = e.observeTarget(observeCtx, record.Resource)
 		}
@@ -149,9 +150,9 @@ func (e *Executor) recoverActions(ctx context.Context, plan *Plan) error {
 			return err
 		}
 		expected := state.ResourcePresent
-		if record.Action == controlplane.PlanActionDelete {
+		if record.Action == model.PlanActionDelete {
 			expected = state.ResourceAbsent
-			if change.Action != controlplane.PlanActionDelete && change.Action != controlplane.PlanActionReplace && change.Action != controlplane.PlanActionCreate {
+			if change.Action != model.PlanActionDelete && change.Action != model.PlanActionReplace && change.Action != model.PlanActionCreate {
 				return fmt.Errorf("%w: pending delete no longer approved", ErrPlanStale)
 			}
 		}
@@ -170,7 +171,7 @@ func (e *Executor) recoverActions(ctx context.Context, plan *Plan) error {
 		if err := e.journalError(); err != nil {
 			return err
 		}
-		if record.Action == controlplane.PlanActionReset {
+		if record.Action == model.PlanActionReset {
 			if err := e.reconcileResetSSHWithEffects(observeCtx, &record, false); err != nil {
 				return err
 			}
@@ -178,10 +179,10 @@ func (e *Executor) recoverActions(ctx context.Context, plan *Plan) error {
 		if err := e.commitVerifiedAction(ctx, record, step); err != nil {
 			return err
 		}
-		if record.Action == controlplane.PlanActionCreate {
+		if record.Action == model.PlanActionCreate {
 			e.recoveredCreates[record.Resource.String()] = true
 		}
-		if record.Action == controlplane.PlanActionDelete {
+		if record.Action == model.PlanActionDelete {
 			e.recoveredDeletes[record.Resource.String()] = true
 		}
 	}
@@ -195,7 +196,7 @@ func (e *Executor) proveActionQuiescence(ctx context.Context, record *ActionReco
 	if record.Candidate == nil {
 		return fmt.Errorf("%w: action %s has no provider handle for quiescence proof", ErrActionUncertain, record.ID)
 	}
-	nodeDriver, err := driver.DefaultRegistry.RequireNode(record.Candidate.Driver)
+	nodeDriver, err := e.providers.RequireNode(record.Candidate.Driver)
 	if err != nil {
 		return fmt.Errorf("%w: provider %s unavailable for quiescence proof: %v", ErrActionUncertain, record.Candidate.Driver, err)
 	}

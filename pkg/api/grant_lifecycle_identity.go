@@ -83,7 +83,7 @@ func grantCommandTopology(record *persistence.CommandRecord) (string, error) {
 		if c.FilePut != nil {
 			topology = c.FilePut.Topology
 		}
-	case "gc_delete":
+	case "gc_delete", "session_open":
 		if c.Session != nil {
 			topology = c.Session.Topology
 		}

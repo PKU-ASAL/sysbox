@@ -5,10 +5,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/oslab/sysbox/pkg/address"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/stretchr/testify/require"
+
+	"github.com/oslab/sysbox/pkg/address"
+	"github.com/oslab/sysbox/pkg/model"
+	"github.com/oslab/sysbox/pkg/runtime"
 )
 
 func TestLifecycleInspectionIncludesPendingIntentWithoutState(t *testing.T) {
@@ -27,7 +28,7 @@ func TestLifecycleInspectionIncludesPendingIntentWithoutState(t *testing.T) {
 			before, err := repo.InspectLifecycle(ctx, "lab")
 			require.NoError(t, err)
 			require.False(t, before.StateExists)
-			action := runtime.ActionRecord{ID: "pending", RunID: "run", Topology: "lab", Resource: address.Resource("sysbox_node", "web"), Action: controlplane.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: before.State.TopologyUID, ResourceUID: "uid", Generation: 1}
+			action := runtime.ActionRecord{ID: "pending", RunID: "run", Topology: "lab", Resource: address.Resource("sysbox_node", "web"), Action: model.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: before.State.TopologyUID, ResourceUID: "uid", Generation: 1}
 			require.NoError(t, repo.CommitActionIntent(ctx, action))
 			snapshot, err := repo.InspectLifecycle(ctx, "lab")
 			require.NoError(t, err)

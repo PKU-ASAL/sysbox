@@ -8,8 +8,8 @@ import (
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/value"
 )
@@ -154,7 +154,7 @@ func stateDesiredHash(r *state.Resource) string {
 	return r.Str(desiredHashKey)
 }
 
-func diffDesiredState(n *graph.Node, r *state.Resource) ([]controlplane.FieldChange, string) {
+func diffDesiredState(n *graph.Node, r *state.Resource) ([]model.FieldChange, string) {
 	if n == nil || r == nil {
 		return nil, "resource changed"
 	}
@@ -176,9 +176,9 @@ func diffDesiredState(n *graph.Node, r *state.Resource) ([]controlplane.FieldCha
 		return nil, "desired value is invalid"
 	}
 	typedChanges := schema.Diff(beforeValue, afterValue)
-	changes := make([]controlplane.FieldChange, len(typedChanges))
+	changes := make([]model.FieldChange, len(typedChanges))
 	for i, change := range typedChanges {
-		changes[i] = controlplane.FieldChange{Path: change.Path.String(), Before: change.Before, After: change.After, RequiresReplace: change.RequiresReplace, Sensitive: change.Sensitive, Computed: change.Computed}
+		changes[i] = model.FieldChange{Path: change.Path.String(), Before: change.Before, After: change.After, RequiresReplace: change.RequiresReplace, Sensitive: change.Sensitive, Computed: change.Computed}
 	}
 	if len(changes) == 0 {
 		return nil, ""
@@ -195,7 +195,7 @@ func jsonEqual(a, b any) bool {
 	return string(aj) == string(bj)
 }
 
-func anyInPlace(changes []controlplane.FieldChange) bool {
+func anyInPlace(changes []model.FieldChange) bool {
 	for _, ch := range changes {
 		if !ch.RequiresReplace {
 			return true

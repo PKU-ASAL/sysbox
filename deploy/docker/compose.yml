@@ -30,9 +30,15 @@ services:
     volumes:
       # API-owned workspaces and control-plane metadata.
       - ${SYSBOX_HOST_HOME_DIR:-.sysbox/api}:/var/lib/sysbox
-      # Shared artifact cache metadata. Execution agents mount the same path.
+      # API/host artifact cache metadata; the worker never mounts this path.
       - ${SYSBOX_HOST_CACHE_DIR:-~/.cache/sysbox}:/var/cache/sysbox
-      - ./deploy/docker/sysbox.yaml:/etc/sysbox/sysbox.yaml:ro
+      - ${SYSBOX_API_CONFIG_FILE:-./deploy/docker/sysbox.yaml}:/etc/sysbox/sysbox.yaml:ro
+      - type: bind
+        source: ${SYSBOX_API_KEYS_DIR:-/etc/sysbox-api}
+        target: /etc/sysbox-api
+        read_only: true
+        bind:
+          create_host_path: false
     environment:
       SYSBOX_CONFIG: ${SYSBOX_CONFIG:-/etc/sysbox/sysbox.yaml}
       SYSBOX_API_TOKEN: ${SYSBOX_API_TOKEN:-}

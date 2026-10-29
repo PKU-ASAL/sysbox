@@ -7,10 +7,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/oslab/sysbox/pkg/address"
-
 	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/state"
 )
 
@@ -32,7 +32,7 @@ func TestDataResourceHandlerPlanDiffReads(t *testing.T) {
 
 	action, err := p.PlanDiff(n, nil)
 	require.NoError(t, err)
-	require.Equal(t, controlplane.PlanActionRead, action.Action)
+	require.Equal(t, model.PlanActionRead, action.Action)
 	require.Equal(t, "data source not present in state", action.Reason)
 
 	inst := map[string]any{}
@@ -40,12 +40,12 @@ func TestDataResourceHandlerPlanDiffReads(t *testing.T) {
 	current := &state.Resource{Address: address.Resource("data_sysbox_image", "alpine"), Driver: "docker", Attributes: inst}
 	action, err = p.PlanDiff(n, current)
 	require.NoError(t, err)
-	require.Equal(t, controlplane.PlanActionNoop, action.Action)
+	require.Equal(t, model.PlanActionNoop, action.Action)
 
 	n.Data = &config.DataImageConfig{Substrate: "docker", Kind: "oci", Source: "busybox:latest", Architecture: "amd64", GuestFamily: "linux"}
 	action, err = p.PlanDiff(n, current)
 	require.NoError(t, err)
-	require.Equal(t, controlplane.PlanActionRead, action.Action)
+	require.Equal(t, model.PlanActionRead, action.Action)
 	_, ok := fieldChangeAt(action.Changes, "data.Source")
 	require.True(t, ok)
 }
@@ -57,19 +57,19 @@ func TestComputePlanSchedulesDataSourcesAsRead(t *testing.T) {
 	n := g.Get(addr)
 	n.Data = &config.DataImageConfig{Substrate: "docker", Kind: "oci", Source: "alpine:latest", Architecture: "amd64", GuestFamily: "linux"}
 
-	plan, err := ComputePlan(g, &state.State{Version: state.SchemaVersion})
+	plan, err := ComputePlan(g, &state.State{Version: state.SchemaVersion}, driver.DefaultRegistry)
 	require.NoError(t, err)
 	require.Equal(t, address.Resource("data_sysbox_image", "alpine").String(), plan.Actions[0].Address.String())
-	require.Equal(t, controlplane.PlanActionRead, plan.Actions[0].Action)
+	require.Equal(t, model.PlanActionRead, plan.Actions[0].Action)
 	require.Len(t, plan.Actions, 1)
-	require.Equal(t, controlplane.PlanActionRead, plan.Actions[0].Action)
+	require.Equal(t, model.PlanActionRead, plan.Actions[0].Action)
 	require.True(t, plan.HasChanges())
 }
 
 func TestDataResourceHandlerDeleteRemovesState(t *testing.T) {
 	res := state.Resource{Address: address.Resource("data_sysbox_node", "existing"), Attributes: map[string]any{"data_read": true}}
 	st := &state.State{Version: state.SchemaVersion, Resources: []state.Resource{res}}
-	exec := NewExecutor(graph.New(), st)
+	exec := NewExecutor(graph.New(), st, driver.DefaultRegistry)
 
 	require.NoError(t, DataNodeResourceHandler{}.Delete(context.Background(), &ProviderContext{exec: exec}, res))
 	require.Nil(t, st.FindResource(address.Resource("data_sysbox_node", "existing")))

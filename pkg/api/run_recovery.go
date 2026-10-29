@@ -4,13 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/google/uuid"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/persistence"
 	"net/http"
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/persistence"
 )
 
 // recoveryAuthorization is re-evaluated immediately before Agent work. It does
@@ -217,7 +219,7 @@ func (b *ExecutionBridge) PinnedRevisionWorkspace(ctx context.Context, run contr
 	if revision == nil || revision.Revision != run.Revision || controlplane.ComputeRevisionDigest(revision.Files) != run.Revision {
 		return "", persistence.ErrConflict
 	}
-	return b.server.workspaceService().MaterializeRevision(run.Topology, run.Revision, revision.Files)
+	return b.workspaces.MaterializeRevision(run.Topology, run.Revision, revision.Files)
 }
 
 // Only a retained fence with an unchanged original snapshot can bind an

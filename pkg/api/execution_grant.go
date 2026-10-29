@@ -265,7 +265,7 @@ func (s *Server) handleHostRunCompletion(w http.ResponseWriter, r *http.Request)
 		s.jobs.remember(completed)
 		s.jobs.logs.Close(completed.ID)
 	}
-	writeJSON(w, http.StatusOK, controlplane.RunCompletion{Run: *completed, Cleanup: completed.Cleanup})
+	writeJSON(w, http.StatusOK, controlplane.HostRunResult{Run: *completed, Cleanup: completed.Cleanup})
 }
 
 // Host authorization consumes a signed existing grant. It never renews or
@@ -368,6 +368,14 @@ func (s *Server) handleStoppedExecutionGrant(w http.ResponseWriter, r *http.Requ
 		writeError(w, 401, controlplane.ErrInvalidExecutionGrant)
 		return
 	}
+	if receipt.Grant.Operation == "node_power" {
+		if err := s.completePowerFromHost(r.Context(), receipt); err != nil {
+			writeError(w, agentRepositoryErrorStatus(err), err)
+			return
+		}
+		writeJSON(w, 200, map[string]bool{"stopped": true, "completed": true})
+		return
+	}
 	if receipt.Grant.Operation == "gc_delete" {
 		if err := s.completeGCFromHost(r.Context(), receipt, key); err != nil {
 			writeError(w, agentRepositoryErrorStatus(err), err)
@@ -390,6 +398,19 @@ func (s *Server) handleStoppedExecutionGrant(w http.ResponseWriter, r *http.Requ
 	sum := sha256.Sum256(raw)
 	repo := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
 	if receipt.Grant.Operation == "guest_task" && receipt.Grant.ParentEpoch == 0 {
+		command, readErr := readFailureCommand(r.Context(), s.apiStore, receipt.Grant.CommandID)
+		if readErr != nil {
+			writeError(w, agentRepositoryErrorStatus(readErr), readErr)
+			return
+		}
+		if command != nil && command.Command.Type == "session_open" {
+			if err = s.completeConsoleFromHost(r.Context(), command.Command, receipt); err != nil {
+				writeError(w, agentRepositoryErrorStatus(err), err)
+				return
+			}
+			writeJSON(w, 200, map[string]bool{"stopped": true, "completed": true})
+			return
+		}
 		if receipt.TaskID == "" || receipt.TaskID != receipt.Grant.ActionID || receipt.Grant.AgentID != r.PathValue("agent") {
 			err = persistence.ErrConflict
 		} else {
@@ -615,10 +636,22 @@ func (s *Server) handleAuthorizeExecutionGrant(w http.ResponseWriter, r *http.Re
 		}
 		if renew {
 			until := time.Now().UTC().Add(controlplane.ExecutionGrantMaxTTL)
+			if record.Command.Type == "session_open" {
+				deadline := record.Command.Session.CreatedAt.Add(time.Duration(record.Command.Request.TimeoutSeconds) * time.Second)
+				if until.After(deadline) {
+					until = deadline
+				}
+			}
 			if until.After(record.Command.LeaseUntil) {
 				record.Command.LeaseUntil = until
 			}
 			leaseDeadline = record.Command.LeaseUntil
+			if record.Command.Type == "session_open" {
+				deadline := record.Command.Session.CreatedAt.Add(time.Duration(record.Command.Request.TimeoutSeconds) * time.Second)
+				if leaseDeadline.After(deadline) {
+					leaseDeadline = deadline
+				}
+			}
 		}
 		return nil
 	})
@@ -629,7 +662,7 @@ func (s *Server) handleAuthorizeExecutionGrant(w http.ResponseWriter, r *http.Re
 		err := storage.UpdateExecutionAuthority(r.Context(), func(raw []byte) ([]byte, error) {
 			memory := &grantTransaction{raw: raw}
 			repo := persistence.NewExecutionGrantRepository(memory)
-			granted, transitionErr = repo.Renew(r.Context(), g, controlplane.ExecutionGrantMaxTTL/2)
+			granted, transitionErr = repo.RenewUntil(r.Context(), g, controlplane.ExecutionGrantMaxTTL/2, leaseDeadline)
 			if transitionErr != nil {
 				commitCommand = false
 				return memory.raw, nil
@@ -681,6 +714,23 @@ func (s *Server) sourceGrant(ctx context.Context, agentID string, proof Executio
 	digest := ""
 	lifecycleRun := false
 	switch cmd.Type {
+	case "session_open":
+		task, err := guesttask.FromConsoleCommand(cmd)
+		if err != nil {
+			return controlplane.ExecutionGrant{}, err
+		}
+		digest, err = task.Digest()
+		if err != nil {
+			return controlplane.ExecutionGrant{}, err
+		}
+		operation = "guest_task"
+		deadline := cmd.Session.CreatedAt.Add(time.Duration(cmd.Request.TimeoutSeconds) * time.Second)
+		if cmd.Request.TimeoutSeconds < 1 || !deadline.After(time.Now()) {
+			return controlplane.ExecutionGrant{}, persistence.ErrConflict
+		}
+		if cmd.LeaseUntil.After(deadline) {
+			cmd.LeaseUntil = deadline
+		}
 	case "node_operation":
 		if cmd.Operation.Operation == "adoption_inspect" {
 			request, err := controlplane.FromAdoptionInspectionCommand(cmd)

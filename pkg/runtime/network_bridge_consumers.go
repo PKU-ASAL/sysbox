@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/driver"
@@ -32,7 +33,7 @@ func (e *Executor) preflightManagedBridges(ctx context.Context) error {
 		if !ok || !cfg.NAT || !requiresManagedBridge(e.graph, node.Address) {
 			continue
 		}
-		network, err := driver.DefaultRegistry.RequireNetwork("docker")
+		network, err := e.providers.RequireNetwork("docker")
 		if err != nil {
 			return err
 		}

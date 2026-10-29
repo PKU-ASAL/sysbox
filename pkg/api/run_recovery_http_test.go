@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"github.com/coder/websocket"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/stretchr/testify/require"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/coder/websocket"
+	"github.com/stretchr/testify/require"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 )
 
 func remoteRecoveryRequest(t *testing.T, s *Server, method, path string, body any) *httptest.ResponseRecorder {
@@ -86,7 +89,7 @@ func TestRemoteRunningObservationSurvivesControllerRestart(t *testing.T) {
 	authorized := remoteRecoveryRequest(t, restarted, "POST", "/v1/agents/owner/commands/"+cmd.ID+"/recovery-authorize", proof)
 	require.Equal(t, 200, authorized.Code, authorized.Body.String())
 	proof.Status = "completed"
-	proof.Recovery = &controlplane.RunRecoveryReport{RunAttempt: run.Attempt, RunLeaseOwner: run.LeaseOwner, CommandID: cmd.ID, RunID: run.ID, AgentID: "owner", QueuedAt: run.QueuedAt, Mode: "observe", TopologyUID: "lineage", StateSerial: 4, ObservedAt: time.Now().UTC(), Resources: []controlplane.RecoveredResource{{ActionID: "action", Resource: "sysbox_node.web", OwnerUID: "lineage", ResourceUID: "web", Generation: 2, ExternalID: "vm", Status: "present", JournalStatus: "succeeded"}}}
+	proof.Recovery = &controlplane.RunRecoveryReport{RunAttempt: run.Attempt, RunLeaseOwner: run.LeaseOwner, CommandID: cmd.ID, RunID: run.ID, AgentID: "owner", QueuedAt: run.QueuedAt, Mode: "observe", TopologyUID: "lineage", StateSerial: 4, ObservedAt: time.Now().UTC(), Resources: []model.RecoveredResource{{ActionID: "action", Resource: "sysbox_node.web", OwnerUID: "lineage", ResourceUID: "web", Generation: 2, ExternalID: "vm", Status: "present", JournalStatus: "succeeded"}}}
 	payload, err := json.Marshal(proof)
 	require.NoError(t, err)
 	require.NoError(t, ws.Write(socketCtx, websocket.MessageText, payload))

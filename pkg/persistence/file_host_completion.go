@@ -23,6 +23,19 @@ func CompleteFileFromHost(raw []byte, record *CommandRecord, agent, id string, r
 	cmd := record.Command
 	g := receipt.Grant
 	r := receipt.FileResult
+	if cmd.ID != x.CommandID || cmd.AgentID != agent || cmd.Type != "guest_file_put" || cmd.TopologyUID != g.Scope.TopologyUID || cmd.ResourceUID != g.Scope.ResourceUID || cmd.Generation != g.Scope.Generation {
+		return nil, ErrConflict
+	}
+	if record.Retired {
+		seed, err := guestDispatchSeed(raw)
+		if err != nil {
+			return nil, err
+		}
+		if seed == nil {
+			return nil, ErrConflict
+		}
+		cmd = seed.Command
+	}
 	req, err := controlplane.FromFileInstallCommand(cmd)
 	if err != nil {
 		return nil, ErrConflict

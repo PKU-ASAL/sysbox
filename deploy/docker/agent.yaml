@@ -1,0 +1,11 @@
+version: 1
+agent:
+  host_supervisor_socket: /run/sysbox-host/host.sock
+  execution_session_file: /var/lib/sysbox-agent/execution-session.json
+  execution_grant_public_key_file: /etc/sysbox-worker/issuer.pub
+  host_public_key_file: /etc/sysbox-worker/host.pub
+paths:
+  home: /var/lib/sysbox-agent
+  runs_dir: /var/lib/sysbox-agent
+  workspaces_dir: /var/lib/sysbox-agent/unused-workspaces
+  cache: /var/lib/sysbox-agent/unused-cache

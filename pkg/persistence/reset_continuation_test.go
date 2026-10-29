@@ -8,11 +8,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/oslab/sysbox/pkg/address"
-	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
-	"github.com/stretchr/testify/require"
 )
 
 func continuationFixture(t *testing.T, r *Repository, names ...string) runtime.ResetContinuationRequest {
@@ -28,7 +29,7 @@ func continuationFixture(t *testing.T, r *Repository, names ...string) runtime.R
 	for _, name := range names {
 		addr := address.Resource("sysbox_node", name)
 		st.Resources = append(st.Resources, state.Resource{Address: addr, Driver: name, ExternalID: name, OwnerUID: st.TopologyUID, ResourceUID: name, Generation: 1})
-		plan.Actions = append(plan.Actions, controlplane.PlannedChange{Address: addr, Action: controlplane.PlanActionReset})
+		plan.Actions = append(plan.Actions, model.PlannedChange{Address: addr, Action: model.PlanActionReset})
 	}
 	require.NoError(t, manager.Save(st))
 	path := filepath.Join(t.TempDir(), "original.checkpoint.json")
@@ -39,7 +40,7 @@ func continuationFixture(t *testing.T, r *Repository, names ...string) runtime.R
 	require.NoError(t, err)
 	req := runtime.ResetContinuationRequest{ID: "continuation", TopologyUID: st.TopologyUID, RunQueuedAt: time.Now().UTC(), RunRevision: "original-config", ExpectedSerial: st.Meta.Serial, Checkpoint: *cp}
 	for i, resource := range st.Resources {
-		a := runtime.ActionRecord{ID: resource.ResourceUID, RunID: "original", RunQueuedAt: req.RunQueuedAt, RunRevision: req.RunRevision, Topology: "lab", Resource: resource.Address, Action: controlplane.PlanActionReset, Status: runtime.ActionIntentCommitted, Phase: "accepted", OwnerUID: st.TopologyUID, ResourceUID: resource.ResourceUID, Generation: 2, StateSerial: st.Meta.Serial, ExpectedSerial: st.Meta.Serial, Candidate: &resource}
+		a := runtime.ActionRecord{ID: resource.ResourceUID, RunID: "original", RunQueuedAt: req.RunQueuedAt, RunRevision: req.RunRevision, Topology: "lab", Resource: resource.Address, Action: model.PlanActionReset, Status: runtime.ActionIntentCommitted, Phase: "accepted", OwnerUID: st.TopologyUID, ResourceUID: resource.ResourceUID, Generation: 2, StateSerial: st.Meta.Serial, ExpectedSerial: st.Meta.Serial, Candidate: &resource}
 		if i >= 2 {
 			req.Missing = append(req.Missing, a)
 			continue
@@ -220,7 +221,7 @@ func TestResetContinuationSealedMembershipCannotBeBypassed(t *testing.T) {
 			extra := req.Missing[0]
 			extra.ID, extra.ResourceUID = "extra", "extra"
 			extra.Resource = address.Resource("sysbox_node", "extra")
-			extra.Action, extra.Phase, extra.Generation, extra.Candidate = controlplane.PlanActionCreate, "", 1, nil
+			extra.Action, extra.Phase, extra.Generation, extra.Candidate = model.PlanActionCreate, "", 1, nil
 			require.ErrorIs(t, r.CommitActionIntent(ctx, extra), ErrConflict)
 			for _, corruption := range []string{"drop-member", "change-digest", "change-receipt"} {
 				err := r.update(ctx, "lab", func(a *aggregate) error {

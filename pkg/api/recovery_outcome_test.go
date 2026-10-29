@@ -3,19 +3,21 @@ package api
 import (
 	"context"
 	"errors"
-	"github.com/gofrs/flock"
-	"github.com/jackc/pgx/v5/pgconn"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/gofrs/flock"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/stretchr/testify/require"
+
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
-	"github.com/stretchr/testify/require"
 )
 
 func TestRecoveryOutcomeRevalidatesLeaseInsideCommit(t *testing.T) {
@@ -61,12 +63,12 @@ func TestRecoveryOutcomeRevalidatesLeaseInsideCommit(t *testing.T) {
 				lease, ok, err := store.AcquireAgentCommandLease(ctx, agentID, command.ID, "worker", ttl)
 				require.NoError(t, err)
 				require.True(t, ok)
-				a := runtime.ActionRecord{ID: "action", Topology: topology, RunID: run.ID, RunQueuedAt: run.QueuedAt, RunRevision: run.Revision, Resource: address.Resource("sysbox_node", "web"), Action: controlplane.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: st.TopologyUID, ResourceUID: "node", Generation: 1}
+				a := runtime.ActionRecord{ID: "action", Topology: topology, RunID: run.ID, RunQueuedAt: run.QueuedAt, RunRevision: run.Revision, Resource: address.Resource("sysbox_node", "web"), Action: model.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: st.TopologyUID, ResourceUID: "node", Generation: 1}
 				require.NoError(t, repo.CommitActionIntent(ctx, a))
 				a.Revision, a.Status, a.EffectComplete = 1, runtime.ActionSucceeded, true
 				a.Candidate = &state.Resource{Address: a.Resource, OwnerUID: a.OwnerUID, ResourceUID: a.ResourceUID, Generation: a.Generation, ExternalID: "vm"}
 				proof := hostsupervisor.RunRecoveryRequest{CommandID: lease.ID, LeaseOwner: lease.LeaseOwner, Attempt: lease.Attempt}
-				bound := &recoveryActionRepository{ActionRepository: repo, server: s, proof: proof, run: run}
+				bound := &recoveryActionRepository{ActionRepository: repo, store: s.apiStore, proof: proof, run: run}
 				switch scenario {
 				case "maintenance":
 					authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})

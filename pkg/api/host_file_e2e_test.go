@@ -84,6 +84,19 @@ func TestHostSupervisorRealFileInstallE2E(t *testing.T) {
 	dropped := make(chan int, 1)
 	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/stopped") && drop.CompareAndSwap(true, false) {
+			raw, err := readAndRestoreBody(r)
+			var receipt controlplane.SignedExecutionStopReceipt
+			if err == nil {
+				err = json.Unmarshal(raw, &receipt)
+			}
+			if err == nil {
+				err = apiProcess.Load().apiStore.DeleteAgentCommand(r.Context(), "owner", receipt.Grant.CommandID)
+			}
+			if err != nil {
+				t.Errorf("retire completed file delivery: %v", err)
+				http.Error(w, "retirement failed", 500)
+				return
+			}
 			rr := httptest.NewRecorder()
 			apiProcess.Load().ServeHTTP(rr, r)
 			c, _, e := w.(http.Hijacker).Hijack()

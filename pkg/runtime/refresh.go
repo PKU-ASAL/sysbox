@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/address"
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/secret"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -24,10 +24,10 @@ func (e *Executor) Refresh(ctx context.Context, plan *Plan) (*Plan, error) {
 	refreshed := plan.clone()
 	for i := range refreshed.Actions {
 		change := &refreshed.Actions[i]
-		if change.Action == controlplane.PlanActionReplace {
+		if change.Action == model.PlanActionReplace {
 			continue
 		}
-		if change.Action != controlplane.PlanActionNoop {
+		if change.Action != model.PlanActionNoop {
 			continue
 		}
 		result, err := e.observeResource(ctx, change.Address)
@@ -41,17 +41,17 @@ func (e *Executor) Refresh(ctx context.Context, plan *Plan) (*Plan, error) {
 			}
 		}
 		if err != nil {
-			change.Action = controlplane.PlanActionUnknown
+			change.Action = model.PlanActionUnknown
 			change.Reason = "probe failed: " + err.Error()
 			continue
 		}
 		if action, dictates := planActionForObservedStatus(result.Status); dictates {
-			if action == controlplane.PlanActionReplace {
+			if action == model.PlanActionReplace {
 				e.logf("[refresh] %s: drifted - will re-create\n", change.Address)
 			}
 			change.Action = action
 			change.Reason = result.Reason
-			if change.Reason == "" && action == controlplane.PlanActionReplace {
+			if change.Reason == "" && action == model.PlanActionReplace {
 				change.Reason = "runtime drift detected"
 			}
 		}
@@ -79,7 +79,7 @@ func (e *Executor) observeResource(ctx context.Context, id address.Address) (Res
 	}
 
 	if provider, ok := GetResourceHandler(id.Type); ok {
-		result, err := readResourceWithAttachments(ctx, provider, *r, e.state)
+		result, err := readResourceWithAttachments(ctx, provider, *r, e.state, e.providers)
 		if err != nil {
 			result.Status = state.ResourceUnknown
 			if result.Reason == "" {
@@ -95,24 +95,24 @@ func (e *Executor) observeResource(ctx context.Context, id address.Address) (Res
 	return ResourceReadResult{Status: state.ResourcePresent, Resource: *r}, nil
 }
 
-func readNodeLikeResource(ctx context.Context, current state.Resource) (ResourceReadResult, error) {
+func readNodeLikeResource(ctx context.Context, current state.Resource, providers *driver.Registry) (ResourceReadResult, error) {
 	result := resourceReadOK(current)
 	providerName := current.Driver
-	nodeDriver, err := driver.DefaultRegistry.RequireNode(providerName)
+	nodeDriver, err := providers.RequireNode(providerName)
 	if err != nil {
-		result.Decision = controlplane.RecoveryDecisionUnknown
+		result.Decision = model.RecoveryDecisionUnknown
 		result.Reason = "node driver unavailable"
 		result.Status = state.ResourceUnknown
 		return result, err
 	}
 	cid := current.ContainerID()
 	if cid == "" {
-		result.Decision = controlplane.RecoveryDecisionMarkDrift
+		result.Decision = model.RecoveryDecisionMarkDrift
 		result.Reason = "node has no persisted external id"
 		result.Status = state.ResourceDrifted
 		return result, nil
 	}
-	stateDriver, err := driver.DefaultRegistry.RequireNodeState(providerName)
+	stateDriver, err := providers.RequireNodeState(providerName)
 	if err != nil {
 		result.Status = state.ResourceUnknown
 		return result, err
@@ -124,7 +124,7 @@ func readNodeLikeResource(ctx context.Context, current state.Resource) (Resource
 	}
 	obs, err := nodeDriver.ObserveNode(ctx, handle)
 	if err != nil {
-		result.Decision = controlplane.RecoveryDecisionUnknown
+		result.Decision = model.RecoveryDecisionUnknown
 		result.Reason = "observe node"
 		result.Status = state.ResourceUnknown
 		return result, err
@@ -145,29 +145,29 @@ func readNodeLikeResource(ctx context.Context, current state.Resource) (Resource
 	result.Decision = recovery.Decision
 	result.Reason = recovery.Reason
 	switch recovery.Decision {
-	case controlplane.RecoveryDecisionNoop:
-	case controlplane.RecoveryDecisionUnknown:
+	case model.RecoveryDecisionNoop:
+	case model.RecoveryDecisionUnknown:
 		result.Status = state.ResourceUnknown
 		return result, nil
 	default:
 		result.Status = state.ResourceDrifted
 		return result, nil
 	}
-	checks := map[string]controlplane.ResourceCheckHealth{}
+	checks := map[string]model.ResourceCheckHealth{}
 	result.Resource = current
-	routesHealthy, routeErr := nodeRoutesHealthy(ctx, nodeDriver, stateDriver, &current)
+	routesHealthy, routeErr := nodeRoutesHealthy(ctx, nodeDriver, stateDriver, &current, providers)
 	if routeErr != nil {
-		checks["routes"] = controlplane.ResourceCheckHealth{OK: false, Reason: "route observation unavailable"}
+		checks["routes"] = model.ResourceCheckHealth{OK: false, Reason: "route observation unavailable"}
 		result.Checks = checks
-		result.Decision = controlplane.RecoveryDecisionUnknown
+		result.Decision = model.RecoveryDecisionUnknown
 		result.Reason = "route observation unavailable"
 		result.Status = state.ResourceUnknown
 		return result, fmt.Errorf("observe routes: %w", routeErr)
 	}
 	if !routesHealthy {
-		checks["routes"] = controlplane.ResourceCheckHealth{OK: false, Reason: "route missing"}
+		checks["routes"] = model.ResourceCheckHealth{OK: false, Reason: "route missing"}
 		result.Checks = checks
-		result.Decision = controlplane.RecoveryDecisionMarkDrift
+		result.Decision = model.RecoveryDecisionMarkDrift
 		result.Reason = "route missing"
 		result.Status = state.ResourceDrifted
 		return result, nil
@@ -180,7 +180,7 @@ func readNodeLikeResource(ctx context.Context, current state.Resource) (Resource
 
 // readResourceWithAttachments combines resource-local observation with checks
 // that require the canonical topology's network identity and provider state.
-func readResourceWithAttachments(ctx context.Context, handler ResourceHandler, current state.Resource, st *state.State) (ResourceReadResult, error) {
+func readResourceWithAttachments(ctx context.Context, handler ResourceHandler, current state.Resource, st *state.State, providers *driver.Registry) (ResourceReadResult, error) {
 	if current.OwnerUID != "" {
 		id := substrate.OperationIdentity{ActionID: "observe", TopologyUID: current.OwnerUID, OwnerUID: current.OwnerUID, ResourceUID: current.ResourceUID, Generation: current.Generation}
 		if existing, ok := substrate.OperationIdentityFromContext(ctx); ok {
@@ -191,9 +191,9 @@ func readResourceWithAttachments(ctx context.Context, handler ResourceHandler, c
 	var result ResourceReadResult
 	var err error
 	if reader, ok := handler.(StateAwareResourceReader); ok {
-		result, err = reader.ReadWithState(ctx, cloneResetStateResource(current), st)
+		result, err = reader.ReadWithState(ctx, cloneResetStateResource(current), st, providers)
 	} else {
-		result, err = handler.Read(ctx, cloneResetStateResource(current))
+		result, err = handler.Read(ctx, cloneResetStateResource(current), providers)
 	}
 	// Drift permits replacement, so attachment uncertainty must still be
 	// checked before reporting it as a safe reconciliation decision.
@@ -204,37 +204,37 @@ func readResourceWithAttachments(ctx context.Context, handler ResourceHandler, c
 	if !result.Resource.Address.IsZero() {
 		observed = cloneResetStateResource(result.Resource)
 	}
-	stateDriver, err := driver.DefaultRegistry.RequireNodeState(current.Driver)
+	stateDriver, err := providers.RequireNodeState(current.Driver)
 	var handle substrate.NodeHandle
 	if err == nil {
 		handle, err = observed.ReconstructHandle(stateDriver)
 	}
 	status, reason := state.ResourceUnknown, ""
 	if err == nil {
-		status, reason, err = observeAttachments(ctx, handle, &observed, st)
+		status, reason, err = observeAttachments(ctx, handle, &observed, st, providers)
 	} else {
 		reason = err.Error()
 	}
 	result.Resource = observed
 	if status != state.ResourcePresent {
 		if result.Checks == nil {
-			result.Checks = map[string]controlplane.ResourceCheckHealth{}
+			result.Checks = map[string]model.ResourceCheckHealth{}
 		}
-		result.Checks["network_attachments"] = controlplane.ResourceCheckHealth{OK: false, Reason: reason}
+		result.Checks["network_attachments"] = model.ResourceCheckHealth{OK: false, Reason: reason}
 		result.Status, result.Reason = status, reason
-		result.Decision = controlplane.RecoveryDecisionMarkDrift
+		result.Decision = model.RecoveryDecisionMarkDrift
 		if status == state.ResourceUnknown {
-			result.Decision = controlplane.RecoveryDecisionUnknown
+			result.Decision = model.RecoveryDecisionUnknown
 		}
 	}
 	return result, err
 }
 
-func observeAttachments(ctx context.Context, handle substrate.NodeHandle, r *state.Resource, st *state.State) (state.ResourceStatus, string, error) {
+func observeAttachments(ctx context.Context, handle substrate.NodeHandle, r *state.Resource, st *state.State, providers *driver.Registry) (state.ResourceStatus, string, error) {
 	if len(r.Attachments) == 0 {
 		return state.ResourcePresent, "", nil
 	}
-	nic, err := driver.DefaultRegistry.RequireNIC(r.Driver)
+	nic, err := providers.RequireNIC(r.Driver)
 	if err != nil {
 		return state.ResourceUnknown, err.Error(), err
 	}
@@ -259,7 +259,7 @@ func observeAttachments(ctx context.Context, handle substrate.NodeHandle, r *sta
 	return state.ResourcePresent, "", nil
 }
 
-func nodeRoutesHealthy(ctx context.Context, nodeDriver driver.Node, stateDriver driver.NodeState, r *state.Resource) (bool, error) {
+func nodeRoutesHealthy(ctx context.Context, nodeDriver driver.Node, stateDriver driver.NodeState, r *state.Resource, providers *driver.Registry) (bool, error) {
 	items, ok := r.AttributeMap()["routes"].([]any)
 	if !ok || len(items) == 0 {
 		return true, nil
@@ -268,7 +268,7 @@ func nodeRoutesHealthy(ctx context.Context, nodeDriver driver.Node, stateDriver 
 	if err != nil {
 		return false, err
 	}
-	guestNetwork, err := driver.DefaultRegistry.RequireGuestNetwork(r.Driver)
+	guestNetwork, err := providers.RequireGuestNetwork(r.Driver)
 	if err != nil {
 		return false, err
 	}
@@ -303,12 +303,12 @@ func nodeRoutesHealthy(ctx context.Context, nodeDriver driver.Node, stateDriver 
 //
 // It is a named function rather than an inline switch so the invariant can be
 // asserted directly; see unknown_not_absent_test.go.
-func planActionForObservedStatus(status state.ResourceStatus) (controlplane.PlanActionType, bool) {
+func planActionForObservedStatus(status state.ResourceStatus) (model.PlanActionType, bool) {
 	switch status {
 	case state.ResourceAbsent, state.ResourceDrifted:
-		return controlplane.PlanActionReplace, true
+		return model.PlanActionReplace, true
 	case state.ResourceUnknown:
-		return controlplane.PlanActionUnknown, true
+		return model.PlanActionUnknown, true
 	default:
 		// Degraded resources remain present; health exposes the degradation.
 		return "", false

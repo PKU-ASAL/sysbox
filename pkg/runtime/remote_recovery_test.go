@@ -5,24 +5,26 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
-	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestOwningAgentObserveAndRecoverLostCommit(t *testing.T) {
 	e, h, a := convergenceFixture(t, state.ResourceAbsent, false)
 	repo := e.actions.(*memoryActions)
 	repo.patchErr = errors.New("commit lost")
-	require.Error(t, e.Apply(context.Background(), singleConvergencePlan(a, controlplane.PlanActionCreate)))
+	require.Error(t, e.Apply(context.Background(), singleConvergencePlan(a, model.PlanActionCreate)))
 	require.Equal(t, 1, h.creates)
 	repo.patchErr = nil
-	_, observed, err := ObserveRunActions(context.Background(), repo, "test-topology", "run-1")
+	_, observed, err := ObserveRunActions(context.Background(), repo, "test-topology", "run-1", driver.DefaultRegistry)
 	require.NoError(t, err)
 	require.Len(t, observed, 1)
 	require.Equal(t, "present", observed[0].Status)
@@ -35,8 +37,8 @@ func TestOwningAgentObserveAndRecoverLostCommit(t *testing.T) {
 func TestOwningAgentRecoveryUnknownCannotReplay(t *testing.T) {
 	e, h, a := convergenceFixture(t, state.ResourceAbsent, false)
 	h.afterCreate = state.ResourceUnknown
-	require.Error(t, e.Apply(context.Background(), singleConvergencePlan(a, controlplane.PlanActionCreate)))
-	_, observed, err := ObserveRunActions(context.Background(), e.actions, "test-topology", "run-1")
+	require.Error(t, e.Apply(context.Background(), singleConvergencePlan(a, model.PlanActionCreate)))
+	_, observed, err := ObserveRunActions(context.Background(), e.actions, "test-topology", "run-1", driver.DefaultRegistry)
 	require.NoError(t, err)
 	require.Len(t, observed, 1)
 	require.Equal(t, "unknown", observed[0].Status)
@@ -53,8 +55,8 @@ func TestResetObservationAccountsForSourceAndReplacementGenerations(t *testing.T
 	replacement := source
 	replacement.ExternalID = "new"
 	replacement.Generation = 2
-	repo.actions = []ActionRecord{{ID: "reset", Topology: "test-topology", RunID: "run-1", Resource: addr, Action: controlplane.PlanActionReset, Status: ActionUncertain, OwnerUID: source.OwnerUID, ResourceUID: source.ResourceUID, Generation: 2, Candidate: &source, Replacement: &replacement, Phase: "applying", ReplayForbidden: true}}
-	_, observed, err := ObserveRunActions(context.Background(), repo, "test-topology", "run-1")
+	repo.actions = []ActionRecord{{ID: "reset", Topology: "test-topology", RunID: "run-1", Resource: addr, Action: model.PlanActionReset, Status: ActionUncertain, OwnerUID: source.OwnerUID, ResourceUID: source.ResourceUID, Generation: 2, Candidate: &source, Replacement: &replacement, Phase: "applying", ReplayForbidden: true}}
+	_, observed, err := ObserveRunActions(context.Background(), repo, "test-topology", "run-1", driver.DefaultRegistry)
 	require.NoError(t, err)
 	require.Len(t, observed, 1)
 	require.NotNil(t, observed[0].ResetSource)
@@ -72,26 +74,26 @@ func TestNewResetAfterSourceDispositionUsesNextActualGeneration(t *testing.T) {
 	repo := e.actions.(*memoryActions)
 	source := state.Resource{Address: addr, Driver: "fixture", ExternalID: "old", OwnerUID: e.state.TopologyUID, ResourceUID: "resource", Generation: 1}
 	e.state.Resources = []state.Resource{source}
-	repo.actions = []ActionRecord{{ID: "reset-old", RunID: "old-run", Resource: addr, Action: controlplane.PlanActionReset, Status: ActionUncertain, OwnerUID: source.OwnerUID, ResourceUID: source.ResourceUID, Generation: 2, Candidate: &source, Phase: "destroying", ReplayForbidden: true, DispositionID: "intent:explicit-source-retention"}}
-	next, err := e.newAction(context.Background(), controlplane.PlannedChange{Address: addr, Action: controlplane.PlanActionReset})
+	repo.actions = []ActionRecord{{ID: "reset-old", RunID: "old-run", Resource: addr, Action: model.PlanActionReset, Status: ActionUncertain, OwnerUID: source.OwnerUID, ResourceUID: source.ResourceUID, Generation: 2, Candidate: &source, Phase: "destroying", ReplayForbidden: true, DispositionID: "intent:explicit-source-retention"}}
+	next, err := e.newAction(context.Background(), model.PlannedChange{Address: addr, Action: model.PlanActionReset})
 	require.NoError(t, err)
 	require.Equal(t, int64(2), next.Generation, "the fenced abandoned reset never created generation 2")
 	require.Equal(t, int64(1), next.Candidate.Generation)
 	repo.actions[0].Phase = "applying"
-	next, err = e.newAction(context.Background(), controlplane.PlannedChange{Address: addr, Action: controlplane.PlanActionReset})
+	next, err = e.newAction(context.Background(), model.PlannedChange{Address: addr, Action: model.PlanActionReset})
 	require.NoError(t, err)
 	require.Greater(t, next.Generation, int64(2), "unknown replacement must not reuse a generation")
 }
 
 func TestReadAndDeleteAfterResetDispositionUseActualSourceGeneration(t *testing.T) {
-	for _, kind := range []controlplane.PlanActionType{controlplane.PlanActionRead, controlplane.PlanActionDelete} {
+	for _, kind := range []model.PlanActionType{model.PlanActionRead, model.PlanActionDelete} {
 		t.Run(string(kind), func(t *testing.T) {
 			e, _, addr := convergenceFixture(t, state.ResourcePresent, false)
 			repo := e.actions.(*memoryActions)
 			source := state.Resource{Address: addr, Driver: "fixture", ExternalID: "old", OwnerUID: e.state.TopologyUID, ResourceUID: "resource", Generation: 1}
 			e.state.Resources = []state.Resource{source}
-			repo.actions = []ActionRecord{{ID: "reset-old", RunID: "old-run", Resource: addr, Action: controlplane.PlanActionReset, Status: ActionUncertain, OwnerUID: source.OwnerUID, ResourceUID: source.ResourceUID, Generation: 2, Candidate: &source, Phase: "destroying", ReplayForbidden: true, DispositionID: "intent:source-retention"}}
-			next, err := e.newAction(context.Background(), controlplane.PlannedChange{Address: addr, Action: kind})
+			repo.actions = []ActionRecord{{ID: "reset-old", RunID: "old-run", Resource: addr, Action: model.PlanActionReset, Status: ActionUncertain, OwnerUID: source.OwnerUID, ResourceUID: source.ResourceUID, Generation: 2, Candidate: &source, Phase: "destroying", ReplayForbidden: true, DispositionID: "intent:source-retention"}}
+			next, err := e.newAction(context.Background(), model.PlannedChange{Address: addr, Action: kind})
 			require.NoError(t, err)
 			require.Equal(t, int64(1), next.Generation)
 			require.Equal(t, next.Candidate.Generation, next.Generation)
@@ -110,10 +112,11 @@ func TestMissingCreateIdentityUsesPinnedReadOnlyDiscovery(t *testing.T) {
 	driver.DefaultRegistry = driver.NewRegistry()
 	t.Cleanup(func() { driver.DefaultRegistry = prior })
 	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: base.name, Version: "test", Node: wrapper, NodeState: wrapper}))
+	e.providers = driver.DefaultRegistry // Explicitly select the discovery wrapper for this executor.
 	e.state.TopologyUID = "owner"
-	a := ActionRecord{ID: "create", RunID: "run", Resource: addr, Action: controlplane.PlanActionCreate, Status: ActionUncertain, OwnerUID: "owner", ResourceUID: "node", Generation: 1, DesiredDigest: digest, ReplayForbidden: true}
+	a := ActionRecord{ID: "create", RunID: "run", Resource: addr, Action: model.PlanActionCreate, Status: ActionUncertain, OwnerUID: "owner", ResourceUID: "node", Generation: 1, DesiredDigest: digest, ReplayForbidden: true}
 	repo := &memoryActions{state: e.state, actions: []ActionRecord{a}}
-	_, obs, err := ObserveRunActions(context.Background(), repo, "lab", "run", e.graph)
+	_, obs, err := ObserveRunActions(context.Background(), repo, "lab", "run", driver.DefaultRegistry, e.graph)
 	require.NoError(t, err)
 	require.Len(t, obs, 1)
 	require.NotNil(t, obs[0].Discovered)
@@ -124,7 +127,7 @@ func TestMissingCreateIdentityUsesPinnedReadOnlyDiscovery(t *testing.T) {
 	require.Contains(t, p.Blockers, "guest_effect_disposition_required")
 	for _, mode := range []string{"foreign-owner", "wrong-digest", "missing", "duplicate", "not-present"} {
 		t.Run(mode, func(t *testing.T) {
-			copies := append([]controlplane.RecoveredResource(nil), obs...)
+			copies := append([]model.RecoveredResource(nil), obs...)
 			candidate := *copies[0].Discovered
 			copies[0].Discovered = &candidate
 			switch mode {
@@ -153,7 +156,7 @@ func TestMissingCreateIdentityUsesPinnedReadOnlyDiscovery(t *testing.T) {
 	a.DesiredDigest, err = desiredHash(n)
 	require.NoError(t, err)
 	repo.actions = []ActionRecord{a}
-	_, composite, err := ObserveRunActions(context.Background(), repo, "lab", "run", e.graph)
+	_, composite, err := ObserveRunActions(context.Background(), repo, "lab", "run", driver.DefaultRegistry, e.graph)
 	require.NoError(t, err)
 	require.NotNil(t, composite[0].Discovered, "identity is discoverable even when guest setup outcome is unknown")
 	plan := PlanIntentDisposition(a, composite)
@@ -166,12 +169,12 @@ func TestMissingCreateIdentityUsesPinnedReadOnlyDiscovery(t *testing.T) {
 	a.DesiredDigest, err = desiredHash(n)
 	require.NoError(t, err)
 	repo.actions = []ActionRecord{a}
-	_, linked, err := ObserveRunActions(context.Background(), repo, "lab", "run", e.graph)
+	_, linked, err := ObserveRunActions(context.Background(), repo, "lab", "run", driver.DefaultRegistry, e.graph)
 	require.NoError(t, err)
 	require.Nil(t, linked[0].Discovered, "missing attachment inventory remains unresolved")
 	a.DesiredDigest = "changed"
 	repo.actions = []ActionRecord{a}
-	_, obs, err = ObserveRunActions(context.Background(), repo, "lab", "run", e.graph)
+	_, obs, err = ObserveRunActions(context.Background(), repo, "lab", "run", driver.DefaultRegistry, e.graph)
 	require.NoError(t, err)
 	require.Nil(t, obs[0].Discovered)
 }
@@ -204,12 +207,12 @@ func TestLinkedIntentDiscoveryRequiresCompleteProviderInventory(t *testing.T) {
 	driver.DefaultRegistry = driver.NewRegistry()
 	t.Cleanup(func() { driver.DefaultRegistry = prior })
 	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: base.name, Version: "test", Node: sub, NodeState: sub, NIC: sub}))
-	a := ActionRecord{ID: "create", RunID: "run", Resource: addr, Action: controlplane.PlanActionCreate, Status: ActionUncertain, OwnerUID: "owner", ResourceUID: "node", Generation: 1, DesiredDigest: digest}
+	a := ActionRecord{ID: "create", RunID: "run", Resource: addr, Action: model.PlanActionCreate, Status: ActionUncertain, OwnerUID: "owner", ResourceUID: "node", Generation: 1, DesiredDigest: digest}
 	repo := &memoryActions{state: e.state, actions: []ActionRecord{a}}
 	for _, mode := range []string{"exact", "missing", "extra", "unavailable"} {
 		t.Run(mode, func(t *testing.T) {
 			sub.mode = mode
-			_, obs, err := ObserveRunActions(context.Background(), repo, "lab", "run", e.graph)
+			_, obs, err := ObserveRunActions(context.Background(), repo, "lab", "run", driver.DefaultRegistry, e.graph)
 			require.NoError(t, err)
 			if mode != "exact" {
 				require.Nil(t, obs[0].Discovered)
@@ -223,7 +226,7 @@ func TestLinkedIntentDiscoveryRequiresCompleteProviderInventory(t *testing.T) {
 			require.False(t, resolved.EffectComplete)
 			require.Contains(t, PlanIntentDisposition(a, obs).Blockers, "attachment_rebuild_required")
 			for _, corruption := range []string{"empty-name", "duplicate", "wrong-node", "wrong-driver", "no-state", "wrong-count"} {
-				broken := append([]controlplane.RecoveredResource(nil), obs...)
+				broken := append([]model.RecoveredResource(nil), obs...)
 				candidate := cloneResetStateResource(*obs[0].Discovered)
 				broken[0].Discovered = &candidate
 				switch corruption {
@@ -252,7 +255,7 @@ func TestLinkedIntentDiscoveryRequiresCompleteProviderInventory(t *testing.T) {
 	require.NoError(t, err)
 	repo.actions = []ActionRecord{a}
 	sub.mode = "extra"
-	_, obs, err := ObserveRunActions(context.Background(), repo, "lab", "run", e.graph)
+	_, obs, err := ObserveRunActions(context.Background(), repo, "lab", "run", driver.DefaultRegistry, e.graph)
 	require.NoError(t, err)
 	require.Nil(t, obs[0].Discovered, "empty desired links must not hide provider attachments")
 
@@ -295,9 +298,9 @@ func TestRouterIntentDiscoveryRetainsUnknownPolicy(t *testing.T) {
 	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: base.name, Version: "test", Node: sub, NodeState: sub}))
 	digest, err := desiredHash(e.graph.Get(addr))
 	require.NoError(t, err)
-	a := ActionRecord{ID: "router-create", RunID: "run", Resource: addr, Action: controlplane.PlanActionCreate, Status: ActionUncertain, OwnerUID: "owner", ResourceUID: "router", Generation: 1, DesiredDigest: digest}
+	a := ActionRecord{ID: "router-create", RunID: "run", Resource: addr, Action: model.PlanActionCreate, Status: ActionUncertain, OwnerUID: "owner", ResourceUID: "router", Generation: 1, DesiredDigest: digest}
 	repo := &memoryActions{state: e.state, actions: []ActionRecord{a}}
-	_, obs, err := ObserveRunActions(context.Background(), repo, "lab", "run", e.graph)
+	_, obs, err := ObserveRunActions(context.Background(), repo, "lab", "run", driver.DefaultRegistry, e.graph)
 	require.NoError(t, err)
 	require.NotNil(t, obs[0].Discovered)
 	resolved, err := IntentWithDiscoveredIdentity(a, obs)

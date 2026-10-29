@@ -86,7 +86,16 @@ func (b localConsoleStorage) UpdateConsoleSession(ctx context.Context, id string
 				return nil, err
 			}
 		}
-		return nil, writeLocalObject(target, json.RawMessage(raw))
+
+		nextAuthority, err := persistence.PrepareConsoleAuthority(authority, next)
+		if err != nil {
+			return nil, err
+		}
+		raw, err = persistence.PreserveConsoleDispatch(raw, *next)
+		if err != nil {
+			return nil, err
+		}
+		return nextAuthority, writeLocalObject(target, json.RawMessage(raw))
 	})
 }
 
@@ -130,6 +139,19 @@ func (b sqliteConsoleStorage) UpdateConsoleSession(ctx context.Context, id strin
 		return err
 	}
 	if next != nil {
+		authority, err := readSQLiteAuthority(ctx, conn)
+		if err != nil {
+			return err
+		}
+		authority, err = persistence.PrepareConsoleAuthority(authority, next)
+		if err != nil {
+			return err
+		}
+		if authority != nil {
+			if _, err = conn.ExecContext(ctx, "INSERT INTO sysbox_execution_authority(id,data) VALUES ('authority',?) ON CONFLICT(id) DO UPDATE SET data=excluded.data", authority); err != nil {
+				return err
+			}
+		}
 		if persistence.ConsoleSessionNeedsAdmission(current, *next) {
 			if err := checkSQLiteTopologyMaintenance(ctx, conn, next.Topology); err != nil {
 				return err
@@ -208,6 +230,13 @@ func (b postgresConsoleStorage) UpdateConsoleSession(ctx context.Context, id str
 		return err
 	}
 	if next != nil {
+		authority, err = persistence.PrepareConsoleAuthority(authority, next)
+		if err != nil {
+			return err
+		}
+		if _, err = tx.Exec(ctx, "UPDATE sysbox_execution_authority SET data=$1::jsonb,updated_at=now() WHERE id='authority'", string(authority)); err != nil {
+			return err
+		}
 		if persistence.ConsoleSessionNeedsAdmission(current, *next) {
 			if err := checkPostgresTopologyMaintenance(ctx, tx, authority, next.Topology); err != nil {
 				return err

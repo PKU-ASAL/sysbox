@@ -3,15 +3,17 @@ package persistence
 import (
 	"context"
 	"database/sql"
-	"github.com/oslab/sysbox/pkg/address"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/runtime"
-	"github.com/oslab/sysbox/pkg/state"
-	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/oslab/sysbox/pkg/address"
+	"github.com/oslab/sysbox/pkg/model"
+	"github.com/oslab/sysbox/pkg/runtime"
+	"github.com/oslab/sysbox/pkg/state"
 )
 
 func TestConfiguredRepositoryRejectsStandaloneState(t *testing.T) {
@@ -108,7 +110,7 @@ func TestActionRepositoryContract(t *testing.T) {
 			require.NoError(t, err)
 			require.NotEmpty(t, st.TopologyUID)
 			addr := address.Resource("sysbox_node", "web")
-			action := runtime.ActionRecord{ID: "a", Topology: "lab", RunID: "run", Resource: addr, Action: controlplane.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: st.TopologyUID, ResourceUID: st.TopologyUID + "/web", Generation: 1, StateSerial: 0}
+			action := runtime.ActionRecord{ID: "a", Topology: "lab", RunID: "run", Resource: addr, Action: model.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: st.TopologyUID, ResourceUID: st.TopologyUID + "/web", Generation: 1, StateSerial: 0}
 			require.NoError(t, r.CommitActionIntent(ctx, action))
 			action.Revision++
 			conflict := action
@@ -170,7 +172,7 @@ func TestActionOutcomeRejectsStaleJournalRevision(t *testing.T) {
 			defer repo.Close()
 			st, err := repo.LoadState(ctx, "lab")
 			require.NoError(t, err)
-			a := runtime.ActionRecord{ID: "a", Topology: "lab", RunID: "run", Resource: address.Resource("sysbox_node", "web"), Action: controlplane.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: st.TopologyUID, ResourceUID: "resource-web", Generation: 1}
+			a := runtime.ActionRecord{ID: "a", Topology: "lab", RunID: "run", Resource: address.Resource("sysbox_node", "web"), Action: model.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: st.TopologyUID, ResourceUID: "resource-web", Generation: 1}
 			require.NoError(t, repo.CommitActionIntent(ctx, a))
 			listed, err := repo.ListTopologies(ctx)
 			require.NoError(t, err)
@@ -206,7 +208,7 @@ func TestResetAcceptedPhaseCannotRegressAfterPrepare(t *testing.T) {
 			addr := address.Resource("sysbox_node", "web")
 			st.Resources = []state.Resource{{Address: addr, OwnerUID: st.TopologyUID, ResourceUID: "web", Generation: 1, Driver: "docker", ExternalID: "original"}}
 			require.NoError(t, manager.Save(st))
-			a := runtime.ActionRecord{ID: "reset", Topology: "lab", RunID: "run", Resource: addr, Action: controlplane.PlanActionReset, Status: runtime.ActionIntentCommitted, OwnerUID: st.TopologyUID, ResourceUID: "web", Generation: 2, StateSerial: st.Meta.Serial, ExpectedSerial: st.Meta.Serial, Phase: "accepted", Candidate: &st.Resources[0]}
+			a := runtime.ActionRecord{ID: "reset", Topology: "lab", RunID: "run", Resource: addr, Action: model.PlanActionReset, Status: runtime.ActionIntentCommitted, OwnerUID: st.TopologyUID, ResourceUID: "web", Generation: 2, StateSerial: st.Meta.Serial, ExpectedSerial: st.Meta.Serial, Phase: "accepted", Candidate: &st.Resources[0]}
 			for _, phase := range []string{"", "preparing", "prepared", "destroying", "destroy_returned", "destroyed", "applying", "verifying"} {
 				invalid := a
 				invalid.Phase = phase
@@ -283,7 +285,7 @@ func TestResetBatchAdmissionRollsBackEveryIntent(t *testing.T) {
 			require.NoError(t, manager.Save(st))
 			var batch []runtime.ActionRecord
 			for _, res := range st.Resources[:2] {
-				batch = append(batch, runtime.ActionRecord{ID: res.ResourceUID, RunID: "run", Topology: "lab", Resource: res.Address, Action: controlplane.PlanActionReset, Status: runtime.ActionIntentCommitted, Phase: "accepted", OwnerUID: st.TopologyUID, ResourceUID: res.ResourceUID, Generation: 2, StateSerial: st.Meta.Serial, ExpectedSerial: st.Meta.Serial, Candidate: &res})
+				batch = append(batch, runtime.ActionRecord{ID: res.ResourceUID, RunID: "run", Topology: "lab", Resource: res.Address, Action: model.PlanActionReset, Status: runtime.ActionIntentCommitted, Phase: "accepted", OwnerUID: st.TopologyUID, ResourceUID: res.ResourceUID, Generation: 2, StateSerial: st.Meta.Serial, ExpectedSerial: st.Meta.Serial, Candidate: &res})
 			}
 			bad := append([]runtime.ActionRecord(nil), batch...)
 			bad[1].ResourceUID = "foreign"
@@ -349,7 +351,7 @@ func TestConcurrentRepositoryIntentsHaveOneWinner(t *testing.T) {
 	results := make(chan error, 2)
 	for i, r := range []*Repository{a, b} {
 		wg.Go(func() {
-			results <- r.CommitActionIntent(context.Background(), runtime.ActionRecord{ID: string(rune('a' + i)), Topology: "lab", RunID: "run", Resource: address.Resource("sysbox_node", "web"), Action: controlplane.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: st.TopologyUID, ResourceUID: st.TopologyUID + "/web", Generation: 1})
+			results <- r.CommitActionIntent(context.Background(), runtime.ActionRecord{ID: string(rune('a' + i)), Topology: "lab", RunID: "run", Resource: address.Resource("sysbox_node", "web"), Action: model.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: st.TopologyUID, ResourceUID: st.TopologyUID + "/web", Generation: 1})
 		})
 	}
 	wg.Wait()

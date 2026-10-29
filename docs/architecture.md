@@ -1,220 +1,321 @@
-# Sysbox 架构
+# Sysbox 架构设计与重构安排
 
-本文是 Sysbox 系统边界和持久契约的规范性说明。操作步骤位于 guides/operations，字段和 endpoint 位于 reference。
+Sysbox 管理实验环境里的节点、镜像、网络、挂载和策略。核心工作是：**观察现状，计算与配置的差距，执行计划，验证并记录结果。**
 
-> 观察驱动重构分支正在迁移实现。生命周期已改用 action/state 原子 repository；API metadata 等部分仍在迁移中。以[实施状态与验证边界](design/2026-09-28-runtime-refactor-implementation-status.md)区分已落地机制和目标契约。
+[接口文档](interfaces.md)记录当前可调用契约，[快速开始](../README.md)提供运行入口。
+源码基线为 `dev@291890a`。本文中的重构目标尚未实现；文档整理不代表代码已完成切换。
 
-## 系统上下文
+## 这轮已经确定的边界
 
-Sysbox 接收 HCL topology intent，解析为 typed resource graph，结合 durable state 与外部 observation 生成 plan，再通过 capability driver 修改宿主机资源。
+- 使用一次停机重建升级：停止旧服务 → 确认并清理旧资源 → 归档旧数据 → 新版本重新部署。
+- 新版本不承担旧 state、旧 journal 的在线迁移和接管，不保留旧执行模式开关。
+- 清理旧资源仍使用旧版本及其原始记录；停止 Sysbox 服务不等于资源已经销毁。
+- 新版本自己的崩溃恢复、重复请求处理和未知结果保护仍然必需，不能因为允许重建而删除。
+- 一个 topology 由一台宿主负责，同时最多执行一个变更；不同 topology 可以并行。
+- 保留 Docker、Firecracker、libvirt，以及现有 Linux/Windows 适用能力。不同平台不强求功能完全相同。
+- 保留 CyberField 使用的配置发布、幂等 Apply/Destroy、状态查询、清理确认、初始化和健康检查。
+- 本轮不扩展跨宿主自动接管、通用 workflow、跨主机 overlay 等新能力。已有高级能力先登记调用方，再决定退出或独立保留。
 
-```text
-HCL / variables / secret references
-              |
-              v
-decoder -> typed graph -> planner -> ordered actions
-                                      |
-                                      v
-                           checkpointed executor
-                         /        |        |       \
-                    Docker  Firecracker  libvirt  network/policy
-                                      |
-                                      v
-                          typed state + events
-```
+允许停机重建不等于现在授权清理任意宿主。本轮先重构和验收；实际切换前单独确认目标部署与资源范围。
 
-本地 CLI 与 API/Agent 模式共享 decoder、planner、executor、state manager 和 provider。API 只提供产品对象、调度与远程执行桥接，不定义另一套拓扑语义。
-
-## 配置与图
-
-顶层配置由 substrate、variable、locals、module、data、resource 和 output 组成。Resource reference 与显式 `depends_on` 形成有向图；create 按拓扑顺序执行，destroy 按逆序执行。
-
-Resource handler 拥有某一资源类型的 schema、解码、验证、依赖提取、planning、observation、import normalization 和生命周期规则。Graph 和 planner 不通过字符串字段猜测资源行为。
-
-## 规范资源身份
-
-配置展开、graph、plan、state、checkpoint、CLI、API 和日志使用同一 canonical address：
+## 重构后代码负责什么
 
 ```text
-sysbox_node.web
-sysbox_node.web[0]
-sysbox_node.web["blue"]
-module.lab.sysbox_network.dmz
-module.segment["red"].sysbox_node.target[1]
+CLI ──────────┐
+              ├─ 宿主服务 → 资源引擎 → Provider SPI → Docker / Firecracker / libvirt / 网络
+集中 API ─────┘                │
+（可选）                       └─ 资源状态 + 操作记录
 ```
 
-字符串 key 使用 JSON quoting。Module path 和 instance key 保持结构化，绝不展平为下划线名称。Malformed address 在进入 state/provider 前被拒绝。
+本地和远程使用同一个宿主操作服务。Unix socket 与远程投递可以不同，资源执行规则只有一份。
+集中 API 管用户请求、宿主选择和结果展示，不再参与资源执行和资源恢复决策。
 
-Canonical address 是逻辑身份；container ID、Firecracker generation ID、libvirt domain UUID、network namespace 和 nftables table 是 external identity。Reset 可以保留前者并替换后者。
+宿主服务内部按权限分进程：普通账号处理请求、计划和操作记录；受控 executor 持有必要的宿主访问权限并执行 provider。
+executor 校验调用身份、操作范围和资源归属，不接受任意宿主路径/命令，也不再实现另一套业务编排。
+两者之间的在途记录用于说明实际效果，不能被当成第二份资源 state。
 
-资源地址变化默认产生 delete/create。需要保留关联时必须显式执行 state move：
+| 模块 | 职责 | 不应承担 |
+|---|---|---|
+| config / graph | 解析配置、变量、依赖 | 调度和执行 |
+| model | 资源身份、观察、计划、结果 | HTTP、Agent lease、数据库连接 |
+| runtime | 观察、计划、按依赖执行、核对未完成动作 | API Server、远程投递、具体 provider 分支 |
+| spi / provider | 明确的能力契约 / 各平台实现 | 比赛业务、调度队列、重复资源状态机 |
+| host | 持久受理、去重、执行归属、查询与取消 | 第二套规划算法 |
+| executor | 校验执行请求、宿主效果和隔离 | HCL 求值、宿主选择、比赛流程 |
+| store | 实际事务、锁、CAS | 不同后端各自决定恢复行为 |
+| guest | 任务、文件、console 的执行与结果 | 用户自定义 workflow 引擎 |
+| CLI / control | 本地交互 / 远程管理入口 | 绕过宿主服务直接修改资源 |
 
-```bash
-sysbox state mv 'sysbox_node.web[0]' 'sysbox_node.web[1]'
-```
+这些是职责划分，不要求先建一批空包。优先在现有代码上提取和合并，目录迁移与对应行为变更一起完成。
 
-## 制品身份
+## 资源引擎的固定流程
 
-OCI image、rootfs、qcow2 和 kernel 作为独立资源进入 graph。Artifact 公共身份包含 kind、source、architecture、guest family、可选 size 与不可变 digest。
+1. 读取目标配置、操作意图和受管资源记录。Apply、Destroy、Reset 进入同一个计划模型。
+2. 通过 SPI 观察。区分存在、不存在、漂移、未知；state 用来确定归属，不能用搜索结果替代。
+3. 生成计划，绑定配置摘要、资源身份和 state 版本。Reset 是显式重建意图，即使配置没变也有效。
+4. 执行前重新核对版本和目标。漂移时停止或要求新计划，不能扩大已经批准的删除/替换范围。
+5. 每个动作先保存意图，再调用 provider，验证后原子提交动作结果与资源状态。
+6. 中断后先核对原动作，再观察和规划；不能把结果未知的创建直接重新执行。
 
-Planner 将实际 digest 纳入 stored-plan fingerprint。Apply/reset 在 destructive operation 前重新验证 baseline。大 artifact 不进入 Sysbox runtime image；由 topology、cache 或明确挂载提供。
+更新是可选 SPI 能力；不支持原地更新就规划替换。Replace 的先建后删/先删后建由明确资源约束决定，不能把全部资源强行套进同一个顺序。
+Reset 需保留 IP/MAC 等声明身份，同时验证新旧实例和依赖；这些约束不能为合并函数而丢失。
 
-## Handler 与能力 Driver 边界
+Guest 初始化、文件安装和检查继续支持，调用独立的 guest 能力并记录结果。它们完成前不能把环境报为 Ready。
+任意脚本不可自动重放；guest reboot、断连、取消请求都不等于已知退出结果。
 
-Handler 定义“资源意味着什么”；driver 定义“如何操作外部系统”。Driver descriptor 只声明实现的 capability，consumer 通过 registry 请求能力。Planning 在 mutation 前验证所需 capability 是否存在。
+## 当前执行路径与信任边界清单
 
-关键 capability 包括 artifact、managed network、node lifecycle、NIC、node state、guest execution、policy、reset 和 import。对于 provider 请求已经发出但没有返回的现场，还需要 substrate 提供 `OperationQuiescer`：它必须用持久 daemon/host anchor 证明同一个 operation identity 已经停止。lease 超时、控制器重启、资源存在或资源缺失都不是该证明。没有此 SPI 时恢复保持 `ErrActionUncertain`，绝不根据 observation 猜测结果。Runtime 不导入 Docker、Firecracker、libvirt 或 nftables 的具体实现。
+以下是当前源码事实，供逐项切换和删除时核对。
 
-`pkg/substrate` 只承载中立 wire/execution data types，不负责 registry 或 driver selection。
+| 操作 | 当前路径 | 权威证据 / 当前缺口 |
+|---|---|---|
+| validate / plan | validate 本地解析；plan → HTTP → revision/state 预览 | plan 不执行 provider refresh，不改变当前 workspace |
+| CLI Apply / Reset / Destroy | CLI → HTTP 准入 → Agent → supervisor → runtime/provider | 与远程 Run 共用 revision、request key、签名授权和完成回执；无本机执行 fallback |
+| 远程 Run | API → Agent → supervisor → HostRunExecutor → runtime/provider | revision、claim、grant、host/action 记录；生产 Agent 已要求 supervisor |
+| Run 派生后台任务 | runtime → transport handler → host Dispatcher → helper | parent/child 身份、task digest、boot、结果；不是全部 foreground provisioner 都已统一 |
+| API guest exec/file | API → Agent → supervisor → helper | 持久任务/文件记录和 host 回执；普通 raw copy/exec 是另一条实现 |
+| Console | API → Agent 转发 → supervisor Dispatcher → guest task | UID65534、固定 session/node generation、签名授权、PTY/输入、cgroup 停止证明；worker 不访问 provider |
+| check exec/reach | evaluateChecks → Node.Connection.Exec | 外层 Run、目标 state；检查不是无副作用的读取 |
+| pause/resume | CLI/API → Agent → supervisor PowerDispatcher | request key、grant、精确 node UID/generation、同步效果及观察；旧请求只返回旧结果 |
+| 受管 SSH | Run → supervisor SSH dispatcher → guest | guest CAS、签名结果；已删除 CLI 内嵌 LocalSSHController |
+| adoption/transfer | plan → owning host/provider → state commit | 精确身份、reservation、proof；不能按名称接管 |
+| Provider GC | preview → submit → owning host | 引用、reservation、删除证据；与缓存清理区分 |
+| snapshot/metadata delete | API/CLI → repository | serial、journal、activity barrier；元数据快照不是 VM 磁盘快照 |
+| 未知 intent / host fence | 专用 plan/observe/处置接口 | 原始 journal、签名观察、停止证明；旧现场需旧工具保留证据 |
+| Windows QGA | libvirt → 固定 helper → Job Object | 非管理员任务、boot/epoch、ACL；raw provisioning 不享有同等保证 |
+| Firecracker | provider → jailer → 降权 VMM | manifest v3、jail/进程/cgroup 身份、UID 占用与完整回收；网络沿用拓扑的 namespace |
 
-## 节点与 Provider 状态
+对应入口：[CLI Apply](../cmd/sysbox/commands/apply_cmd.go)、[执行桥](../pkg/agentexec/executor.go)、
+[宿主组装](../cmd/sysbox/commands/supervisor_cmd.go)、[console](../pkg/agentexec/granted_console.go)、
+[检查执行](../pkg/agentexec/guest_operation.go)、[宿主 SSH](../pkg/agentexec/host_executor.go)。
 
-Node state 分为：
+当前 [Compose Agent](../deploy/docker/compose.agent.yml)以 UID 32000 运行，不挂 Docker socket、不共享 host PID，所有 capability 清空。
+API 签发密钥、host 签名密钥和 guest 验证公钥各有用途；进程分开但共享所有密钥/数据库写权限不构成安全边界。
 
-- 公共 typed attributes：address、external ID、artifact identity、connection、attachments、observation。
-- versioned provider-private envelope：provider 恢复和删除所需的 opaque identity。
+## 实施顺序
 
-只有 `NodeState` capability 可以编码和解码 private envelope。Runtime 不解释 container name、VM socket、overlay path、domain XML 或进程 identity。
+每一批都要能单独验收。开发过程中可以存在尚未接入的替换代码，但不发布新旧两种执行模式。
+不先整仓改包名，不先删大量测试，也不新增另一份计划文档。
 
-## 网络挂载
+### 第一批：提取真正独立的资源引擎
 
-Attachment 公共身份是 `(owner resource address, logical attachment name)`。Core 保存 network address、IP prefixes、MAC、gateway、aliases 和 latest observation；NIC capability 独占物理实现及 opaque state。
+**目标：测试可以直接运行资源生命周期，不需要创建 API Server、Agent identity 或 HTTP 服务。**
 
-Runtime 不分配或解释 guest `ethN`、veth、TAP、namespace、Docker endpoint 或 libvirt device name。Guest network initialization 在 attachment wiring 后由 provider capability 执行。
+代码范围：
 
-## 策略
+- 从 原 controlplane/plan.go（现 [model/plan.go](../pkg/model/plan.go)）提取规划所用的资源动作类型到 `pkg/model`，更新直接消费者；API wire 类型在边界转换。
+- 整理 [runtime/executor.go](../pkg/runtime/executor.go)、[plan.go](../pkg/runtime/plan.go)、[convergence.go](../pkg/runtime/convergence.go)、[action.go](../pkg/runtime/action.go)：显式注入 provider registry、repository、日志与 secret resolver。
+- 把 [agentexec/executor.go](../pkg/agentexec/executor.go)里加载配置、规划、执行所需逻辑归回引擎入口；claim、dispatch、API completion 留在外层。
+- 引擎使用 operation ID、revision、资源范围和期限；不接收整个 controlplane.Run，不通过构造 API Server 获得存储。
+- 更新 [architecture_test.go](../pkg/runtime/architecture_test.go)，逐步禁止 runtime/model 导入 API、agentexec、具体 provider、数据库驱动和调度对象。
 
-`sysbox_firewall` 和 router NAT 使用 typed Policy capability。Core 保存 IPv4 policy semantics、逻辑 attachment reference 和 desired digest；provider 在执行时解析实际设备并原子替换 topology-owned nftables table。
+验收先使用测试 provider：依赖顺序、no-op、漂移、陈旧计划拒绝、未知观察不删除、intent 写失败不执行、effect 后写失败不重放、同 topology 互斥。
+真实 Docker 验收包括网络/节点 Apply → 第二次 no-op → Reset → Destroy，并确认旧实例和网络残留已清理。
+使用隔离测试入口验证新核心；最终 CLI 不能以测试入口为理由保留直接 provider 备用模式。
 
-Apply 只有在 readback 成功后才完成。Refresh 比较 semantic digest；动态 packet/byte counter 不进入 digest。Destroy 验证完整 owner marker 后删除。Runtime 不执行 `iptables`、`nft` 或 `nsenter`。
+### 第一批实施进展（2026-10-28）
 
-Policy 当前仅支持 IPv4。IPv6 input 明确验证失败，不静默忽略。
+已落地：
 
-## Plan 模型
+- 规划、健康状态、计划指纹和资源恢复观察类型已移到 `pkg/model`，所有调用方更新，不保留 controlplane 类型别名。
+- [runtime.Operation](../pkg/runtime/operation.go)统一加载、规划、Apply/Reset/Destroy、结果保存及 reset continuation；不接收 controlplane.Run。
+- runtime 的生产代码不再导入 controlplane，也不读取全局 provider registry。解析、规划、观察、执行、恢复都显式接收同一 registry。
+- agentexec 删除重复的三套生命周期编排，保留外层锁、授权准备、检查和远程完成证明；LocalBridge 不再生成/过滤计划。
+- 新增 SQLite 核心测试和真实 Docker gate。覆盖重复 Apply、陈旧计划、目标范围、intent/结果写失败、未知不重放、不同 provider 实例并行、取消与 prevent_destroy。
+- Docker 隔离 daemon 中已完成带 NAT attachment 的 Apply → no-op → Reset → Destroy，确认旧/新 generation 和受管网络均不存在。
 
-Plan 是唯一有序的 action list：
+第一批完成时，资源 handler 注册目录仍在进程内共享，CLI 与部署权限尚未切换。后续 CLI 和宿主桥进展见第二批。
+公开 Go 内部接口签名已改变；HTTP 字段与 HCL 保留，本轮未改 CyberField 部署或运行环境。
+默认 Go 全仓测试、runtime/agentexec/model race 和 vet 已通过；真实 Docker 不代表 Firecracker/Windows 或整个新部署的验收。
 
-```text
-create  read  no-op  replace  delete  unknown
-```
+### 第二批：本地与远程使用同一个宿主服务
 
-`replace` 先删除 prior object，再创建 desired object。只有 handler 实现真实 in-place update 后才可产生 update。`unknown` 不可 apply。`lifecycle.prevent_destroy` 使 delete/replace planning 直接失败，而不是生成部分拓扑。
+**目标：只有一份操作受理、一份资源执行和一个最终结果来源。**
 
-每个 action 使用 canonical address、明确 reason 和 schema-owned diff。Dependency 变化是否替换由 dependent handler 决定，不自动级联。
+提取 `internal/host` 的提交、查询、取消、持久去重。重整
+[LocalBridge](../pkg/agentexec/local_bridge.go)、[HostRunExecutor](../pkg/agentexec/host_executor.go)、
+[API ExecutionBridge](../pkg/api/execution_bridge.go)及宿主启动组装。
+宿主运行引擎不再通过 NewExecutionBridge 构造 API Server；HTTP adapter 和 CLI 都调用宿主操作接口。
 
-## Stored Plan 完整性
+保留受限 executor 的权限校验和实际效果记录；从宿主初始化中移除与资源执行无关的 API 服务依赖。
+切换后删除本地 direct mutation、重复 Bridge 编排和生产 fallback；重复请求必须查询原结果，不创建第二轮执行。
+验收覆盖 CLI/API 同语义、丢响应、断开客户端、服务重启、取消与完成并发。
 
-Stored plan 绑定：
+### 第二批实施进展（2026-10-28）
 
-- exact HCL bytes and evaluated non-secret input digest;
-- state lineage and serial;
-- resource/schema versions;
-- selected driver identities and capability contract;
-- artifact digests;
-- ordered actions.
+已完成宿主执行对 API Server 的反向依赖拆除：
 
-Apply 在调用 provider 前逐项比较。任一 mismatch 返回 field-specific stale-plan error，不进行外部 mutation。Secret 明文和 provider-private payload 不进入 plan。
+- Agent 和 supervisor 共用轻量 ExecutionBridge；删除单独的 HostExecutionBridge。
+- 执行桥直接打开执行存储、不可变 revision 和生命周期 repository，不创建 API Server、Jobs、调度器、console registry 或 HTTP 路由，不打开 API issuer 私钥。
+- 本地执行结束只更新交给宿主回执的结果；正式 Run 完成仍由 API 的 ownership CAS / 签名回执决定。
+- 资源 repository pool、revision registry 准入和 SQL consumer 登记与 API 共享实现；恢复事务直接依赖 store，不依赖 Server。
+- 删除无人调用的 ReconcileParentJournal 桥方法及旧入口。
+- Agent 退出前等待观测、命令和续租结束；supervisor 退出前等待 Run、授权检查、结果回执和本地 child 观察器收尾，随后关闭执行存储。
+- 完成上报重试由原执行调用负责，不再启动脱离服务生命周期的后台重试；观测读取状态保留调用者的取消信号。
 
-## State 契约
+已验证：宿主启动不读取 API 私钥、不加载损坏的 console registry；初始化失败不回退本地存储；
+签名完成、Reset continuation、GC publication 和 SQL/远程 registry 合同测试。
+全仓 Go 测试、相关 API race 与 vet 通过；独立 PostgreSQL 实例验证了完成回执、恢复写入时的租约/维护屏障，以及 federation 丢回执恢复。
+隔离 Docker 真实链路通过完成回复丢失后的 API/Agent/supervisor 重建、冷 Reset continuation、签名 Destroy 与无 force metadata 删除。
+这是同进程测试重建配合真实 Docker 的证据，不等于真实宿主断电或新部署权限边界的验收。
 
-Durable state 保存 canonical address、resource/schema identity、external ID、typed public attributes、dependencies、attachments、observation status 和 UTC timestamps。Driver detail 使用 versioned private envelope。
+尚未完成：把执行存储与操作准入从 api 包归到独立模块，以及部分维护命令的入口收敛。生命周期与 console 主干已统一；部署权限仍需逐项验证，本批不等于权限隔离完成。
 
-Observation status 包括：
+退出测试覆盖取消时仍在写入的回调、等待中的准入、授权检查、监听失败、已完成但尚未上报的结果，以及断开客户端后继续执行。
+等待本地处理结束不代表远端资源已经停止；没有停止证据的操作仍保持未知状态。provider 若不响应取消，正常退出会继续等待其本地调用返回，不能提前关闭存储。
 
-- `present`：对象存在且与已知状态一致；
-- `absent`：对象确定不存在；
-- `drifted`：对象存在但偏离声明或 state；
-- `degraded`：对象可观察但功能不完整；
-- `unknown`：无法可靠观察。
+本轮 CLI 切换：
 
-Unknown 阻止 apply，不触发 replacement。旧 state 缺少当前 schema 所需 identity/ownership 时，在任何 mutation 前拒绝；用创建它的旧 binary destroy 后再 recreate。
+- Plan/Apply/Reset/Destroy 使用服务入口；main 不为这些客户端命令初始化 provider 或读取宿主服务配置。
+- CLI 上传主 HCL 和显式 `--include` 文件；`--inputs` 及其硬链接不能混入 revision。符号链接、隐藏文件和超限内容拒绝上传。
+- Apply target 绑定请求指纹；Reset、Reset 续接按 key 原子保存 Run 与投递命令，重试查询原结果。
+- 输入值仅经请求、claim、宿主 RPC 的内存字段传递；宿主按正式请求指纹验证后交给引擎，准入记录和 checkpoint 不含明文输入。
+- 删除 CLI PrepareLocalSSH 和内嵌 LocalSSHController。LocalBridge 仍被内部测试夹具使用，生产生命周期命令不再调用它。
+- `sysbox run show/wait/cancel` 查询、等待或请求取消；Ctrl-C 只退出等待。取消请求不代表停止成功。
+- target 暂限未索引的根资源地址；模块和 count/for_each 实例明确拒绝，避免把错误范围当成成功。
+- Plan 是所选 revision 与正式 state 的预览，不修改 workspace，不代表实时 provider 观察，也不是可保存的审批凭证。提交确认授权的是显示的 revision/操作/target；实际执行仍在宿主锁内重新核对和规划。
 
-## Backend 安全与并发
+本轮验证：全仓 Go 测试、相关 race、vet、三文档检查通过。独立 CLI binary 在隔离 Docker 中通过 Apply/Reset 续接/Destroy、
+同 key 重试与 API/Agent/supervisor 重建、非默认/敏感输入传递，以及 SSH 定向轮换和 Reset 后权限重建。
+输入测试确认敏感值到达容器且未进入正式 Run/state；这不表示 provider 自身不会保留执行所需的环境变量。
+这些测试重建服务对象并运行独立 CLI 进程，未模拟真实宿主断电，未验证新的部署权限或 Firecracker jailer。
 
-Backend 分别声明 locking、compare-and-swap、snapshot、deletion、lease 和 force-unlock capability。Mutation 默认同时要求 locking 与 CAS。
+### 第三批：接回完整资源与 guest 能力
 
-Local、SQLite 和 Postgres 满足核心 mutation contract；HTTP/S3 兼容 backend 不具备同等级保证。`--allow-unsafe-state` 仅在调用者能够保证单写者时绕过检查。
+pause/resume 已改为服务客户端，删除了本机 provider 路径。按 topology + key 保存唯一操作；重复请求只读原结果，
+即使节点已被替换也不把旧请求重新作用到新 generation。相同 key 改变节点、操作或请求人会冲突。
+创建操作与投递命令仍使用同一个事务；不增加另一份执行状态机。
 
-State manager 在锁内读取 serial，通过 CAS 保存新版本，并在 destructive operation 前创建 snapshot。API run lease 与 state lock 是两层不同保护：前者防止重复调度，后者保护 durable topology state。
+本轮验证了文件、SQLite、独立 PostgreSQL 下的双 API 并发与重启去重；独立 CLI 在隔离 Docker 中完成 pause → resume → 重试旧 pause key，
+确认最后一次查询没有再次暂停容器。已删掉原本仅供 LocalSSHController 使用的候选资源/指定 owner 绕路。
 
-## 检查点执行
+Console 已切换到普通用户 UID65534，复用已有 guest task 的宿主调度、guest 进程管理和停止回执。
+删除独立 Console SPI、原生 Docker exec attach、SSH PTY、vsock raw console 和 Agent/provider 直连实现。
+TTY/非 TTY、实时输入与 resize 使用同一任务身份；输入只经过内存和私有控制 socket，终端参数参与签名摘要。
+输出按游标分块读取；超限会停止任务，不无限堆积，也不在截断后假装成功。
 
-宿主机 mutation 无法组成单一数据库事务。Executor 在关键步骤前后持久化 operation checkpoint，包括资源 address、action、provider handle、attachment/private state 和已完成 substep。
+浏览器断连、取消、API 重启和授权到期都不能直接生成成功结果。宿主确认 cgroup 中全部子进程已停止，
+API 保存签名结果后释放资源执行范围，并退役原始/取消投递。没有授权历史的会话可明确标记 `not_started`；
+文件存储在会话、撤权、投递退役之间中断后，Supervisor 按持久记录继续收尾。
+缺少可信 helper、cgroup-v2 domain 或 PTY 条件就拒绝，不回退普通 exec、root 终端或杀 SSH 客户端。
+初始化需要的特权操作继续独立授权。Windows 交互终端明确不支持。
 
-一次 reset 的 checkpoint 序列示例：
+真实 guest 测试覆盖普通用户、TTY/管道、resize、正常退出后后台进程清理、取消、到期、输出上限和重试不重放。
+隔离 Docker 的 API/Agent/supervisor 链路覆盖 70 KB 终端输出、浏览器断连、主动取消和超时，并检查每个任务 cgroup 为空。
+全仓 Go 测试、相关 race、vet、独立 PostgreSQL 和三文档检查通过；验收目录保持 65 项要求、129 个 gate。
+独立复核发现的续期越界、离线取消残留投递、文件存储中断后漏撤权、PTY 描述符继承均已修复并验证。
+这不等于 Firecracker/libvirt 实机终端验收，也不证明部署权限或 Firecracker jailer 已完成。
 
-```mermaid
-sequenceDiagram
-    participant E as Sysbox Executor
-    participant C as Checkpoint Store
-    participant P as Provider
-    participant S as State Backend
+**目标：新主干可实际运行现有实验环境，不只会创建空容器。**
 
-    E->>C: 记录 reset 开始及计划指纹
-    E->>P: 从不可变基线创建新 generation
-    P-->>E: 返回新的 external ID
-    E->>C: 记录 external ID
-    E->>P: 连接 NIC、配置网络并启动
-    E->>C: 逐步记录 wired / started
-    E->>P: 观察新节点状态
-    P-->>E: 返回 running / unknown 等状态
-    E->>S: 原子更新正式 state
-    E->>C: 标记状态已写入
-    E->>P: 验证 ownership 后清理旧 generation
-    E->>C: 记录 reset 完成
-```
+接入 Firecracker/libvirt、网络挂载与策略、文件安装、provisioner、受管 SSH、健康检查和 console。
+复用现有 provider/guest 实现；不同入口统一调用，删除迁完能力的旧 transport 和 raw fallback。
+权限设计必须覆盖赛题初始化：不能简单把原 root 初始化脚本改成 nobody 并宣称兼容；需固定受权初始化操作或准备好的镜像。
+保留 sensitive input 不落普通 state/log、Ready 条件、资源 inventory 和观测 label。
+逐 provider 测试启动、重置、销毁、丢回复、重启和同名替代对象保护。
 
-恢复流程：
+### 第四批：完成实际权限隔离
 
-1. 验证 topology、plan fingerprint 和 state lineage。
-2. 读取 checkpoint，不根据日志文本推断进度。
-3. 通过 handler/driver 观察外部对象。
-4. 根据观察结果采用已完成对象、继续剩余步骤或清理残留。
-5. CAS 保存 state，再完成旧 generation cleanup。
+**目标：从操作系统层面禁止未授权的宿主访问。**
 
-如果 action journal 的 provider operation 状态仍为 `unknown`，恢复在第 3 步之前必须取得并校验 quiescence proof。proof 绑定 action ID、owner/resource UID、generation 和 provider evidence digest；历史只有 intent 的旧记录没有自动补证路径，只能审计或显式人工处置。
+目标是非 root 控制进程与受限 executor 分工。目前 host-supervisor 仍以 root 运行；本批逐项缩小它与 Agent 的权限。
+CLI/API/worker 不挂 provider socket、不持 host 私钥、不具有任意宿主执行权限。
+executor 验证资源归属和参数，不能因调用者有 socket 连接权就允许任意 mount/path/root command。
+Firecracker 必须由 jailer 启动并验证 UID、目录、namespace、cgroup、设备与 capability；libvirt 核对 QEMU/管理 socket 权限。
 
-Repeated recovery 必须幂等。Unavailable 或 invalid observation 停止恢复；missing attachment 可被记录为 drift，以受控 replacement 收敛。
+Firecracker jailer 实施范围：宿主配置固定 jailer/Firecracker 可执行文件、私有 jail 根目录和 cgroup-v2 父目录。
+节点 HCL 不提供 jailer 参数或宿主 UID。启动沿用现有 manifest 和生命周期锁；先保存 jail 准备意图，
+再准备本代磁盘、内核、配置及资源限额，最后运行 jailer 并核对真实 VMM 身份。
+manifest 留在 root 管理目录，不能置于 VMM 可写的 jail 中。正式入口删除 allow_direct 与直接启动分支。
+启动取消保留未知效果供观察；停止确认后才回收 jail/cgroup，Reset 和 GC 共用该收尾。
+已接通 jailer 唯一启动入口；停止使用 cgroup.kill 并等待清空，每次启动创建新的 cgroup 内核对象。
+UID 先占用再授予 TAP 访问，释放前撤销残留 TAP 权限。启动准备中断可直接清理，未知启动可恢复原进程。
+宿主支持范围固定为配套的 Firecracker/jailer 1.15.1 和具备 cgroup.kill 的 cgroup-v2 环境；不自动降级。
+VMM 的 PID/mount/IPC/UTS namespace 隔离，网络沿用既有拓扑：隔离 bridge 使用其 netns，宿主 Docker bridge 仍使用宿主 netns。
+因此 jailer 已补上 VMM 降权与文件/进程隔离，但尚不等于全部网络或宿主准备操作的隔离完成。
+旧 manifest v2 拒绝读取；不在线接管旧直启进程。
+真实 KVM 验证已通过启动、隔离凭据检查、暂停恢复、停止重启、冷销毁、TAP 通信、丢回执恢复、Reset 与旧 generation 拒绝。
+准备阶段在 cgroup/root 创建后中断可直接销毁；UID 冲突保留原占用；销毁时残留 TAP 的 owner 恢复为 root。
+全仓测试、相关 race、vet、三文档与验收目录检查通过；guest helper 的 amd64/arm64 内嵌制品已重新构建。
+宿主验收使用 x86_64 KVM；不把它当成 arm64 宿主或实际部署权限收缩的验收。
 
-## Reset 契约
+Agent 权限收缩：生产 Agent 删除 ExecutionBridge 和本机 Run fallback，不打开 state/数据库、不初始化 provider。
+宿主负责能力探测、资源健康和容量清单，通过已有 Unix socket 返回签名观察；API 校验宿主签名及当前 Agent session 后保存。
+Agent 只持自己的通信身份和验证公钥，不保留注册时使用的管理员 API token。启用 API token 时，明确列出的 Agent 接口允许本身份签名认证，不能据此访问管理接口。
+部署中 Agent 使用非 root 用户、无额外 capability、独立可写数据目录，只挂宿主通信 socket 和公开配置/公钥。
+注册由管理员进行，Agent 的调度能力和标签在注册后固定；worker 无权改写。
+Run、节点操作和文件操作的最终结果只接受宿主证据，暂停/恢复也已接入。worker 没有直接发起 adoption 的接口。
+宿主决定观察顺序，API 验证签名和当前会话；1 分钟后健康快照过期，心跳不能续期。
+部署模板包含普通用户 systemd/Compose worker、root 宿主单元，以及分开安装身份与公钥的脚本。
+验收覆盖伪造/过期会话观察拒绝、宿主不可用时不回退、受限身份访问宿主私钥/provider socket 失败，以及正常签名执行链。
+本批用独立 CLI 进程以 UID/GID 32000、无 capability、NoNewPrivileges 启动 Agent，API 启用管理员 token。
+在隔离 Docker daemon 中验证 Apply/Destroy、pause/resume、API/宿主重建和 Agent 进程重启；原 Run 回执丢失可恢复，同 key 不重复操作。
+同一身份读取私钥、canonical 数据库、连接 Docker socket 均被拒绝。观察、权限和 power 完成合同通过文件/SQLite/PostgreSQL 检查。
+这不等于生产 systemd 部署已上线，也不等于缩小了 root 宿主服务内部的所有权限。
+Docker 共享内核，不承诺 VM 级隔离；同 Windows 账号任务也不构成独立安全沙箱。
+修复并原生验证已发现的 Windows 续期误杀和文件替换共享冲突。
 
-Reset 从 immutable baseline 替换 mutable guest generation：
+验收不仅检查配置：以 worker 身份访问私钥、provider socket 和禁止路径必须失败；恶意参数、旧 boot/epoch 不能产生新效果。
+任何强隔离能力缺少宿主条件时在启动前拒绝，不悄悄降级。
 
-1. 解析 target 和依赖影响范围；
-2. 校验 baseline digest；
-3. checkpoint provider reset handle；
-4. 创建 replacement；
-5. wiring attachment、guest network 和 route；
-6. 启动并 observation；
-7. 原子切换 state external identity；
-8. 验证 ownership 后清理 prior generation。
+### 第五批：删除旧版本负担，确定新存储格式
 
-声明的 resource address、MAC、IP 和 artifact identity 保持稳定；external ID 必须变化。Targeted reset 不替换不相关节点。
+**目标：新部署只跑一个版本、一条路径。**
 
-## 所有权与销毁
+把 `pkg/persistence`、`pkg/state` 中重复业务转换收敛到共享实现；存储 adapter 只处理真正不同的事务/锁/CAS。
+第一批用 SQLite 验证核心，不同时重写所有后端；既有后端在新发布中是否保留，以调用方清单和合同测试决定，不能未经核对直接砍掉 PostgreSQL。
 
-每个外部对象持有 topology、resource address、resource type 和 run/generation 等 ownership anchor。Provider 在 destructive operation 前将持久 state 与实际对象标记比对。
+确定新的 schema 与协议版本，拒绝旧运行数据；旧格式 importer、在线兼容 reader、旧 bridge、过渡开关不进入新正常执行路径。
+旧 binary/数据归档供独立清理和追溯，不成为新程序自动 fallback。
+保留新版本自身的 journal、结果去重、宿主/guest 必要记录和 crash recovery。
 
-名称相同、路径相似或对象位于默认目录都不足以证明 ownership。证据不完整时保留对象并报错。Destroy 的完成条件包括 state 收敛和 topology-owned residue audit。
+已删除下线的 worker Run/节点/文件完成方法、请求类型和存储分支；完成结果只接受宿主签名。
+删除由 Run 完成回调写入健康 projection 的旧机制，资源健康只来自签名观察。
+已把 cleanup receipt、提交失败、旧执行身份拒绝、命令重派发和回执重放测试迁到宿主路径；
+有效历史宿主回执不要求 worker lease 仍有效，但不能修改已封存结果或影响新一代资源。
+文件、SQLite、PostgreSQL 共用同一结果规则，后端只保留各自事务与锁实现。
+执行桥不再包含可选的 worker 结果上报器和重试器；宿主 RunCoordinator 负责签名回执、重试与恢复。
+文件命令退役会清掉可投递内容，迟到回执使用操作记录内的原始 dispatch 校验请求，不依赖已清空的命令。
+清理凭据额外绑定宿主授权的拓扑 UID；不匹配时不发布结果、不释放占用。
+全仓测试和相关竞态测试通过，PostgreSQL 与文件/SQLite 使用同一套签名回调验证。
+隔离 Docker 验证了文件命令实际退役、宿主/API 重建后回执补交，以及普通用户 Agent 的部署、暂停、恢复和回收。
 
-## 密钥边界
 
-`env("NAME")` 产生 `secret://env/NAME` reference，不在配置求值时读取明文。Execution-scoped resolver 在 provider operation 前解析；缺失值使执行失败。非敏感可选路径使用 `env_optional()`。
+已确定退出的跨宿主迁移/处置接口显式移除或拒绝，不能留下只返回成功的空实现。
 
-Plan、state、checkpoint、API payload、event 和日志只能保存 reference 或 redacted placeholder。Node environment、connection credential、provisioner command、authorized key 和 provider config 都经过相同 resolver 边界。
+### 第六批：CyberField 联调与停机重建
 
-## 控制面与 Agent
+**目标：真实消费者的比赛环境能正常部署、初始化、重置和清理。**
 
-API 持久化 Project、Workspace、Topology、Revision、Plan、Run、Agent、Event、Artifact 和 projection。Run 根据 capability 调度给 Agent；Agent 通过 signed protocol 领取 command、claim/renew lease、执行共享 runtime 并回传 event/projection。
+以相邻 CyberField 的 `api/sysbox.v1.yaml` 与 `internal/adapter/sysbox` 为消费清单：
+revision、keyed Apply/Destroy、Run 查询、三值 conditions、cleanup-inspection、metadata DELETE、IP/inventory、Docker labels。
+比赛业务留在 CyberField；Sysbox 不吸收审批、计分和比赛轮次 workflow。
 
-API container 不应持有 Docker socket、KVM 或 libvirt 权限。Host Agent 持有最小必要 capability。Topology state/checkpoint 默认位于执行 Agent，除非配置共享安全 backend。
+当前两边 protocol 名称不一致：CyberField 要求 `cyberfield-runtime-v1`，Sysbox dev 返回 `sysbox-runtime-v1`。
+联合更新契约与启动检查，不通过关掉能力检查“解决”。赛题用到的初始化命令/文件/flag 注入必须真实验证。
 
-## 架构不变量
+同一提交构建 CLI、API、宿主与 guest 制品；隔离环境先完成 Docker、Firecracker、libvirt 与 Windows 适用测试，
+再跑 CyberField 发布 → 激活 → 初始化/flag → Ready → Reset → 清理，并测试请求丢失和组件重启。
+最后按确认的部署范围停旧服务、清旧资源、归档旧数据、部署新版本。不做旧运行环境在线接管。
 
-- 未通过 plan fingerprint 和 backend safety 检查前，不调用 provider mutation。
-- Unknown observation 不等于 absent。
-- Secret plaintext 不进入 durable data。
-- Runtime 不解释 provider-private state。
-- 删除前重新验证 ownership。
-- Reset 在 replacement 可观察且 state 保存成功后才清理 prior generation。
-- CLI 与 API/Agent 使用同一执行语义。
+## 怎样判断这轮重构完成
+
+- 看一个 Apply，只需沿宿主操作服务 → runtime → SPI 理解执行，不再绕回 API Server。
+- 新增 provider 主要增加 SPI 实现与注册；新增接入方式不修改资源执行规则。
+- 本地与远程不存在第二套资源执行实现；各类事实有明确的唯一权威写者。
+- 同一请求不会重复创建资源；未知效果不会重放；删除不会碰同名替代对象。
+- 初始化失败不会报 Ready，清理未完成不会报告资源已释放。
+- 安全隔离通过实际权限测试，不能仅以签名、接口或进程名字证明。
+- 可从空状态部署，无旧格式读取和旧模式回退；新版本自身中断后仍可解释和恢复。
+
+代码行数不是唯一验收标准。必要的错误处理和真实故障测试不删，重复路径、重复决策和不再支持的兼容代码才删。
+
+## 历史资料
+
+原 84 份文档逐字节保存在 [归档](archive/2026-10-27-documentation.tar.gz)，
+[清单](archive/2026-10-27-documentation.json)记录原路径、提交、大小和 SHA-256。
+归档是历史证据，不覆盖当前三份文档；其中引用的 `/tmp` 日志、VM 磁盘和远端文件并未包含在文档归档中。
+
+历史 Stage 2/3 验收仍属于原版本和其声明范围，不自动证明新架构通过。
+原 P0–P9 测试目录继续保留；新范围确定退出某项能力时，需要明确修改契约和对应验收，不能把 skip 当作通过。
+只维护本文件、接口文档和根 README；本轮计划直接在本文件更新，不再新增阶段计划手册。

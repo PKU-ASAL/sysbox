@@ -3,10 +3,11 @@ package runtime
 import (
 	"testing"
 
-	"github.com/oslab/sysbox/pkg/address"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/stretchr/testify/require"
+
+	"github.com/oslab/sysbox/pkg/address"
+	"github.com/oslab/sysbox/pkg/model"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 func TestProvenProviderActionRequiresPersistedProof(t *testing.T) {
@@ -25,7 +26,7 @@ func TestInterruptedProviderActionRequiresQuiescenceProof(t *testing.T) {
 	record := ActionRecord{
 		ID: "action-1", Topology: "topology", RunID: "run-1",
 		Resource: address.Address{Type: "sysbox_node", Name: "node"},
-		Action:   controlplane.PlanActionDelete, Status: ActionUncertain,
+		Action:   model.PlanActionDelete, Status: ActionUncertain,
 		ProviderOperationID: "action-1", Quiescence: "unknown",
 	}
 	require.ErrorIs(t, requireRecoveryQuiescence(record), ErrActionUncertain)

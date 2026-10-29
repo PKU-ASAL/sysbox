@@ -79,13 +79,13 @@ func (s *WorkspaceService) beginGCProductionWrite(ctx context.Context, topology,
 }
 
 // PrepareExecution is invoked by both ordinary and host-owned executors before
-// preflight or effects; the HostExecutionBridge inherits this method.
+// preflight or effects; worker and host share this implementation.
 func (b *ExecutionBridge) PrepareExecution(ctx context.Context, run *controlplane.Run) (context.Context, func(), error) {
-	if b.server.cfg.GCPublicationSource == "" {
+	if b.cfg.GCPublicationSource == "" {
 		if run == nil {
 			return nil, nil, fmt.Errorf("run required")
 		}
-		_, err := b.server.workspaceService().beginGCProductionWrite(ctx, run.Topology, "artifacts")
+		_, err := b.workspaces.beginGCProductionWrite(ctx, run.Topology, "artifacts")
 		if err != nil {
 			return nil, nil, err
 		}
@@ -95,7 +95,7 @@ func (b *ExecutionBridge) PrepareExecution(ctx context.Context, run *controlplan
 		return nil, nil, fmt.Errorf("artifact publication requires topology")
 	}
 	return artifact.WithPublication(ctx, func(ctx context.Context, _ artifact.Spec) (func(artifact.Result) error, error) {
-		complete, err := b.server.workspaceService().beginGCProductionWrite(ctx, run.Topology, "artifacts")
+		complete, err := b.workspaces.beginGCProductionWrite(ctx, run.Topology, "artifacts")
 		if err != nil {
 			return nil, err
 		}

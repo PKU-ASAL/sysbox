@@ -170,8 +170,22 @@ func (h *consoleSessionHub) Snapshot(id string) (controlplane.ConsoleSession, er
 	if h.initErr != nil {
 		return controlplane.ConsoleSession{}, h.initErr
 	}
-	h.mu.RLock()
-	defer h.mu.RUnlock()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.store != nil {
+		current, err := h.store.GetConsoleSession(context.Background(), id)
+		if err != nil {
+			return controlplane.ConsoleSession{}, err
+		}
+		if current == nil {
+			return controlplane.ConsoleSession{}, errConsoleSessionNotFound
+		}
+		if old := h.sessions[id]; old != nil {
+			old.session = cloneConsoleSession(*current)
+		} else {
+			h.sessions[id] = newConsoleSessionState(*current, controlplane.ConsoleRequest{})
+		}
+	}
 	st := h.sessions[id]
 	if st == nil {
 		return controlplane.ConsoleSession{}, errConsoleSessionNotFound
@@ -210,7 +224,14 @@ func (h *consoleSessionHub) Update(id string, fn func(*controlplane.ConsoleSessi
 	if err := h.store.CompareAndSwapConsoleSession(context.Background(), st.session, sess); err != nil {
 		return h.refreshAfterConflict(st, err)
 	}
-	st.session = cloneConsoleSession(sess)
+	stored, err := h.store.GetConsoleSession(context.Background(), id)
+	if err != nil {
+		return err
+	}
+	st.session = cloneConsoleSession(*stored)
+	if stored.NotStarted {
+		return retireConsoleDeliveries(context.Background(), h.store, *stored)
+	}
 	return nil
 }
 
@@ -253,7 +274,14 @@ func (h *consoleSessionHub) Cancel(ctx context.Context, id, reason string, subj 
 	if err != nil {
 		return h.refreshAfterConflict(st, err)
 	}
-	st.session = sess
+	stored, readErr := h.store.GetConsoleSession(ctx, id)
+	if readErr != nil {
+		return readErr
+	}
+	st.session = cloneConsoleSession(*stored)
+	if err = retireConsoleDeliveries(ctx, h.store, *stored); err != nil {
+		return err
+	}
 	select {
 	case <-st.cancel:
 	default:

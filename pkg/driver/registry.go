@@ -90,14 +90,6 @@ func (r *Registry) RequireSnapshot(name string) (Snapshot, error) {
 	return d.Snapshot, nil
 }
 
-func (r *Registry) RequireConsole(name string) (Console, error) {
-	d, err := r.Require(name, CapabilityConsole)
-	if err != nil {
-		return nil, err
-	}
-	return d.Console, nil
-}
-
 func (r *Registry) RequireGuestExec(name string) (GuestExec, error) {
 	d, err := r.Require(name, CapabilityGuestExec)
 	if err != nil {

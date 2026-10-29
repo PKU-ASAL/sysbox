@@ -5,14 +5,17 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
-	"github.com/oslab/sysbox/pkg/address"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/runtime"
-	"github.com/oslab/sysbox/pkg/state"
-	"github.com/stretchr/testify/require"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/oslab/sysbox/pkg/address"
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
+	"github.com/oslab/sysbox/pkg/runtime"
+	"github.com/oslab/sysbox/pkg/state"
 )
 
 func TestHostFenceReleaseRequiresIndependentStopsAndCompletedDeletes(t *testing.T) {
@@ -37,11 +40,11 @@ func TestHostFenceReleaseRequiresIndependentStopsAndCompletedDeletes(t *testing.
 	a := newAggregate()
 	a.Serial = 1
 	a.State.TopologyUID = "owner"
-	action := runtime.ActionRecord{ID: "delete", Topology: "lab", RunID: run.ID, RunQueuedAt: run.QueuedAt, RunRevision: run.Revision, OwnerUID: "owner", ResourceUID: "node", Generation: 1, Resource: address.Resource("sysbox_node", "web"), Action: controlplane.PlanActionDelete, Revision: 1, Status: runtime.ActionSucceeded, Candidate: &state.Resource{Address: address.Resource("sysbox_node", "web"), ExternalID: "external", OwnerUID: "owner", ResourceUID: "node", Generation: 1}}
+	action := runtime.ActionRecord{ID: "delete", Topology: "lab", RunID: run.ID, RunQueuedAt: run.QueuedAt, RunRevision: run.Revision, OwnerUID: "owner", ResourceUID: "node", Generation: 1, Resource: address.Resource("sysbox_node", "web"), Action: model.PlanActionDelete, Revision: 1, Status: runtime.ActionSucceeded, Candidate: &state.Resource{Address: address.Resource("sysbox_node", "web"), ExternalID: "external", OwnerUID: "owner", ResourceUID: "node", Generation: 1}}
 	a.Actions[action.ID] = action
 	hostPub, hostKey, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
-	report := controlplane.RunRecoveryReport{CommandID: "observe", RunID: run.ID, AgentID: "agent", RunAttempt: run.Attempt, QueuedAt: run.QueuedAt, Revision: run.Revision, Mode: controlplane.RunRecoveryObserve, TopologyUID: "owner", StateSerial: a.Serial, ObservedAt: time.Now().UTC(), Resources: []controlplane.RecoveredResource{{ActionID: action.ID, Resource: action.Resource.String(), OwnerUID: "owner", ResourceUID: "node", Generation: 1, ExternalID: "external", Status: "absent", JournalStatus: "succeeded"}}}
+	report := controlplane.RunRecoveryReport{CommandID: "observe", RunID: run.ID, AgentID: "agent", RunAttempt: run.Attempt, QueuedAt: run.QueuedAt, Revision: run.Revision, Mode: controlplane.RunRecoveryObserve, TopologyUID: "owner", StateSerial: a.Serial, ObservedAt: time.Now().UTC(), Resources: []model.RecoveredResource{{ActionID: action.ID, Resource: action.Resource.String(), OwnerUID: "owner", ResourceUID: "node", Generation: 1, ExternalID: "external", Status: "absent", JournalStatus: "succeeded"}}}
 	report, err = controlplane.SignFenceObservation(hostKey, report, controlplane.FenceObservationBinding{RequestSHA256: digest, HostBootID: receipt.NewBootID}, "observer", 1)
 	require.NoError(t, err)
 	cmd := CommandRecord{Retired: true, Command: controlplane.AgentCommand{ID: "observe", AgentID: "agent", Type: controlplane.RunRecoveryCommand, RecoveryMode: controlplane.RunRecoveryObserve, ActionID: req.ID, TopologyUID: "owner", ExpectedSerial: a.Serial, Run: &run, Status: controlplane.AgentCommandStatusCompleted, LeaseOwner: "observer", Attempt: 1}, Recovery: &report}
@@ -63,7 +66,7 @@ func TestHostFenceReleaseRequiresIndependentStopsAndCompletedDeletes(t *testing.
 			c := cmd
 			proof := report
 			c.Recovery = &proof
-			proof.Resources = append([]controlplane.RecoveredResource(nil), report.Resources...)
+			proof.Resources = append([]model.RecoveredResource(nil), report.Resources...)
 			public := hostPub
 			request := release
 			switch variant {

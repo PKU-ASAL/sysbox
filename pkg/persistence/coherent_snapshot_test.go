@@ -4,11 +4,12 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/oslab/sysbox/pkg/address"
-	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
-	"github.com/stretchr/testify/require"
 )
 
 type stateActionsReader interface {
@@ -34,7 +35,7 @@ func (b *completingSnapshotBackend) update(_ context.Context, _ string, fn func(
 func TestLoadStateAndActionsUsesOneCoherentView(t *testing.T) {
 	before := newAggregate()
 	resource := state.Resource{Address: address.Resource("sysbox_node", "web"), OwnerUID: before.State.TopologyUID, ResourceUID: "web-uid", Generation: 1, ExternalID: "node-1"}
-	record := runtime.ActionRecord{ID: "create", Revision: 1, Topology: "lab", RunID: "run", OwnerUID: resource.OwnerUID, ResourceUID: resource.ResourceUID, Resource: resource.Address, Generation: 1, Action: controlplane.PlanActionCreate, Status: runtime.ActionUncertain, Candidate: &resource}
+	record := runtime.ActionRecord{ID: "create", Revision: 1, Topology: "lab", RunID: "run", OwnerUID: resource.OwnerUID, ResourceUID: resource.ResourceUID, Resource: resource.Address, Generation: 1, Action: model.PlanActionCreate, Status: runtime.ActionUncertain, Candidate: &resource}
 	before.Actions[record.ID] = record
 	after := newAggregate()
 	after.State.TopologyUID = before.State.TopologyUID

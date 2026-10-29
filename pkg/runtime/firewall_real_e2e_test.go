@@ -10,16 +10,17 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/persistence"
 	dockerprovider "github.com/oslab/sysbox/pkg/provider/docker"
 	runtime "github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
-	"github.com/stretchr/testify/require"
 )
 
 type unavailableFirewallOutcome struct{ runtime.ActionRepository }
@@ -89,15 +90,15 @@ resource "sysbox_firewall" "edge" {
 	driver.DefaultRegistry = driver.NewRegistry()
 	defer func() { driver.DefaultRegistry = previous }()
 	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "docker", Version: "test", Policy: sub, Node: sub, NIC: sub, NodeState: sub}))
-	g, err := runtime.BuildGraph(parsed, eval)
+	g, err := runtime.BuildGraph(parsed, eval, driver.DefaultRegistry)
 	require.NoError(t, err)
 	a := address.Resource("sysbox_firewall", "edge")
-	plan := &runtime.Plan{Actions: []controlplane.PlannedChange{{Address: a, Action: controlplane.PlanActionCreate}}}
-	e := runtime.NewExecutor(g, st)
+	plan := &runtime.Plan{Actions: []model.PlannedChange{{Address: a, Action: model.PlanActionCreate}}}
+	e := runtime.NewExecutor(g, st, driver.DefaultRegistry)
 	e.SetRunContext("lab", "create")
 	e.SetActionRepository(repo)
 	require.NoError(t, e.Apply(ctx, plan), "ordinary firewall creation must not require router forwarding")
-	deletePlan := &runtime.Plan{Actions: []controlplane.PlannedChange{{Address: a, Action: controlplane.PlanActionDelete}}}
+	deletePlan := &runtime.Plan{Actions: []model.PlannedChange{{Address: a, Action: model.PlanActionDelete}}}
 	require.NoError(t, e.Destroy(ctx, deletePlan))
 	e.SetActionRepository(unavailableFirewallOutcome{repo})
 	require.Error(t, e.Apply(ctx, plan))
@@ -109,7 +110,7 @@ resource "sysbox_firewall" "edge" {
 	require.Nil(t, current.FindResource(a))
 	driver.DefaultRegistry = driver.NewRegistry()
 	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "docker", Version: "test", Policy: observeOnlyFirewall{sub}}))
-	recovery := runtime.NewExecutor(g, current)
+	recovery := runtime.NewExecutor(g, current, driver.DefaultRegistry)
 	recovery.SetRunContext("lab", "recovery")
 	recovery.SetActionRepository(reopened)
 	configuration := g.Get(a).Data.(*config.FirewallConfig)

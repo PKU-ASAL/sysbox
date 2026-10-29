@@ -60,20 +60,11 @@ func (s *localAPIStore) completeGuest(ctx context.Context, agent, id string, rep
 		}
 		return result.Record, nil
 	}
-	var commandID string
-	if report.HostExecution != nil {
-		x, err := repo.GetGuestExecution(ctx, id)
-		if err != nil {
-			return nil, err
-		}
-		commandID = x.CommandID
-	} else {
-		x, err := repo.GetGuestFileOperation(ctx, id)
-		if err != nil {
-			return nil, err
-		}
-		commandID = x.CommandID
+	x, err := repo.GetGuestFileOperation(ctx, id)
+	if err != nil {
+		return nil, err
 	}
+	commandID := x.CommandID
 	command, err := (localCommandStorage{store: s}).read(ctx, commandID)
 	if err != nil {
 		return nil, err
@@ -256,14 +247,6 @@ func (s *localAPIStore) RecoverGuestExecutionHostCompletion(ctx context.Context,
 	}
 	return result.Execution, nil
 }
-func (s *localAPIStore) CompleteGuestFileOperation(ctx context.Context, agent, id string, c controlplane.GuestFileOperationCompletion) (controlplane.GuestFileOperation, error) {
-	raw, err := s.completeGuest(ctx, agent, id, persistence.GuestCompletion{File: &c})
-	if err != nil {
-		return controlplane.GuestFileOperation{}, err
-	}
-	return persistence.DecodeCompletedGuestFile(raw)
-}
-
 func (s *sqliteAPIStore) CompleteGuestExecutionFromHost(ctx context.Context, agent, id string, r controlplane.SignedExecutionStopReceipt) (controlplane.GuestExecution, error) {
 	if r.GuestResult == nil {
 		return controlplane.GuestExecution{}, persistence.ErrConflict
@@ -317,14 +300,6 @@ func (s *sqliteAPIStore) RecoverGuestExecutionHostCompletion(ctx context.Context
 	committed = true
 	return prepared.Execution, nil
 }
-func (s *sqliteAPIStore) CompleteGuestFileOperation(ctx context.Context, agent, id string, c controlplane.GuestFileOperationCompletion) (controlplane.GuestFileOperation, error) {
-	raw, err := s.completeGuest(ctx, agent, id, persistence.GuestCompletion{File: &c})
-	if err != nil {
-		return controlplane.GuestFileOperation{}, err
-	}
-	return persistence.DecodeCompletedGuestFile(raw)
-}
-
 func (s *postgresAPIStore) CompleteGuestExecutionFromHost(ctx context.Context, agent, id string, r controlplane.SignedExecutionStopReceipt) (controlplane.GuestExecution, error) {
 	if r.GuestResult == nil {
 		return controlplane.GuestExecution{}, persistence.ErrConflict
@@ -366,11 +341,4 @@ func (s *postgresAPIStore) RecoverGuestExecutionHostCompletion(ctx context.Conte
 		return controlplane.GuestExecution{}, err
 	}
 	return prepared.Execution, nil
-}
-func (s *postgresAPIStore) CompleteGuestFileOperation(ctx context.Context, agent, id string, c controlplane.GuestFileOperationCompletion) (controlplane.GuestFileOperation, error) {
-	raw, err := s.completeGuest(ctx, agent, id, persistence.GuestCompletion{File: &c})
-	if err != nil {
-		return controlplane.GuestFileOperation{}, err
-	}
-	return persistence.DecodeCompletedGuestFile(raw)
 }

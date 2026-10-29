@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+
 	"github.com/oslab/sysbox/pkg/agentexec"
 	"github.com/oslab/sysbox/pkg/persistence"
 )
@@ -10,7 +11,7 @@ import (
 // A ParentID alone is insufficient: signed parent stop proof and committed
 // continuation admission must both match its immutable incarnation.
 func (b *ExecutionBridge) ActionRun(ctx context.Context, topology, executionID string) (string, error) {
-	run, err := b.server.apiStore.GetRun(ctx, executionID)
+	run, err := b.store.GetRun(ctx, executionID)
 	if err != nil {
 		return "", err
 	}
@@ -24,7 +25,7 @@ func (b *ExecutionBridge) ActionRun(ctx context.Context, topology, executionID s
 	if err != nil {
 		return "", err
 	}
-	repo, err := b.server.actionRepository(topology)
+	repo, err := b.actionRepository(topology)
 	if err != nil {
 		return "", err
 	}

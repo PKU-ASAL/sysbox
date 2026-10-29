@@ -16,7 +16,6 @@ type schemaStore interface {
 
 type runStore interface {
 	CompleteRunFromHost(context.Context, string, string, controlplane.SignedExecutionStopReceipt, json.RawMessage) (*controlplane.Run, error)
-	CompleteRun(context.Context, string, string, controlplane.RunCompletion) (*controlplane.Run, bool, error)
 	LoadRuns(ctx context.Context) ([]controlplane.Run, error)
 	GetRun(ctx context.Context, id string) (*controlplane.Run, error)
 	SaveRun(ctx context.Context, run controlplane.Run) error
@@ -75,7 +74,6 @@ type nodeOperationPersistence interface {
 	CompareAndSwapNodeOperation(context.Context, controlplane.NodeOperation, controlplane.NodeOperation) error
 	CreateNodeOperation(ctx context.Context, op controlplane.NodeOperation) error
 	CreateNodeOperationDispatch(context.Context, controlplane.NodeOperation, controlplane.AgentCommand) error
-	CompleteNodeOperation(context.Context, string, string, controlplane.NodeOperation) (*controlplane.NodeOperation, error)
 	GetNodeOperation(ctx context.Context, id string) (*controlplane.NodeOperation, error)
 	ListNodeOperations(ctx context.Context, workspace string) ([]controlplane.NodeOperation, error)
 }
@@ -135,7 +133,6 @@ type apiStore interface {
 	ListGuestActivity(context.Context, string) ([]persistence.GuestActivity, error)
 	CompleteGuestExecutionFromHost(context.Context, string, string, controlplane.SignedExecutionStopReceipt) (controlplane.GuestExecution, error)
 	RecoverGuestExecutionHostCompletion(context.Context, string) (controlplane.GuestExecution, error)
-	CompleteGuestFileOperation(context.Context, string, string, controlplane.GuestFileOperationCompletion) (controlplane.GuestFileOperation, error)
 	schemaStore
 	runStore
 	checkpointStore

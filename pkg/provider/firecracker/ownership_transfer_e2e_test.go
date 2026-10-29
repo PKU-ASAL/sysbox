@@ -38,7 +38,7 @@ func TestFirecrackerOwnershipTransferColdLifecycleE2E(t *testing.T) {
 	s := New(kernel, t.TempDir())
 	old := substrate.OperationIdentity{ActionID: "create", OwnerUID: "source", TopologyUID: "source", ResourceUID: "old", Generation: 1}
 	scopedOld := substrate.WithOperationIdentity(ctx, old)
-	h, err := s.CreateNode(scopedOld, substrate.NodeSpec{Name: "transfer", Image: substrate.ArtifactHandle{ID: rootfs}, ProviderConfig: &Config{Kernel: kernel, AllowDirect: true}})
+	h, err := s.CreateNode(scopedOld, substrate.NodeSpec{Name: "transfer", Image: substrate.ArtifactHandle{ID: rootfs}, ProviderConfig: &Config{Kernel: kernel}})
 	require.NoError(t, err)
 	// Transfer the prepared generation before first start: config paths and disks
 	// remain intact while ownership changes; target then exercises real KVM start.

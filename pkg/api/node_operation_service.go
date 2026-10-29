@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -104,27 +106,30 @@ func newNodeOperationService(workspace *WorkspaceService, scheduler *SchedulerSe
 	}
 }
 
-func (s *NodeOperationService) CompleteFromAgent(agentID, opID string, op controlplane.NodeOperation) (controlplane.NodeOperation, error) {
-	if op.ID == "" {
-		op.ID = opID
+func (s *NodeOperationService) Lifecycle(ctx context.Context, topology, name, operation, key string, subj requestSubject) (controlplane.NodeOperation, error) {
+	if operation != "pause" && operation != "resume" {
+		return controlplane.NodeOperation{}, fmt.Errorf("invalid power operation")
 	}
-	if op.AgentID == "" {
-		op.AgentID = agentID
+	if key != "" {
+		if err := validateOperationKey(key); err != nil {
+			return controlplane.NodeOperation{}, err
+		}
 	}
-	if s.operations == nil || s.operations.store == nil {
-		return op, fmt.Errorf("node operation store not configured")
-	}
-	completed, err := s.operations.store.CompleteNodeOperation(context.Background(), agentID, opID, op)
-	if err != nil {
-		return op, err
-	}
-	return *completed, nil
-}
 
-func (s *NodeOperationService) Lifecycle(ctx context.Context, topology, name, operation string, subj requestSubject) (controlplane.NodeOperation, error) {
 	if s.workspace.lockAdmission != nil {
 		unlock := s.workspace.lockAdmission(topology)
 		defer unlock()
+	}
+	id := ""
+	if key != "" {
+		id = fmt.Sprintf("power-%x", sha256.Sum256([]byte(topology+"\x00"+key)))
+		previous, err := s.replayPower(ctx, id, topology, name, operation, subj)
+		if err == nil {
+			return previous, nil
+		}
+		if !errors.Is(err, persistence.ErrNotFound) {
+			return controlplane.NodeOperation{}, err
+		}
 	}
 	st, err := s.workspace.LoadState(topology)
 	if err != nil {
@@ -144,7 +149,8 @@ func (s *NodeOperationService) Lifecycle(ctx context.Context, topology, name, op
 	if res.OwnerUID != st.TopologyUID {
 		return controlplane.NodeOperation{}, fmt.Errorf("node ownership differs from topology")
 	}
-	return s.enqueue(ctx, st.TopologyUID, prepareNodeOperation(controlplane.NodeOperation{
+	op, err := s.enqueue(ctx, st.TopologyUID, prepareNodeOperation(controlplane.NodeOperation{
+		ID:          id,
 		Topology:    topology,
 		Workspace:   topology,
 		Operation:   operation,
@@ -155,21 +161,37 @@ func (s *NodeOperationService) Lifecycle(ctx context.Context, topology, name, op
 		Roles:       subj.Roles,
 		ActionID:    "", ResourceUID: res.ResourceUID, Generation: res.Generation,
 	}))
+	if err != nil && id != "" {
+		// Another API or a lost commit acknowledgement may have already admitted
+		// this key. Only the original request is returned; never re-enqueue it.
+		previous, readErr := s.replayPower(ctx, id, topology, name, operation, subj)
+		if readErr == nil {
+			return previous, nil
+		}
+		if !errors.Is(readErr, persistence.ErrNotFound) {
+			return controlplane.NodeOperation{}, readErr
+		}
+	}
+	return op, err
+
+}
+
+func (s *NodeOperationService) replayPower(ctx context.Context, id, topology, node, operation string, subj requestSubject) (controlplane.NodeOperation, error) {
+	previous, err := s.operations.store.GetNodeOperation(ctx, id)
+	if err != nil {
+		return controlplane.NodeOperation{}, err
+	}
+	actor := subj.User
+	if actor == "" {
+		actor = "api"
+	}
+	if previous.Topology != topology || previous.Node != node || previous.Operation != operation || previous.RequestedBy != actor {
+		return controlplane.NodeOperation{}, fmt.Errorf("%w: operation key belongs to another request", persistence.ErrConflict)
+	}
+	return *previous, nil
 }
 
 func (s *NodeOperationService) SSHAccess(ctx context.Context, topology string, node string, req controlplane.SSHAccessRequest, operation string, subj requestSubject) (controlplane.NodeOperation, error) {
-	return s.sshAccess(ctx, topology, node, req, operation, subj, nil)
-}
-
-// selected is supplied only by the credential-owning local CLI controller.
-// Public admission always goes through normal host placement and scheduling.
-func (s *NodeOperationService) sshAccess(ctx context.Context, topology string, node string, req controlplane.SSHAccessRequest, operation string, subj requestSubject, selected *controlplane.Agent) (controlplane.NodeOperation, error) {
-	return s.sshAccessTarget(ctx, topology, node, req, operation, subj, selected, nil)
-}
-
-// candidate is used only after the local credential owner validates an exact
-// admitted reset SSH child. Public requests never supply candidate state.
-func (s *NodeOperationService) sshAccessTarget(ctx context.Context, topology string, node string, req controlplane.SSHAccessRequest, operation string, subj requestSubject, selected *controlplane.Agent, candidate *state.Resource) (controlplane.NodeOperation, error) {
 	if operation != "ssh_access_apply" && operation != "ssh_access_delete" {
 		return controlplane.NodeOperation{}, fmt.Errorf("unsupported ssh access operation")
 	}
@@ -192,12 +214,6 @@ func (s *NodeOperationService) sshAccessTarget(ctx context.Context, topology str
 		return controlplane.NodeOperation{}, err
 	}
 	res := st.FindResource(address.Resource("sysbox_node", node))
-	if candidate != nil {
-		if selected == nil || !candidate.Address.Equal(address.Resource("sysbox_node", node)) {
-			return controlplane.NodeOperation{}, persistence.ErrConflict
-		}
-		res = candidate
-	}
 	if res == nil {
 		return controlplane.NodeOperation{}, fmt.Errorf("node %q not found", node)
 	}
@@ -220,17 +236,9 @@ func (s *NodeOperationService) sshAccessTarget(ctx context.Context, topology str
 	if operation == "ssh_access_delete" {
 		persistedOperation = "guest_ssh_access_delete"
 	}
-	var owner controlplane.Agent
-	if selected == nil {
-		owner, err = s.scheduler.SelectAgentForTopology(ctx, topology, []string{res.Driver}, "")
-		if err != nil {
-			return controlplane.NodeOperation{}, err
-		}
-	} else {
-		if selected.ID == "" || selected.IsBlocked() {
-			return controlplane.NodeOperation{}, fmt.Errorf("local execution owner unavailable")
-		}
-		owner = *selected
+	owner, err := s.scheduler.SelectAgentForTopology(ctx, topology, []string{res.Driver}, "")
+	if err != nil {
+		return controlplane.NodeOperation{}, err
 	}
 	op := prepareNodeOperation(controlplane.NodeOperation{ID: req.ID, Topology: topology, Workspace: topology, Operation: persistedOperation, Node: node, Substrate: res.Driver, AgentID: owner.ID, RequestedBy: subj.User, Roles: subj.Roles, ResourceUID: res.ResourceUID, Generation: res.Generation, SSHMutation: &mutation})
 	return s.enqueue(ctx, st.TopologyUID, op)

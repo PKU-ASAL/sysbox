@@ -11,13 +11,16 @@ import (
 	"testing"
 
 	"github.com/hashicorp/hcl/v2"
+	"github.com/stretchr/testify/require"
+
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
-	"github.com/stretchr/testify/require"
 )
 
 type agentObservedResource struct {
@@ -30,7 +33,7 @@ func (h *agentObservedResource) Type() string { return h.kind }
 func (h *agentObservedResource) Schema() runtime.ResourceSchema {
 	return runtime.ResourceSchema{Type: h.kind, Version: 1}
 }
-func (h *agentObservedResource) Read(_ context.Context, r state.Resource) (runtime.ResourceReadResult, error) {
+func (h *agentObservedResource) Read(_ context.Context, r state.Resource, providers *driver.Registry) (runtime.ResourceReadResult, error) {
 	s := state.ResourceAbsent
 	if h.exists {
 		s = state.ResourcePresent
@@ -41,14 +44,14 @@ func (h *agentObservedResource) Read(_ context.Context, r state.Resource) (runti
 	return runtime.ResourceReadResult{Status: s, Resource: r}, nil
 }
 func (h *agentObservedResource) Discover(ctx context.Context, _ *runtime.ProviderContext, n *graph.Node) (runtime.ResourceReadResult, error) {
-	return h.Read(ctx, state.Resource{Address: n.Address})
+	return h.Read(ctx, state.Resource{Address: n.Address}, driver.DefaultRegistry)
 }
-func (h *agentObservedResource) PlanDiff(n *graph.Node, r *state.Resource) (controlplane.PlannedChange, error) {
-	action := controlplane.PlanActionNoop
+func (h *agentObservedResource) PlanDiff(n *graph.Node, r *state.Resource) (model.PlannedChange, error) {
+	action := model.PlanActionNoop
 	if r == nil {
-		action = controlplane.PlanActionCreate
+		action = model.PlanActionCreate
 	}
-	return controlplane.PlannedChange{Address: n.Address, Action: action}, nil
+	return model.PlannedChange{Address: n.Address, Action: action}, nil
 }
 func (h *agentObservedResource) Create(_ context.Context, _ *runtime.ProviderContext, n *graph.Node) (state.Resource, error) {
 	h.exists = true
@@ -61,7 +64,7 @@ func (h *agentObservedResource) Delete(context.Context, *runtime.ProviderContext
 	return nil
 }
 func (h *agentObservedResource) ExternalID(r state.Resource) string { return r.ExternalID }
-func (h *agentObservedResource) DecodeResource(config.ResourceBlock, string, *hcl.EvalContext) (any, []address.Address, error) {
+func (h *agentObservedResource) DecodeResource(config.ResourceBlock, string, *hcl.EvalContext, *driver.Registry) (any, []address.Address, error) {
 	return nil, nil, nil
 }
 

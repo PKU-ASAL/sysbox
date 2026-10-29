@@ -1,13 +1,15 @@
 package runtime
 
 import (
+	"testing"
+
+	"github.com/stretchr/testify/require"
+
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
-	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestComputePlanRejectsMissingCapabilityBeforeMutation(t *testing.T) {
@@ -21,12 +23,12 @@ func TestComputePlanRejectsMissingCapabilityBeforeMutation(t *testing.T) {
 	addr := address.Resource("sysbox_node", "target")
 	require.NoError(t, g.AddNode(addr, []address.Address{image}))
 	g.Get(addr).Data = &config.NodeConfig{Substrate: "missing", Image: "sysbox_image.base"}
-	_, err := ComputePlan(g, &state.State{Version: state.SchemaVersion})
+	_, err := ComputePlan(g, &state.State{Version: state.SchemaVersion}, driver.DefaultRegistry)
 	require.ErrorContains(t, err, "driver is not registered")
 }
 
 func TestFirecrackerRejectsMultipleLinksDuringPlan(t *testing.T) {
 	n := &graph.Node{Address: address.Resource("sysbox_node", "vm"), Data: &config.NodeConfig{Substrate: "firecracker", Links: []config.LinkConfig{{Name: "a"}, {Name: "b"}}}}
-	_, err := (NodeResourceHandler{}).RequiredCapabilities(n)
+	_, err := (NodeResourceHandler{}).RequiredCapabilities(n, driver.DefaultRegistry)
 	require.ErrorContains(t, err, "one network namespace")
 }

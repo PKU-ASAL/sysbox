@@ -4,9 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"sync/atomic"
 	"time"
 
@@ -21,6 +18,9 @@ type Substrate struct {
 	substrate.BaseSubstrate // inherits Validate / DecodeProviderConfig defaults
 
 	firecrackerBin     string
+	jailerBin          string
+	jailBase           string
+	cgroupParent       string
 	kernelPath         string
 	rootfsDir          string // base directory for per-VM rootfs copies
 	grantPublicKeyFile string
@@ -40,32 +40,13 @@ func (s *Substrate) allocCID() uint32 {
 // kernelPath is the path to the uncompressed vmlinux binary.
 // rootfsDir is where per-VM rootfs copies are stored.
 func New(kernelPath, rootfsDir string) *Substrate {
-	// Resolve firecracker binary path.
-	fcBin := "firecracker"
-	if p, err := exec.LookPath("firecracker"); err == nil {
-		fcBin = p
-	}
-	// Check common locations.
 	cfg := config.MustLoadServiceConfig("")
-	for _, candidate := range []string{
-		cfg.Providers.Firecracker.Binary,
-		filepath.Join(cfg.Paths.Cache, "tools", "firecracker"),
-		filepath.Join(os.Getenv("HOME"), ".local/bin/firecracker"),
-		"/usr/local/bin/firecracker",
-	} {
-		if candidate != "" {
-			if _, err := os.Stat(candidate); err == nil {
-				fcBin = candidate
-				break
-			}
-		}
-	}
-
-	// TODO: jailer-based sandboxing is not implemented; VMs run as direct
-	// firecracker child processes with the daemon's privileges.
 	return &Substrate{
 		grantPublicKeyFile: cfg.Agent.ExecutionGrantPublicKeyFile,
-		firecrackerBin:     fcBin,
+		jailerBin:          cfg.Providers.Firecracker.Jailer,
+		jailBase:           cfg.Providers.Firecracker.JailRoot,
+		cgroupParent:       cfg.Providers.Firecracker.CgroupParent,
+		firecrackerBin:     cfg.Providers.Firecracker.Binary,
 		kernelPath:         kernelPath,
 		rootfsDir:          rootfsDir,
 	}
@@ -74,7 +55,21 @@ func New(kernelPath, rootfsDir string) *Substrate {
 func (s *Substrate) Name() string { return "firecracker" }
 
 func (s *Substrate) PreflightChecks(required bool) []substrate.PreflightCheck {
-	return substrate.FirecrackerPreflightChecks(required)
+	checks := substrate.FirecrackerPreflightChecks(required)
+	severity := "warning"
+	if required {
+		severity = "error"
+	}
+	for name, path := range map[string]string{"firecracker_trust": s.firecrackerBin, "jailer_trust": s.jailerBin} {
+		_, err := trustedExecutable(path)
+		check := substrate.PreflightCheck{Name: name, OK: err == nil, Severity: "info", Message: path}
+		if err != nil {
+			check.Severity = severity
+			check.Message = err.Error()
+		}
+		checks = append(checks, check)
+	}
+	return checks
 }
 
 func (s *Substrate) Capabilities() substrate.Capabilities {
@@ -96,10 +91,6 @@ func (s *Substrate) Capabilities() substrate.Capabilities {
 
 // Validate ensures the spec carries what the firecracker substrate needs.
 func (s *Substrate) Validate(spec substrate.NodeSpec) error {
-	cfg, _ := spec.ProviderConfig.(*Config)
-	if cfg == nil || !cfg.AllowDirect {
-		return substrate.NewValidationError("firecracker: direct process mode is unsafe; set allow_direct = true only for trusted local experiments until jailer support is enabled")
-	}
 	// FC requires rootfs-based images (not docker_ref) and a kernel.
 	if spec.ProviderConfig != nil {
 		cfg, ok := spec.ProviderConfig.(*Config)

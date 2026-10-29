@@ -16,7 +16,7 @@ import (
 
 type recoveryActionRepository struct {
 	runtime.ActionRepository
-	server        *Server
+	store         apiStore
 	proof         hostsupervisor.RunRecoveryRequest
 	run           controlplane.Run
 	localRecovery bool
@@ -40,7 +40,7 @@ func (r *recoveryActionRepository) CommitActionOutcome(ctx context.Context, acti
 	if action.Topology != r.run.Topology {
 		return persistence.ErrConflict
 	}
-	switch store := r.server.apiStore.(type) {
+	switch store := r.store.(type) {
 	case *localAPIStore:
 		unlock, err := store.lockRunRecords(ctx)
 		if err != nil {
@@ -253,13 +253,13 @@ func (r *recoveryActionRepository) commitPostgres(ctx context.Context, store *po
 	return tx.Commit(ctx)
 }
 
-func (b *HostExecutionBridge) RecoveryActionRepository(ctx context.Context, proof hostsupervisor.RunRecoveryRequest, run controlplane.Run) (runtime.ActionRepository, error) {
+func (b *ExecutionBridge) RecoveryActionRepository(ctx context.Context, proof hostsupervisor.RunRecoveryRequest, run controlplane.Run) (runtime.ActionRepository, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	repo, err := b.server.actionRepository(run.Topology)
+	repo, err := b.actionRepository(run.Topology)
 	if err != nil {
 		return nil, err
 	}
-	return &recoveryActionRepository{ActionRepository: repo, server: b.server, proof: proof, run: run}, nil
+	return &recoveryActionRepository{ActionRepository: repo, store: b.store, proof: proof, run: run}, nil
 }

@@ -208,36 +208,6 @@ func (s *Server) handleStartGuestFileOperation(w http.ResponseWriter, r *http.Re
 	writeJSON(w, http.StatusOK, publicGuestFileOperation(updated))
 }
 
-func (s *Server) handleCompleteGuestFileOperation(w http.ResponseWriter, r *http.Request) {
-	agentID := r.PathValue("agent")
-	if err := s.verifyAgentRequest(r, agentID); err != nil {
-		writeError(w, http.StatusUnauthorized, err)
-		return
-	}
-	op, err := s.apiStore.GetGuestFileOperation(r.Context(), r.PathValue("operation"))
-	if err != nil {
-		writeError(w, guestOperationErrorStatus(err), err)
-		return
-	}
-	if op.AgentID != agentID {
-		writeError(w, http.StatusForbidden, fmt.Errorf("file operation ownership mismatch"))
-		return
-	}
-	var completion controlplane.GuestFileOperationCompletion
-	if err := json.NewDecoder(r.Body).Decode(&completion); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("decode completion"))
-		return
-	}
-	updated, err := s.apiStore.CompleteGuestFileOperation(r.Context(), agentID, op.ID, completion)
-	if err != nil {
-		writeError(w, guestOperationErrorStatus(err), err)
-		return
-	}
-	_ = os.Remove(filepath.Join(s.runsDir, "_guest-files", op.ID))
-	_ = os.Remove(filepath.Join(s.runsDir, "_guest-files", op.ID+".json"))
-	writeJSON(w, http.StatusOK, publicGuestFileOperation(updated))
-}
-
 func (s *Server) gcGuestFilePayloads(now time.Time) {
 	dir := filepath.Join(s.runsDir, "_guest-files")
 	entries, _ := filepath.Glob(filepath.Join(dir, "*.json"))

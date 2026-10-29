@@ -23,14 +23,6 @@ func validateHostOperationReceipt(ctx context.Context, store apiStore, receipt c
 	return persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store}).ValidateHostStop(ctx, receipt.Grant, fmt.Sprintf("%x", sum[:]))
 }
 
-func (s *localAPIStore) CompleteNodeOperation(ctx context.Context, agent, id string, report controlplane.NodeOperation) (*controlplane.NodeOperation, error) {
-	if report.LeaseOwner == "" || report.Attempt < 1 || report.LeaseEpoch < 1 {
-		return nil, persistence.ErrConflict
-	}
-	return s.completeNodeOperation(ctx, agent, id, nil, func(current controlplane.NodeOperation, command *persistence.CommandRecord) (controlplane.NodeOperation, error) {
-		return persistence.CompleteNodeOperation(current, command, agent, id, report, time.Now().UTC())
-	})
-}
 func (s *localAPIStore) CompleteSSHAccessFromHost(ctx context.Context, agent, id string, receipt controlplane.SignedExecutionStopReceipt) (*controlplane.NodeOperation, error) {
 	if err := validateHostOperationReceipt(ctx, s, receipt); err != nil {
 		return nil, err
@@ -88,14 +80,6 @@ func (s *localAPIStore) completeNodeOperation(ctx context.Context, agent, id str
 	return completed, nil
 }
 
-func (s *sqliteAPIStore) CompleteNodeOperation(ctx context.Context, agent, id string, report controlplane.NodeOperation) (*controlplane.NodeOperation, error) {
-	if report.LeaseOwner == "" || report.Attempt < 1 || report.LeaseEpoch < 1 {
-		return nil, persistence.ErrConflict
-	}
-	return s.completeNodeOperation(ctx, agent, id, nil, func(current controlplane.NodeOperation, command *persistence.CommandRecord) (controlplane.NodeOperation, error) {
-		return persistence.CompleteNodeOperation(current, command, agent, id, report, time.Now().UTC())
-	})
-}
 func (s *sqliteAPIStore) CompleteSSHAccessFromHost(ctx context.Context, agent, id string, receipt controlplane.SignedExecutionStopReceipt) (*controlplane.NodeOperation, error) {
 	if err := validateHostOperationReceipt(ctx, s, receipt); err != nil {
 		return nil, err
@@ -192,14 +176,6 @@ func (s *sqliteAPIStore) completeNodeOperation(ctx context.Context, agent, id st
 	return &completed, nil
 }
 
-func (s *postgresAPIStore) CompleteNodeOperation(ctx context.Context, agent, id string, report controlplane.NodeOperation) (*controlplane.NodeOperation, error) {
-	if report.LeaseOwner == "" || report.Attempt < 1 || report.LeaseEpoch < 1 {
-		return nil, persistence.ErrConflict
-	}
-	return s.completeNodeOperation(ctx, agent, id, nil, func(current controlplane.NodeOperation, command *persistence.CommandRecord) (controlplane.NodeOperation, error) {
-		return persistence.CompleteNodeOperation(current, command, agent, id, report, time.Now().UTC())
-	})
-}
 func (s *postgresAPIStore) CompleteSSHAccessFromHost(ctx context.Context, agent, id string, receipt controlplane.SignedExecutionStopReceipt) (*controlplane.NodeOperation, error) {
 	if err := validateHostOperationReceipt(ctx, s, receipt); err != nil {
 		return nil, err

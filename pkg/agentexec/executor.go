@@ -4,16 +4,10 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"path/filepath"
-	"time"
 
-	"github.com/coder/websocket"
-
-	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/runtime"
-	"github.com/oslab/sysbox/pkg/secret"
 	"github.com/oslab/sysbox/pkg/state"
 )
 
@@ -27,14 +21,8 @@ type Bridge interface {
 	CheckpointFile(topology, runID string) string
 	CheckpointStore() runtime.CheckpointStore
 	ParentRun(ctx context.Context, id string) (*controlplane.Run, error)
-	ReconcileParentJournal(parent, run *controlplane.Run) error
 	Preflight(ctx context.Context, run *controlplane.Run, log io.Writer) error
-	OpenConsole(ctx context.Context, sess controlplane.ConsoleSession, req controlplane.ConsoleRequest, ws *websocket.Conn) error
 	Topologies(ctx context.Context) []string
-}
-
-type Reporter interface {
-	ReportRunComplete(ctx context.Context, run *controlplane.Run, projection controlplane.Projection) error
 }
 
 // ActionRepositoryProvider binds runtime journal and resource state to the
@@ -43,38 +31,15 @@ type ActionRepositoryProvider interface {
 	ActionRepository(topology string) (runtime.ActionRepository, error)
 }
 
-func (e *Executor) installActionRepository(exec *runtime.Executor, topology string) error {
-	if provider, ok := e.bridge.(ActionRepositoryProvider); ok {
-		repository, err := provider.ActionRepository(topology)
-		if err != nil {
-			return err
-		}
-		if repository == nil {
-			return fmt.Errorf("action repository unavailable")
-		}
-		exec.SetActionRepository(repository)
-		return nil
-	}
-	if repository, ok := e.bridge.CheckpointStore().(runtime.ActionRepository); ok {
-		exec.SetActionRepository(repository)
-		return nil
-	}
-	return fmt.Errorf("%w: bridge has no atomic action repository", runtime.ErrConvergenceUnsupported)
-}
-
 type ApplyHook interface {
-	FilterApplyPlan(plan *runtime.Plan) (*runtime.Plan, error)
-	RefreshApply() bool
 	BeforeApply(plan *runtime.Plan) error
 }
 
 type DestroyHook interface {
-	BuildDestroyPlan(st *state.State) (*runtime.Plan, error)
 	BeforeDestroy(plan *runtime.Plan) error
 }
 
 type ResetHook interface {
-	BuildResetPlan(g *graph.Graph, st *state.State, target string) (*runtime.Plan, error)
 	BeforeReset(plan *runtime.Plan) error
 }
 
@@ -95,9 +60,6 @@ type runWorkspaceBridge interface {
 func (e *Executor) hclFileForRun(ctx context.Context, run *controlplane.Run) string {
 	if path := RunWorkspace(ctx, run); path != "" {
 		return path
-	}
-	if _, remote := e.bridge.(remoteBridge); remote {
-		return ""
 	}
 	if b, ok := e.bridge.(runWorkspaceBridge); ok {
 		if path := b.HCLFileForRun(run); path != "" {
@@ -125,21 +87,7 @@ func (e *Executor) ExecuteContext(ctx context.Context, run *controlplane.Run) {
 		return
 	}
 	e.bridge.AttachRun(run)
-	log := e.bridge.LogWriter(run.ID)
-	var cleanup *controlplane.CleanupReceipt
-	switch run.Op {
-	case "apply", "repair":
-		e.executeApply(ctx, run, log)
-	case "destroy":
-		cleanup = e.executeDestroy(ctx, run, log)
-	case "reset":
-		e.executeReset(ctx, run, log)
-	default:
-		e.bridge.Finish(run, fmt.Errorf("unsupported run op %q", run.Op))
-	}
-	run.Cleanup = cleanup
-	report := *run
-	e.reportCompletion(ctx, &report)
+	run.Cleanup = e.executeLifecycle(ctx, run, e.bridge.LogWriter(run.ID))
 }
 
 func (e *Executor) prepareExecutionContext(ctx context.Context, run *controlplane.Run) (context.Context, func(), error) {
@@ -151,445 +99,163 @@ func (e *Executor) prepareExecutionContext(ctx context.Context, run *controlplan
 	return ctx, func() {}, nil
 }
 
-func (e *Executor) executeReset(ctx context.Context, run *controlplane.Run, log io.Writer) {
-	if run.ParentID != "" && run.Target != "" {
-		e.bridge.Finish(run, fmt.Errorf("reset continuation cannot override the original target scope"))
-		return
-	}
+// executeLifecycle owns dispatch preparation and final Run certification only.
+// Workspace loading, plans, provider calls and state publication belong to runtime.
+func (e *Executor) executeLifecycle(ctx context.Context, run *controlplane.Run, log io.Writer) (proof *controlplane.CleanupReceipt) {
 	unlock, err := e.bridge.LockTopology(ctx, run.Topology)
 	if err != nil {
 		e.bridge.Finish(run, err)
-		return
+		return nil
 	}
 	defer unlock()
 	ctx, release, err := e.prepareExecutionContext(ctx, run)
 	if err != nil {
 		e.bridge.Finish(run, err)
-		return
+		return nil
 	}
 	defer release()
+	// Publish completion only after the execution function returns normally.
+	// A panic must leave its durable intent unresolved, never certify nil error.
+	proof, err = e.executeResourceOperation(ctx, run, log)
+	e.bridge.Finish(run, err)
+	return proof
+}
 
-	if err := ctx.Err(); err != nil {
-		e.bridge.Finish(run, err)
-		return
+func (e *Executor) executeResourceOperation(ctx context.Context, run *controlplane.Run, log io.Writer) (proof *controlplane.CleanupReceipt, err error) {
+	if err = ctx.Err(); err != nil {
+		return nil, err
 	}
-	if err := e.bridge.Preflight(ctx, run, log); err != nil {
-		e.bridge.Finish(run, err)
-		return
+	if run.Op == "reset" && run.ParentID != "" && run.Target != "" {
+		err = fmt.Errorf("reset continuation cannot override the original target scope")
+		return nil, err
 	}
-	mgr, err := e.bridge.StateManager(run.Topology)
+	if run.Op != "destroy" {
+		if err = e.bridge.Preflight(ctx, run, log); err != nil {
+			return nil, err
+		}
+	}
+	op, recorder, err := e.prepareResourceOperation(ctx, run, log)
 	if err != nil {
-		e.bridge.Finish(run, err)
-		return
+		return nil, err
 	}
-	mgr.AllowUnsafeMutation(run.UnsafeState)
-	if err := mgr.CheckMutationSafety(); err != nil {
-		e.bridge.Finish(run, err)
-		return
-	}
-	g, mgr, st, _, _, err := runtime.LoadWorkspaceWithManager(e.hclFileForRun(ctx, run), mgr)
-	if err != nil {
-		e.bridge.Finish(run, err)
-		return
-	}
-	if err := runtime.ValidateArtifactSources(ctx, g, filepath.Dir(e.hclFileForRun(ctx, run)), secret.EnvironmentResolver{}); err != nil {
-		e.bridge.Finish(run, err)
-		return
-	}
-	hook, ok := e.bridge.(ResetHook)
-	if !ok {
-		e.bridge.Finish(run, fmt.Errorf("reset is not supported by this execution bridge"))
-		return
+	if run.Op == "reset" && run.ParentID != "" {
+		hook, ok := e.bridge.(ResetHook)
+		if !ok {
+			err = fmt.Errorf("reset is not supported by this execution bridge")
+			return nil, err
+		}
+		loader, ok := e.bridge.CheckpointStore().(runtime.CheckpointLoader)
+		if !ok {
+			err = fmt.Errorf("reset continuation requires durable parent checkpoint")
+			return nil, err
+		}
+		var parent *controlplane.Run
+		parent, err = ResolveResetOrigin(ctx, e.bridge, run)
+		if err != nil {
+			return nil, err
+		}
+		var checkpoint *runtime.OperationCheckpoint
+		checkpoint, err = loader.LoadCheckpoint(ctx, run.Topology, parent.ID)
+		if err != nil {
+			return nil, err
+		}
+		var continuation *runtime.ResetContinuationRequest
+		continuation, err = op.PrepareResetContinuation(ctx, checkpoint, parent.QueuedAt, parent.Revision)
+		if err != nil {
+			return nil, err
+		}
+		if err = hook.BeforeReset(&runtime.Plan{Actions: continuation.Checkpoint.Plan}); err != nil {
+			return nil, err
+		}
+		err = op.ContinueReset(ctx, *continuation)
+		return nil, err
 	}
 	var plan *runtime.Plan
-	if run.ParentID == "" {
-		plan, err = hook.BuildResetPlan(g, st, run.Target)
-		if err != nil {
-			e.bridge.Finish(run, err)
-			return
+	plan, err = op.Plan()
+	if err != nil {
+		return nil, err
+	}
+	switch run.Op {
+	case "apply", "repair":
+		if hook, ok := e.bridge.(ApplyHook); ok {
+			if err = hook.BeforeApply(plan); err != nil {
+				return nil, err
+			}
+		}
+		_, _ = log.Write([]byte(plan.Summary() + "\n"))
+	case "reset":
+		hook, ok := e.bridge.(ResetHook)
+		if !ok {
+			err = fmt.Errorf("reset is not supported by this execution bridge")
+			return nil, err
 		}
 		if !plan.HasChanges() {
 			_, _ = log.Write([]byte("Reset already complete.\n"))
-			e.bridge.Finish(run, nil)
-			return
+			return nil, err
 		}
-		if err := hook.BeforeReset(plan); err != nil {
-			e.bridge.Finish(run, err)
-			return
+		if err = hook.BeforeReset(plan); err != nil {
+			return nil, err
 		}
-	}
-
-	exec := runtime.NewExecutor(g, st)
-	exec.SetRunContext(run.Topology, run.ID)
-	exec.SetRunIncarnation(run.QueuedAt, run.Revision)
-	exec.SetWorkspaceFromHCLFile(e.hclFileForRun(ctx, run))
-	exec.SetOperation(run.Op)
-	exec.SetResumeRunID(run.ParentID)
-	exec.SetLogger(log)
-	exec.SetSecretResolver(secret.Dispatcher{
-		"env":   secret.EnvironmentResolver{},
-		"input": secret.InputResolver{Inputs: run.Inputs},
-	})
-	checkpointPath := e.bridge.CheckpointFile(run.Topology, run.ID)
-	fileRecorder := runtime.NewFileRecorder(checkpointPath, run.ID, run.Topology)
-	recorder := runtime.NewStoreRecorder(fileRecorder, e.bridge.CheckpointStore(), run.Topology, run.ID, checkpointPath).WithContext(ctx)
-	recorder.SetLeaseOwner(run.LeaseOwner)
-	recorder.SetStateSerialBefore(st.Meta.Serial)
-	exec.SetRecorder(recorder)
-	if err := e.installActionRepository(exec, run.Topology); err != nil {
-		e.bridge.Finish(run, err)
-		return
-	}
-	if run.ParentID != "" {
-		loader, ok := e.bridge.CheckpointStore().(runtime.CheckpointLoader)
-		if !ok {
-			e.bridge.Finish(run, fmt.Errorf("reset continuation requires durable parent checkpoint"))
-			return
-		}
-		parent, err := ResolveResetOrigin(ctx, e.bridge, run)
-		if err != nil {
-			e.bridge.Finish(run, err)
-			return
-		}
-		checkpoint, err := loader.LoadCheckpoint(ctx, run.Topology, parent.ID)
-		if err != nil {
-			e.bridge.Finish(run, err)
-			return
-		}
-		request, err := exec.PrepareResetContinuation(ctx, checkpoint, parent.QueuedAt, parent.Revision)
-		if err != nil {
-			e.bridge.Finish(run, err)
-			return
-		}
-		if err := hook.BeforeReset(&runtime.Plan{Actions: request.Checkpoint.Plan}); err != nil {
-			e.bridge.Finish(run, err)
-			return
-		}
-		if err := exec.ContinueReset(ctx, *request); err != nil {
-			e.bridge.Finish(run, err)
-			return
-		}
-		recorder.SetStateSerialAfter(st.Meta.Serial)
-		recorder.MarkResourceStateRecorded()
-		if err := recorder.Err(); err != nil {
-			recorder.Finish(err)
-			e.bridge.Finish(run, err)
-			return
-		}
-		e.bridge.Finish(run, nil)
-		return
-	}
-	if snap, err := mgr.Snapshot(ctx, "before reset "+run.ID); err == nil && snap != nil {
-		_, _ = log.Write([]byte(fmt.Sprintf("State snapshot: %s\n", snap.ID)))
-	}
-	if err := exec.Reset(ctx, plan); err != nil {
-		e.bridge.Finish(run, err)
-		return
-	}
-	recorder.SetStateSerialAfter(st.Meta.Serial)
-	recorder.MarkResourceStateRecorded()
-	if err := recorder.Err(); err != nil {
-		recorder.Finish(err)
-		e.bridge.Finish(run, err)
-		return
-	}
-	_, _ = log.Write([]byte("Reset complete.\n"))
-	e.bridge.Finish(run, runOutcome(nil, recorder.Err()))
-}
-
-func (e *Executor) reportCompletion(ctx context.Context, run *controlplane.Run) {
-	reporter, ok := e.bridge.(Reporter)
-	if !ok || run == nil {
-		return
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	proj := controlplane.Projection{
-		AgentID:   run.AgentID,
-		Workspace: run.Workspace,
-		Topology:  run.Topology,
-		UpdatedAt: run.EndedAt,
-	}
-	if mgr, err := e.bridge.StateManager(run.Topology); err == nil {
-		if meta, err := mgr.Metadata(ctx); err == nil {
-			proj.Backend = meta.Backend
-			proj.Serial = meta.Serial
-			proj.UpdatedAt = meta.UpdatedAt
-		}
-		if st, err := mgr.LoadWithContext(ctx); err == nil && st != nil {
-			proj.ResourceCount = len(st.Resources)
-		}
-	}
-	if proj.Health == "" {
-		if run.Status == controlplane.RunDone {
-			proj.Health = "healthy"
-		} else {
-			proj.Health = "unknown"
-		}
-	}
-	// Report synchronously so the common path completes immediately. On a
-	// transient failure, keep retrying in the background: the endpoint is
-	// idempotent and the run's lease (30m) remains the final fallback if the
-	// agent itself crashes before this succeeds.
-	if err := reporter.ReportRunComplete(ctx, run, proj); err != nil {
-		fmt.Printf("[agent] report run complete %s failed, retrying in background: %v\n", run.ID, err)
-		go func() {
-			retryCtx, cancel := context.WithTimeout(context.Background(), 25*time.Minute)
-			defer cancel()
-			if err := reportRunCompleteWithRetry(retryCtx, reporter, run, proj); err != nil {
-				fmt.Printf("[agent] report run complete %s failed after background retries: %v\n", run.ID, err)
+	case "destroy":
+		if hook, ok := e.bridge.(DestroyHook); ok {
+			if err = hook.BeforeDestroy(plan); err != nil {
+				return nil, err
 			}
-		}()
+		}
 	}
+	if err = op.Execute(ctx, plan); err != nil {
+		return nil, err
+	}
+	switch run.Op {
+	case "apply", "repair":
+		_, _ = log.Write([]byte("Apply complete.\n"))
+		if len(op.Root.Checks) > 0 {
+			assertion := evaluateChecks(ctx, op.State, op.Root.Checks, op.EvalContext)
+			run.Assertion = &assertion
+			for _, failed := range assertion.FailedChecks {
+				_, _ = fmt.Fprintf(log, "[check] %s failed: %s\n", failed, assertion.Message)
+			}
+		}
+	case "reset":
+		_, _ = log.Write([]byte("Reset complete.\n"))
+	case "destroy":
+		if run.AgentID != "" && run.Attempt > 0 && run.LeaseOwner != "" {
+			proof, err = e.proveCleanup(ctx, *run)
+			if err != nil {
+				return nil, err
+			}
+		}
+		_, _ = log.Write([]byte("Destroy complete.\n"))
+	}
+	err = runOutcome(nil, recorder.Err())
+	return proof, err
 }
 
-var reportRunCompleteRetryInterval = 5 * time.Second
-
-func reportRunCompleteWithRetry(ctx context.Context, reporter Reporter, run *controlplane.Run, proj controlplane.Projection) error {
-	ticker := time.NewTicker(reportRunCompleteRetryInterval)
-	defer ticker.Stop()
-	for {
-		if err := reporter.ReportRunComplete(ctx, run, proj); err == nil {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-		}
-	}
-}
-
-func (e *Executor) executeApply(ctx context.Context, run *controlplane.Run, log io.Writer) {
-	unlock, err := e.bridge.LockTopology(ctx, run.Topology)
+func (e *Executor) prepareResourceOperation(ctx context.Context, run *controlplane.Run, log io.Writer) (*runtime.Operation, *runtime.StoreRecorder, error) {
+	manager, err := e.bridge.StateManager(run.Topology)
 	if err != nil {
-		e.bridge.Finish(run, err)
-		return
+		return nil, nil, err
 	}
-	defer unlock()
-	ctx, release, err := e.prepareExecutionContext(ctx, run)
+	provider, ok := e.bridge.(ActionRepositoryProvider)
+	if !ok {
+		return nil, nil, fmt.Errorf("%w: bridge has no atomic action repository", runtime.ErrConvergenceUnsupported)
+	}
+	actions, err := provider.ActionRepository(run.Topology)
 	if err != nil {
-		e.bridge.Finish(run, err)
-		return
+		return nil, nil, err
 	}
-	defer release()
-
-	if err := ctx.Err(); err != nil {
-		e.bridge.Finish(run, err)
-		return
-	}
-	if err := e.bridge.Preflight(ctx, run, log); err != nil {
-		e.bridge.Finish(run, err)
-		return
-	}
-
-	mgr, err := e.bridge.StateManager(run.Topology)
-	if err != nil {
-		e.bridge.Finish(run, err)
-		return
-	}
-	mgr.AllowUnsafeMutation(run.UnsafeState)
-	if err := mgr.CheckMutationSafety(); err != nil {
-		e.bridge.Finish(run, err)
-		return
-	}
-	g, mgr, st, root, evalCtx, err := runtime.LoadWorkspaceWithInputs(e.hclFileForRun(ctx, run), mgr, run.Inputs)
-	if err != nil {
-		e.bridge.Finish(run, err)
-		return
-	}
-	if err := runtime.ValidateArtifactSources(ctx, g, filepath.Dir(e.hclFileForRun(ctx, run)), secret.Dispatcher{"env": secret.EnvironmentResolver{}, "input": secret.InputResolver{Inputs: run.Inputs}}); err != nil {
-		e.bridge.Finish(run, err)
-		return
-	}
-	plan, err := runtime.ComputePlan(g, st)
-	if err != nil {
-		e.bridge.Finish(run, err)
-		return
-	}
-	if hook, ok := e.bridge.(ApplyHook); ok {
-		plan, err = hook.FilterApplyPlan(plan)
-		if err != nil {
-			e.bridge.Finish(run, err)
-			return
+	path := e.bridge.CheckpointFile(run.Topology, run.ID)
+	recorder := runtime.NewStoreRecorder(runtime.NewFileRecorder(path, run.ID, run.Topology), e.bridge.CheckpointStore(), run.Topology, run.ID, path).WithContext(ctx)
+	request := runtime.OperationRequest{ID: run.ID, Topology: run.Topology, Kind: run.Op, Revision: run.Revision, QueuedAt: run.QueuedAt, Workspace: e.hclFileForRun(ctx, run), Target: run.Target, ResumeID: run.ParentID, LockOwner: run.LeaseOwner, Inputs: run.Inputs, AllowUnsafeState: run.UnsafeState}
+	// Local options are input adaptation, never an alternate planner. Explicit
+	// Run targets take precedence; continuation retains its authenticated scope.
+	if request.Target == "" && !(run.Op == "reset" && run.ParentID != "") {
+		if local, ok := e.bridge.(interface{ OperationTarget() string }); ok {
+			request.Target = local.OperationTarget()
 		}
 	}
-	exec := runtime.NewExecutor(g, st)
-	exec.SetRunContext(run.Topology, run.ID)
-	exec.SetRunIncarnation(run.QueuedAt, run.Revision)
-	exec.SetWorkspaceFromHCLFile(e.hclFileForRun(ctx, run))
-	exec.SetOperation(run.Op)
-	exec.SetLogger(log)
-	exec.SetSecretResolver(secret.Dispatcher{
-		"env":   secret.EnvironmentResolver{},
-		"input": secret.InputResolver{Inputs: run.Inputs},
-	})
-	checkpointPath := e.bridge.CheckpointFile(run.Topology, run.ID)
-	fileRecorder := runtime.NewFileRecorder(checkpointPath, run.ID, run.Topology)
-	recorder := runtime.NewStoreRecorder(fileRecorder, e.bridge.CheckpointStore(), run.Topology, run.ID, checkpointPath).WithContext(ctx)
-	recorder.SetLeaseOwner(run.LeaseOwner)
-	recorder.SetStateSerialBefore(st.Meta.Serial)
-	exec.SetRecorder(recorder)
-	if err := e.installActionRepository(exec, run.Topology); err != nil {
-		e.bridge.Finish(run, err)
-		return
-	}
-	if err := ctx.Err(); err != nil {
-		e.bridge.Finish(run, err)
-		return
-	}
-	if hook, ok := e.bridge.(ApplyHook); ok {
-		if err := hook.BeforeApply(plan); err != nil {
-			e.bridge.Finish(run, err)
-			return
-		}
-	}
-	_, _ = log.Write([]byte(plan.Summary() + "\n"))
-	if snap, err := mgr.Snapshot(ctx, "before apply "+run.ID); err == nil && snap != nil {
-		_, _ = log.Write([]byte(fmt.Sprintf("State snapshot: %s\n", snap.ID)))
-	}
-	if err := exec.Apply(ctx, plan); err != nil {
-		e.bridge.Finish(run, err)
-		return
-	}
-	if err := ctx.Err(); err != nil {
-		recorder.Finish(err)
-		e.bridge.Finish(run, err)
-		return
-	}
-	// Reload canonical state after journal commits: the executor's working copy
-	// must never overwrite resources committed by the action repository.
-	latest, err := mgr.LoadWithContext(ctx)
-	if err != nil {
-		e.bridge.Finish(run, err)
-		return
-	}
-	if latest.TopologyUID != st.TopologyUID || latest.Meta.Serial != st.Meta.Serial {
-		e.bridge.Finish(run, fmt.Errorf("applied variables: canonical state changed"))
-		return
-	}
-	latest.AppliedVariables = config.NonSensitiveInputValues(root.Variables, run.Inputs)
-	if err := mgr.SaveWithLease(ctx, latest, state.LockOptions{Owner: run.LeaseOwner}); err != nil {
-		e.bridge.Finish(run, err)
-		return
-	}
-	st = latest
-
-	recorder.SetStateSerialAfter(st.Meta.Serial)
-	recorder.MarkResourceStateRecorded()
-	if err := recorder.Err(); err != nil {
-		recorder.Finish(err)
-		e.bridge.Finish(run, err)
-		return
-	}
-	_, _ = log.Write([]byte("Apply complete.\n"))
-
-	// Checks run after apply: their probes (a command inside a node, a
-	// reachability probe) can only run against the built topology. The outcome
-	// is stored on the run for the readiness projection; a check failure does
-	// not fail the apply — it is reported, not enforced.
-	if len(root.Checks) > 0 {
-		assertion := evaluateChecks(ctx, st, root.Checks, evalCtx)
-		run.Assertion = &assertion
-		for _, failed := range assertion.FailedChecks {
-			_, _ = log.Write([]byte(fmt.Sprintf("[check] %s failed: %s\n", failed, assertion.Message)))
-		}
-	}
-
-	e.bridge.Finish(run, runOutcome(nil, recorder.Err()))
-}
-
-func (e *Executor) executeDestroy(ctx context.Context, run *controlplane.Run, log io.Writer) *controlplane.CleanupReceipt {
-	unlock, err := e.bridge.LockTopology(ctx, run.Topology)
-	if err != nil {
-		e.bridge.Finish(run, err)
-		return nil
-	}
-	defer unlock()
-	ctx, release, err := e.prepareExecutionContext(ctx, run)
-	if err != nil {
-		e.bridge.Finish(run, err)
-		return nil
-	}
-	defer release()
-
-	if err := ctx.Err(); err != nil {
-		e.bridge.Finish(run, err)
-		return nil
-	}
-	mgr, err := e.bridge.StateManager(run.Topology)
-	if err != nil {
-		e.bridge.Finish(run, err)
-		return nil
-	}
-	mgr.AllowUnsafeMutation(run.UnsafeState)
-	if err := mgr.CheckMutationSafety(); err != nil {
-		e.bridge.Finish(run, err)
-		return nil
-	}
-	st, err := mgr.Load()
-	if err != nil {
-		e.bridge.Finish(run, err)
-		return nil
-	}
-	plan := defaultDestroyPlan(st)
-	if hook, ok := e.bridge.(DestroyHook); ok {
-		plan, err = hook.BuildDestroyPlan(st)
-		if err != nil {
-			e.bridge.Finish(run, err)
-			return nil
-		}
-		if err := hook.BeforeDestroy(plan); err != nil {
-			e.bridge.Finish(run, err)
-			return nil
-		}
-	}
-	exec := runtime.NewExecutor(graph.New(), st)
-	exec.SetRunContext(run.Topology, run.ID)
-	exec.SetRunIncarnation(run.QueuedAt, run.Revision)
-	exec.SetWorkspaceFromHCLFile(e.hclFileForRun(ctx, run))
-	exec.SetLogger(log)
-	checkpointPath := e.bridge.CheckpointFile(run.Topology, run.ID)
-	fileRecorder := runtime.NewFileRecorder(checkpointPath, run.ID, run.Topology)
-	recorder := runtime.NewStoreRecorder(fileRecorder, e.bridge.CheckpointStore(), run.Topology, run.ID, checkpointPath).WithContext(ctx)
-	recorder.SetLeaseOwner(run.LeaseOwner)
-	recorder.SetStateSerialBefore(st.Meta.Serial)
-	exec.SetRecorder(recorder)
-	if snap, err := mgr.Snapshot(ctx, "before destroy "+run.ID); err == nil && snap != nil {
-		_, _ = log.Write([]byte(fmt.Sprintf("State snapshot: %s\n", snap.ID)))
-	}
-	if err := e.installActionRepository(exec, run.Topology); err != nil {
-		e.bridge.Finish(run, err)
-		return nil
-	}
-	if err := exec.Destroy(ctx, plan); err != nil {
-		e.bridge.Finish(run, err)
-		return nil
-	}
-	if err := ctx.Err(); err != nil {
-		recorder.Finish(err)
-		e.bridge.Finish(run, err)
-		return nil
-	}
-	recorder.SetStateSerialAfter(st.Meta.Serial)
-	recorder.MarkResourceStateRecorded()
-	if err := recorder.Err(); err != nil {
-		recorder.Finish(err)
-		e.bridge.Finish(run, err)
-		return nil
-	}
-	var proof *controlplane.CleanupReceipt
-	if run.AgentID != "" && run.Attempt > 0 && run.LeaseOwner != "" {
-		proof, err = e.proveCleanup(ctx, *run)
-		if err != nil {
-			e.bridge.Finish(run, err)
-			return nil
-		}
-	}
-	_, _ = log.Write([]byte("Destroy complete.\n"))
-	e.bridge.Finish(run, runOutcome(nil, recorder.Err()))
-	return proof
+	op, err := runtime.PrepareOperation(ctx, request, runtime.OperationDependencies{Providers: driver.DefaultRegistry, Manager: manager, Actions: actions, Recorder: recorder, Log: log})
+	return op, recorder, err
 }
 
 func (e *Executor) proveCleanup(ctx context.Context, run controlplane.Run) (*controlplane.CleanupReceipt, error) {
@@ -601,23 +267,15 @@ func (e *Executor) proveCleanup(ctx context.Context, run controlplane.Run) (*con
 	if err != nil {
 		return nil, err
 	}
-	prover, ok := repo.(runtime.CleanupProver)
+	prover, ok := repo.(CleanupProver)
 	if !ok {
 		return nil, fmt.Errorf("cleanup proof is unsupported by action repository")
 	}
 	return prover.ProveCleanup(ctx, run)
 }
 
-func defaultDestroyPlan(st *state.State) *runtime.Plan {
-	plan := &runtime.Plan{}
-	for i := len(st.Resources) - 1; i >= 0; i-- {
-		r := st.Resources[i]
-		if r.LifecyclePreventDestroy() {
-			return &runtime.Plan{Actions: []controlplane.PlannedChange{{Address: r.Address, Action: controlplane.PlanActionUnknown, Reason: "lifecycle.prevent_destroy blocks deletion"}}}
-		}
-		plan.Actions = append(plan.Actions, controlplane.PlannedChange{
-			Address: r.Address, Action: controlplane.PlanActionDelete, Reason: "destroy requested",
-		})
-	}
-	return plan
+// CleanupProver binds canonical cleanup to the remote Run identity.
+// This dispatch contract belongs outside the resource engine.
+type CleanupProver interface {
+	ProveCleanup(context.Context, controlplane.Run) (*controlplane.CleanupReceipt, error)
 }

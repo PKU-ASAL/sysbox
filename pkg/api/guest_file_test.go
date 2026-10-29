@@ -80,7 +80,7 @@ func TestGuestFileOperationHTTPDurableLifecycle(t *testing.T) {
 	complete := httptest.NewRequest(http.MethodPost, "/v1/agents/host-a/guest-file-operations/"+created.ID+"/complete", bytes.NewReader(body))
 	completeRec := httptest.NewRecorder()
 	s.ServeHTTP(completeRec, complete)
-	require.Equal(t, http.StatusConflict, completeRec.Code, completeRec.Body.String())
+	require.Equal(t, http.StatusNotFound, completeRec.Code, completeRec.Body.String())
 	rec = get()
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.Contains(t, rec.Body.String(), `"status":"running"`)
@@ -147,12 +147,12 @@ func TestGuestFileOperationReportsAreIdempotentAndOrdered(t *testing.T) {
 	}
 	completePath := "/v1/agents/host-a/guest-file-operations/op-1/complete"
 	startPath := "/v1/agents/host-a/guest-file-operations/op-1/start"
-	require.Equal(t, http.StatusConflict, post(completePath, string(raw)).Code)
+	require.Equal(t, http.StatusNotFound, post(completePath, string(raw)).Code)
 	require.Equal(t, http.StatusOK, post(startPath, ``).Code)
 	require.Equal(t, http.StatusOK, post(startPath, ``).Code)
-	require.Equal(t, http.StatusConflict, post(completePath, `{}`).Code)
-	require.Equal(t, http.StatusConflict, post(completePath, string(raw)).Code)
-	require.Equal(t, http.StatusConflict, post(completePath, string(raw)).Code)
+	require.Equal(t, http.StatusNotFound, post(completePath, `{}`).Code)
+	require.Equal(t, http.StatusNotFound, post(completePath, string(raw)).Code)
+	require.Equal(t, http.StatusNotFound, post(completePath, string(raw)).Code)
 }
 
 func TestCancelledGuestFileOperationRejectsLateCompletion(t *testing.T) {
@@ -161,7 +161,7 @@ func TestCancelledGuestFileOperationRejectsLateCompletion(t *testing.T) {
 	require.NoError(t, store.SaveGuestFileOperation(context.Background(), controlplane.GuestFileOperation{ID: "op", Version: 1, Topology: "lab", Status: controlplane.GuestExecutionQueued}))
 	_, err := svc.Cancel(context.Background(), "op")
 	require.NoError(t, err)
-	_, err = store.CompleteGuestFileOperation(context.Background(), "agent", "op", controlplane.GuestFileOperationCompletion{})
+	_, err = store.CompleteFileFromHost(context.Background(), "agent", "op", controlplane.SignedExecutionStopReceipt{})
 	require.Error(t, err)
 	got, err := svc.Get(context.Background(), "op")
 	require.NoError(t, err)
@@ -206,7 +206,7 @@ func TestCancelIntentBlocksConcurrentStartAndCompletion(t *testing.T) {
 	require.True(t, op.CancelRequested)
 	_, err = svc.MarkRunning(context.Background(), "op")
 	require.ErrorIs(t, err, errGuestFileOperationConflict)
-	_, err = store.CompleteGuestFileOperation(context.Background(), "agent", "op", controlplane.GuestFileOperationCompletion{})
+	_, err = store.CompleteFileFromHost(context.Background(), "agent", "op", controlplane.SignedExecutionStopReceipt{})
 	require.ErrorIs(t, err, persistence.ErrConflict)
 	op, err = svc.Cancel(context.Background(), "op")
 	require.NoError(t, err)

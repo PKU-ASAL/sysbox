@@ -28,7 +28,7 @@ func DockerPreflightChecks(_ bool) []PreflightCheck {
 
 func FirecrackerPreflightChecks(required bool) []PreflightCheck {
 	checks := append(KVMPreflightCheck(required), ToolPreflightCheck("firecracker", required)...)
-	checks = append(checks, PreflightCheck{Name: "firecracker_isolation", OK: false, Severity: "warning", Message: "jailer isolation is not implemented", Hint: "direct mode requires allow_direct = true and is limited to trusted local experiments"})
+	checks = append(checks, ToolPreflightCheck("jailer", required)...)
 	return checks
 }
 
@@ -71,6 +71,9 @@ func ToolPreflightCheck(tool string, required bool) []PreflightCheck {
 }
 
 func explicitToolPath(tool string) string {
+	if tool == "jailer" {
+		return config.MustLoadServiceConfig("").Providers.Firecracker.Jailer
+	}
 	if tool == "firecracker" {
 		if p := config.MustLoadServiceConfig("").Providers.Firecracker.Binary; p != "" {
 			return p

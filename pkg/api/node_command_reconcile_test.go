@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
@@ -19,10 +21,31 @@ func TestTerminalNodeOperationSettlesLostDeliveryReceipt(t *testing.T) {
 		require.True(t, ok)
 		leased.Status = controlplane.AgentCommandStatusDelivered
 		require.NoError(t, store.SaveAgentCommand(ctx, *leased))
-		op.Status = controlplane.NodeOperationStatusDone
-		op.EndedAt = time.Now().UTC()
-		op.LeaseOwner, op.Attempt, op.LeaseEpoch = leased.LeaseOwner, leased.Attempt, leased.LeaseEpoch
-		_, err = store.CompleteNodeOperation(ctx, op.AgentID, op.ID, op)
+		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		session, err := authority.OpenSession(ctx, op.AgentID, "host", "")
+		require.NoError(t, err)
+		request, err := controlplane.FromNodeOperationCommand(*leased)
+		require.NoError(t, err)
+		digest, err := request.Digest()
+		require.NoError(t, err)
+		grant, err := authority.Issue(ctx, controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: cmd.TopologyUID, ResourceUID: op.ResourceUID, Generation: op.Generation}, AgentID: op.AgentID, SessionID: session.ID, CommandID: cmd.ID, ActionID: op.ID, Attempt: uint64(leased.Attempt), Operation: "node_power", Digest: digest, TargetBootID: "host"}, time.Minute)
+		require.NoError(t, err)
+		_, key, err := ed25519.GenerateKey(rand.Reader)
+		require.NoError(t, err)
+		receipt, err := controlplane.SignExecutionStopReceipt(key, *grant, "host", "result", time.Now())
+		require.NoError(t, err)
+		// Exercise result commit before delivery retirement, as after a lost reply.
+		transition := func(current controlplane.NodeOperation, record *persistence.CommandRecord) (controlplane.NodeOperation, error) {
+			return persistence.CompletePowerFromHost(current, record, op.AgentID, op.ID, receipt)
+		}
+		switch adapter := store.(type) {
+		case *localAPIStore:
+			_, err = adapter.completeNodeOperation(ctx, op.AgentID, op.ID, &receipt, transition)
+		case *sqliteAPIStore:
+			_, err = adapter.completeNodeOperation(ctx, op.AgentID, op.ID, &receipt, transition)
+		case *postgresAPIStore:
+			_, err = adapter.completeNodeOperation(ctx, op.AgentID, op.ID, &receipt, transition)
+		}
 		require.NoError(t, err)
 		service := AgentService{store: store}
 		reconciled, terminal := service.ReconcileCommandState(ctx, *leased)

@@ -11,15 +11,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
-	"github.com/stretchr/testify/require"
 )
 
 func TestAdoptionFenceRecoversObservedOwnerWithoutInventingSuccess(t *testing.T) {
@@ -78,7 +80,7 @@ func testAdoptionFenceRecovery(t *testing.T, failed bool, mode string) {
 		})
 		require.Error(t, err)
 		if mode != "" {
-			action := runtime.ActionRecord{ID: "unknown-adoption", RunID: adopt.ID, Topology: "lab", Resource: address.Resource("sysbox_node", "web"), Action: controlplane.PlanActionAdopt, Status: runtime.ActionIntentCommitted, DesiredDigest: "original", OwnerUID: adopt.TopologyUID, ResourceUID: adopt.ResourceUID, Generation: 1, Candidate: &state.Resource{Address: address.Resource("sysbox_node", "web"), Driver: adopt.Provider, ExternalID: adopt.ExternalID, OwnerUID: adopt.TopologyUID, ResourceUID: adopt.ResourceUID, Generation: 1}}
+			action := runtime.ActionRecord{ID: "unknown-adoption", RunID: adopt.ID, Topology: "lab", Resource: address.Resource("sysbox_node", "web"), Action: model.PlanActionAdopt, Status: runtime.ActionIntentCommitted, DesiredDigest: "original", OwnerUID: adopt.TopologyUID, ResourceUID: adopt.ResourceUID, Generation: 1, Candidate: &state.Resource{Address: address.Resource("sysbox_node", "web"), Driver: adopt.Provider, ExternalID: adopt.ExternalID, OwnerUID: adopt.TopologyUID, ResourceUID: adopt.ResourceUID, Generation: 1}}
 			require.NoError(t, repo.CommitActionIntent(ctx, action))
 		}
 		if failed {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/runtime"
 )
 
@@ -42,7 +43,7 @@ func DestroyFailureEvidence(run *controlplane.Run, actions []runtime.ActionRecor
 			}
 			continue
 		}
-		if action.Topology != run.Topology || !action.RunQueuedAt.Equal(run.QueuedAt) || action.RunRevision != run.Revision || action.Action != controlplane.PlanActionDelete || !action.EffectComplete || (action.Status != runtime.ActionSucceeded && action.Status != runtime.ActionUncertain) {
+		if action.Topology != run.Topology || !action.RunQueuedAt.Equal(run.QueuedAt) || action.RunRevision != run.Revision || action.Action != model.PlanActionDelete || !action.EffectComplete || (action.Status != runtime.ActionSucceeded && action.Status != runtime.ActionUncertain) {
 			return nil, fmt.Errorf("Destroy effect outcome remains uncertain")
 		}
 		candidate := action.Candidate

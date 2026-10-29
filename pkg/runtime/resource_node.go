@@ -10,11 +10,10 @@ import (
 	"github.com/hashicorp/hcl/v2"
 
 	"github.com/oslab/sysbox/pkg/address"
-
 	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/secret"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -32,11 +31,11 @@ func (NodeResourceHandler) Schema() ResourceSchema {
 	return ResourceSchemaFor("sysbox_node")
 }
 
-func (NodeResourceHandler) Read(ctx context.Context, current state.Resource) (ResourceReadResult, error) {
-	return readNodeLikeResource(ctx, current)
+func (NodeResourceHandler) Read(ctx context.Context, current state.Resource, providers *driver.Registry) (ResourceReadResult, error) {
+	return readNodeLikeResource(ctx, current, providers)
 }
 
-func (NodeResourceHandler) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
+func (NodeResourceHandler) PlanDiff(desired *graph.Node, current *state.Resource) (model.PlannedChange, error) {
 	return planDiffByDesiredHash(desired, current)
 }
 
@@ -55,7 +54,7 @@ func (NodeResourceHandler) ExternalID(current state.Resource) string {
 	return current.Str("id")
 }
 
-func (NodeResourceHandler) RequiredCapabilities(node *graph.Node) ([]CapabilityRequirement, error) {
+func (NodeResourceHandler) RequiredCapabilities(node *graph.Node, providers *driver.Registry) ([]CapabilityRequirement, error) {
 	if node.Data == nil {
 		return nil, nil
 	}
@@ -83,7 +82,7 @@ func (NodeResourceHandler) RequiredCapabilities(node *graph.Node) ([]CapabilityR
 	if len(cfg.Routes) > 0 {
 		required = append(required, CapabilityRequirement{name, driver.CapabilityGuestNetwork})
 	}
-	nodeDriver, err := driver.DefaultRegistry.RequireNode(name)
+	nodeDriver, err := providers.RequireNode(name)
 	if err != nil {
 		return nil, err
 	}
@@ -93,12 +92,12 @@ func (NodeResourceHandler) RequiredCapabilities(node *graph.Node) ([]CapabilityR
 	return required, nil
 }
 
-func (NodeResourceHandler) DecodeResource(r config.ResourceBlock, name string, ctx *hcl.EvalContext) (any, []address.Address, error) {
+func (NodeResourceHandler) DecodeResource(r config.ResourceBlock, name string, ctx *hcl.EvalContext, providers *driver.Registry) (any, []address.Address, error) {
 	cfg := &config.NodeConfig{}
 	if err := config.DecodeResource(&r, cfg, ctx); err != nil {
 		return nil, nil, err
 	}
-	if err := decodeNodeProviderConfig(cfg, ctx); err != nil {
+	if err := decodeNodeProviderConfig(cfg, ctx, providers); err != nil {
 		return nil, nil, fmt.Errorf("resource sysbox_node.%s: %w", name, err)
 	}
 	var deps []address.Address
@@ -119,7 +118,7 @@ func (NodeResourceHandler) DecodeResource(r config.ResourceBlock, name string, c
 		}
 	}
 	if subName, err := config.ResolveSubstrateRef(cfg.Substrate); err == nil {
-		if nodeDriver, err := driver.DefaultRegistry.RequireNode(subName); err == nil {
+		if nodeDriver, err := providers.RequireNode(subName); err == nil {
 			pd := nodeDriver.Dependencies(cfg.ProviderConfig)
 			for _, ref := range pd.Kernels {
 				addr, err := config.ResolveResourceAddress(ref, "sysbox_kernel")
@@ -148,7 +147,7 @@ func (NodeResourceHandler) DecodeResource(r config.ResourceBlock, name string, c
 	return cfg, deps, err
 }
 
-func (DataNodeResourceHandler) DecodeData(d config.DataBlock, ctx *hcl.EvalContext) (any, []address.Address, error) {
+func (DataNodeResourceHandler) DecodeData(d config.DataBlock, ctx *hcl.EvalContext, providers *driver.Registry) (any, []address.Address, error) {
 	cfg := &config.DataNodeConfig{}
 	if err := decodeDataBody(d.Remain, ctx, cfg, "sysbox_node", d.Name); err != nil {
 		return nil, nil, err
@@ -178,15 +177,15 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	if err != nil {
 		return state.Resource{}, err
 	}
-	nodeDriver, err := driver.DefaultRegistry.RequireNode(subName)
+	nodeDriver, err := e.providers.RequireNode(subName)
 	if err != nil {
 		return state.Resource{}, err
 	}
-	nicDriver, err := driver.DefaultRegistry.RequireNIC(subName)
+	nicDriver, err := e.providers.RequireNIC(subName)
 	if err != nil {
 		return state.Resource{}, err
 	}
-	stateDriver, err := driver.DefaultRegistry.RequireNodeState(subName)
+	stateDriver, err := e.providers.RequireNodeState(subName)
 	if err != nil {
 		return state.Resource{}, err
 	}
@@ -330,7 +329,7 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	handle.Net.PrimaryIP = wireResult.PrimaryIP
 	var guestInitDriver driver.GuestNetworkInit
 	if len(caps.GuestNetworkInitModes) > 0 {
-		guestInitDriver, err = driver.DefaultRegistry.RequireGuestNetworkInit(subName)
+		guestInitDriver, err = e.providers.RequireGuestNetworkInit(subName)
 		if err != nil {
 			cleanupNode("destroy node without guest network init capability")
 			return state.Resource{}, err
@@ -452,7 +451,7 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 	// Guest execution resolves this identity through the durable action store.
 	// Keep it as an incomplete candidate until every create phase succeeds.
 	if e.activeCreate != nil {
-		if err := e.recordStepExternal(ctx, parentStep, n.Address, controlplane.PlanActionCreate); err != nil {
+		if err := e.recordStepExternal(ctx, parentStep, n.Address, model.PlanActionCreate); err != nil {
 			return state.Resource{}, err
 		}
 	}
@@ -523,11 +522,11 @@ func hasHostPort(ports []substrate.PortSpec) bool {
 }
 
 func (e *Executor) destroyNodeResource(ctx context.Context, r state.Resource) error {
-	nodeDriver, err := driver.DefaultRegistry.RequireNode(r.Driver)
+	nodeDriver, err := e.providers.RequireNode(r.Driver)
 	if err != nil {
 		return err
 	}
-	stateDriver, err := driver.DefaultRegistry.RequireNodeState(r.Driver)
+	stateDriver, err := e.providers.RequireNodeState(r.Driver)
 	if err != nil {
 		return err
 	}
@@ -538,7 +537,7 @@ func (e *Executor) destroyNodeResource(ctx context.Context, r state.Resource) er
 	var nicDriver driver.NIC
 	requests := make([]driver.AttachmentRequest, 0, len(r.Attachments))
 	if len(r.Attachments) > 0 {
-		nicDriver, err = driver.DefaultRegistry.RequireNIC(r.Driver)
+		nicDriver, err = e.providers.RequireNIC(r.Driver)
 		if err != nil {
 			return err
 		}
@@ -703,7 +702,7 @@ func (e *Executor) execImageEntry(ctx context.Context, handle substrate.NodeHand
 	if err := e.journalError(); err != nil {
 		return err
 	}
-	descriptor, ok := driver.DefaultRegistry.Get(subName)
+	descriptor, ok := e.providers.Get(subName)
 	if !ok {
 		return driver.Wrap(driver.ErrorNotFound, subName, "driver is not registered", nil)
 	}

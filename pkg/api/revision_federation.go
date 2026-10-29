@@ -124,6 +124,10 @@ func writeLocalObjectWithoutGate(path string, value any) error {
 }
 
 func (s *Server) enrolledSQLConsumers(root string) (map[string]config.RevisionSQLConsumer, error) {
+	return enrollSQLConsumers(s.cfg, root)
+}
+
+func enrollSQLConsumers(cfg config.ServiceConfig, root string) (map[string]config.RevisionSQLConsumer, error) {
 	path := filepath.Join(root, ".sql-consumers.json")
 	anchor := filepath.Join(filepath.Dir(root), ".sysbox-sql-consumers.required")
 	raw, err := os.ReadFile(path)
@@ -132,7 +136,7 @@ func (s *Server) enrolledSQLConsumers(root string) (map[string]config.RevisionSQ
 		if _, e := os.Lstat(anchor); !os.IsNotExist(e) {
 			return nil, fmt.Errorf("SQL consumer enrollment evidence lost")
 		}
-		if len(s.cfg.RevisionSQLConsumers) == 0 {
+		if len(cfg.RevisionSQLConsumers) == 0 {
 			return nil, nil
 		}
 	} else if err != nil {
@@ -144,26 +148,26 @@ func (s *Server) enrolledSQLConsumers(root string) (map[string]config.RevisionSQ
 	}
 	prior := enrolled{}
 	if exists {
-		if json.Unmarshal(raw, &prior) != nil || prior.Consumers == nil || prior.Registry != s.cfg.RevisionRegistryID {
+		if json.Unmarshal(raw, &prior) != nil || prior.Consumers == nil || prior.Registry != cfg.RevisionRegistryID {
 			return nil, fmt.Errorf("SQL consumer enrollment changed")
 		}
 	}
 	for id, old := range prior.Consumers {
-		current, ok := s.cfg.RevisionSQLConsumers[id]
+		current, ok := cfg.RevisionSQLConsumers[id]
 		if !ok || old != current {
 			return nil, fmt.Errorf("SQL consumer %s missing or changed", id)
 		}
 	}
-	if len(s.cfg.RevisionSQLConsumers) > 0 {
-		if s.cfg.RevisionRegistryID == "" {
+	if len(cfg.RevisionSQLConsumers) > 0 {
+		if cfg.RevisionRegistryID == "" {
 			return nil, fmt.Errorf("registry ID required for SQL federation")
 		}
-		if err = writeLocalObjectWithoutGate(path, enrolled{Registry: s.cfg.RevisionRegistryID, Consumers: s.cfg.RevisionSQLConsumers}); err != nil {
+		if err = writeLocalObjectWithoutGate(path, enrolled{Registry: cfg.RevisionRegistryID, Consumers: cfg.RevisionSQLConsumers}); err != nil {
 			return nil, err
 		}
 		if err = writeLocalObjectWithoutGate(anchor, map[string]string{"catalog": root}); err != nil {
 			return nil, err
 		}
 	}
-	return s.cfg.RevisionSQLConsumers, nil
+	return cfg.RevisionSQLConsumers, nil
 }

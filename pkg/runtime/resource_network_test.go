@@ -10,9 +10,9 @@ import (
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
@@ -26,7 +26,7 @@ func TestNetworkResourceHandlerCreateAndDeleteIsolated(t *testing.T) {
 			CIDR: "10.10.0.0/24",
 		},
 	}
-	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
+	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion}, driver.DefaultRegistry)
 	p := NetworkResourceHandler{}
 
 	res, err := p.Create(context.Background(), &ProviderContext{exec: exec}, n)
@@ -56,12 +56,12 @@ func TestNetworkResourceHandlerPlanDiff(t *testing.T) {
 
 	action, err := p.PlanDiff(n, current)
 	require.NoError(t, err)
-	require.Equal(t, controlplane.PlanActionNoop, action.Action)
+	require.Equal(t, model.PlanActionNoop, action.Action)
 
 	n.Data = &config.NetworkConfig{CIDR: "10.20.0.0/24"}
 	action, err = p.PlanDiff(n, current)
 	require.NoError(t, err)
-	require.Equal(t, controlplane.PlanActionReplace, action.Action)
+	require.Equal(t, model.PlanActionReplace, action.Action)
 	_, ok := fieldChangeAt(action.Changes, "cidr")
 	require.True(t, ok)
 }
@@ -72,15 +72,15 @@ func TestNetworkPlanDiffRootRoutesAfterStateRoundTrip(t *testing.T) {
 	for _, tc := range []struct {
 		name          string
 		before, after []config.RouteConfig
-		want          controlplane.PlanActionType
+		want          model.PlanActionType
 	}{
-		{name: "omitted", want: controlplane.PlanActionNoop},
-		{name: "empty to omitted", before: []config.RouteConfig{}, want: controlplane.PlanActionNoop},
-		{name: "omitted to empty", after: []config.RouteConfig{}, want: controlplane.PlanActionNoop},
-		{name: "unchanged route", before: []config.RouteConfig{route}, after: []config.RouteConfig{route}, want: controlplane.PlanActionNoop},
-		{name: "add route", after: []config.RouteConfig{route}, want: controlplane.PlanActionReplace},
-		{name: "remove route", before: []config.RouteConfig{route}, want: controlplane.PlanActionReplace},
-		{name: "change route", before: []config.RouteConfig{route}, after: []config.RouteConfig{changed}, want: controlplane.PlanActionReplace},
+		{name: "omitted", want: model.PlanActionNoop},
+		{name: "empty to omitted", before: []config.RouteConfig{}, want: model.PlanActionNoop},
+		{name: "omitted to empty", after: []config.RouteConfig{}, want: model.PlanActionNoop},
+		{name: "unchanged route", before: []config.RouteConfig{route}, after: []config.RouteConfig{route}, want: model.PlanActionNoop},
+		{name: "add route", after: []config.RouteConfig{route}, want: model.PlanActionReplace},
+		{name: "remove route", before: []config.RouteConfig{route}, want: model.PlanActionReplace},
+		{name: "change route", before: []config.RouteConfig{route}, after: []config.RouteConfig{changed}, want: model.PlanActionReplace},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			n := &graph.Node{Address: address.Resource("sysbox_network", "dmz"), Data: &config.NetworkConfig{CIDR: "10.10.0.0/24", RootRoutes: tc.before}}
@@ -94,7 +94,7 @@ func TestNetworkPlanDiffRootRoutesAfterStateRoundTrip(t *testing.T) {
 			change, err := (NetworkResourceHandler{}).PlanDiff(n, &persisted)
 			require.NoError(t, err)
 			require.Equal(t, tc.want, change.Action)
-			if tc.want == controlplane.PlanActionNoop {
+			if tc.want == model.PlanActionNoop {
 				require.Empty(t, change.Changes)
 			} else {
 				require.NotEmpty(t, change.Changes)
@@ -170,7 +170,7 @@ func TestNetworkResourceHandlerCreateNATUsesManagedNetwork(t *testing.T) {
 	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "docker", Version: "test", Network: recorder}))
 	defer func() { driver.DefaultRegistry = previous }()
 
-	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
+	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion}, driver.DefaultRegistry)
 	n := &graph.Node{Address: address.Resource("sysbox_network", "lab"), Data: &config.NetworkConfig{CIDR: "10.204.0.0/24", NAT: true}}
 	res, err := (NetworkResourceHandler{}).Create(context.Background(), &ProviderContext{exec: exec}, n)
 	require.NoError(t, err)
@@ -189,7 +189,7 @@ func TestNetworkResourceHandlerDeleteKeepsStateOnRemoveFailure(t *testing.T) {
 	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "docker", Version: "test", Network: failingNetworkDriver{}}))
 	defer func() { driver.DefaultRegistry = previous }()
 
-	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
+	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion}, driver.DefaultRegistry)
 	addr := address.Resource("sysbox_network", "lab")
 	res := state.Resource{
 		Address:    addr,

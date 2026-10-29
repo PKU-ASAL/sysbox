@@ -38,11 +38,16 @@ func (r RunRequest) Validate() error {
 		return fmt.Errorf("run request contains unsafe identity")
 	}
 	if r.ResourceUID == "" {
-		if r.Generation != 0 || r.Target != "" {
+		if r.Generation != 0 || r.Target != "" && r.Action != "apply" {
 			return fmt.Errorf("topology run carries resource target")
 		}
 	} else if r.Generation < 1 || r.Target == "" {
 		return fmt.Errorf("resource run requires target identity")
+	}
+	if r.Target != "" {
+		if target, err := address.Parse(r.Target); err != nil || !target.Equal(address.Resource(target.Type, target.Name)) {
+			return fmt.Errorf("target requires an unindexed root resource address")
+		}
 	}
 	return nil
 }

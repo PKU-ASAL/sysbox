@@ -2,7 +2,6 @@ package api
 
 import (
 	"encoding/json"
-	"github.com/oslab/sysbox/pkg/address"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,7 +10,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/address"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/state"
 )
 
@@ -41,9 +41,9 @@ func TestGetTopologyHealth(t *testing.T) {
 	s.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	var body controlplane.TopologyHealth
+	var body model.TopologyHealth
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
-	require.Equal(t, controlplane.ResourceHealthHealthy, body.Status)
+	require.Equal(t, model.ResourceHealthHealthy, body.Status)
 	require.Equal(t, 1, body.Healthy)
 	require.Len(t, body.Resources, 1)
 	require.Equal(t, "sysbox_kernel.linux", body.Resources[0].Resource)

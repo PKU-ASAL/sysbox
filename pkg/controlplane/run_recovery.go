@@ -1,9 +1,9 @@
 package controlplane
 
 import (
-	"github.com/oslab/sysbox/pkg/state"
-	"github.com/oslab/sysbox/pkg/substrate"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/model"
 )
 
 const RunRecoveryCapability = "run-recovery.v1"
@@ -14,39 +14,21 @@ const RunRecoveryRecover = "recover"
 
 // RunRecoveryReport is evidence, not a Run completion or a replacement state.
 type RunRecoveryReport struct {
-	HostObservation *HostObservationProof `json:"host_observation,omitempty"`
-	RunAttempt      int                   `json:"run_attempt"`
-	RunLeaseOwner   string                `json:"run_lease_owner,omitempty"`
-	CommandID       string                `json:"command_id"`
-	RunID           string                `json:"run_id"`
-	AgentID         string                `json:"agent_id"`
-	QueuedAt        time.Time             `json:"queued_at"`
-	Revision        string                `json:"revision"`
-	Mode            string                `json:"mode"`
-	TopologyUID     string                `json:"topology_uid"`
-	StateSerial     int64                 `json:"state_serial"`
-	ObservedAt      time.Time             `json:"observed_at"`
-	Resources       []RecoveredResource   `json:"resources"`
+	HostObservation *HostObservationProof     `json:"host_observation,omitempty"`
+	RunAttempt      int                       `json:"run_attempt"`
+	RunLeaseOwner   string                    `json:"run_lease_owner,omitempty"`
+	CommandID       string                    `json:"command_id"`
+	RunID           string                    `json:"run_id"`
+	AgentID         string                    `json:"agent_id"`
+	QueuedAt        time.Time                 `json:"queued_at"`
+	Revision        string                    `json:"revision"`
+	Mode            string                    `json:"mode"`
+	TopologyUID     string                    `json:"topology_uid"`
+	StateSerial     int64                     `json:"state_serial"`
+	ObservedAt      time.Time                 `json:"observed_at"`
+	Resources       []model.RecoveredResource `json:"resources"`
 }
-type RecoveredResource struct {
-	Discovered              *state.Resource            `json:"discovered,omitempty"`
-	AttachmentCount         int                        `json:"attachment_count,omitempty"`
-	AttachmentResidueAbsent bool                       `json:"attachment_residue_absent,omitempty"`
-	SSHCommitted            *substrate.SSHAccessResult `json:"ssh_committed,omitempty"`
-	ResetSSH                []RecoveredResource        `json:"reset_ssh,omitempty"`
-	ResetSource             *RecoveredResource         `json:"reset_source,omitempty"`
-	ResetReplacement        *RecoveredResource         `json:"reset_replacement,omitempty"`
-	DeleteResidueAbsent     bool                       `json:"delete_residue_absent,omitempty"`
-	ProviderScope           string                     `json:"provider_scope,omitempty"`
-	ActionID                string                     `json:"action_id"`
-	Resource                string                     `json:"resource"`
-	OwnerUID                string                     `json:"owner_uid"`
-	ResourceUID             string                     `json:"resource_uid"`
-	Generation              int64                      `json:"generation"`
-	ExternalID              string                     `json:"external_id,omitempty"`
-	Status                  string                     `json:"status"`
-	JournalStatus           string                     `json:"journal_status"`
-}
+
 type RunRecoveryAuthorization struct {
 	// Inputs are transient, fingerprint-validated values; never part of command persistence.
 	Inputs           map[string]string        `json:"inputs"`

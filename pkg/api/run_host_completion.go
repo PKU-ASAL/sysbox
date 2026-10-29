@@ -52,7 +52,7 @@ func completeRunFromHost(ctx context.Context, storage runCommandStorage, agent, 
 		if err != nil || digest != g.Digest || g.Operation != "run_"+req.Action {
 			return nil, persistence.ErrConflict
 		}
-		if observed.HostCompletion != nil || len(observed.Inputs) != 0 {
+		if observed.HostCompletion != nil || len(observed.Inputs) != 0 || observed.Cleanup != nil && observed.Cleanup.TopologyUID != g.Scope.TopologyUID {
 			return nil, persistence.ErrConflict
 		}
 		next, err := persistence.CompleteRunFromHost(*current, observed, time.Now().UTC())

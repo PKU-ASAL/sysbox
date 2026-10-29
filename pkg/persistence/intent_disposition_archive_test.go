@@ -6,23 +6,26 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"github.com/oslab/sysbox/pkg/address"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/runtime"
-	"github.com/oslab/sysbox/pkg/state"
-	"github.com/oslab/sysbox/pkg/substrate"
-	"github.com/stretchr/testify/require"
-	"golang.org/x/crypto/ssh"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/ssh"
+
+	"github.com/oslab/sysbox/pkg/address"
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
+	"github.com/oslab/sysbox/pkg/runtime"
+	"github.com/oslab/sysbox/pkg/state"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 func TestIntentDispositionPostimagePreservesUnknownAndExactResource(t *testing.T) {
 	a := newAggregate()
 	a.State.TopologyUID = "owner"
 	a.Serial = 1
-	action := runtime.ActionRecord{ID: "action", Topology: "lab", RunID: "run", RunQueuedAt: time.Now().UTC(), RunRevision: "revision", Resource: address.Resource("sysbox_node", "node"), Action: controlplane.PlanActionCreate, Revision: 1, Status: runtime.ActionUncertain, OwnerUID: "owner", ResourceUID: "resource", Generation: 1, ExpectedSerial: 1, Candidate: &state.Resource{Address: address.Resource("sysbox_node", "node"), Driver: "docker", Private: json.RawMessage(`{"identity":"fixture"}`), ExternalID: "external", OwnerUID: "owner", ResourceUID: "resource", Generation: 1}}
+	action := runtime.ActionRecord{ID: "action", Topology: "lab", RunID: "run", RunQueuedAt: time.Now().UTC(), RunRevision: "revision", Resource: address.Resource("sysbox_node", "node"), Action: model.PlanActionCreate, Revision: 1, Status: runtime.ActionUncertain, OwnerUID: "owner", ResourceUID: "resource", Generation: 1, ExpectedSerial: 1, Candidate: &state.Resource{Address: address.Resource("sysbox_node", "node"), Driver: "docker", Private: json.RawMessage(`{"identity":"fixture"}`), ExternalID: "external", OwnerUID: "owner", ResourceUID: "resource", Generation: 1}}
 	a.Actions[action.ID] = action
 	d := controlplane.IntentDispositionDecision{ID: "decision", ExpectedSerial: 1, Actions: []controlplane.IntentDispositionAction{{ActionID: action.ID, Decision: "retain", ResourceUID: "resource", Generation: 1, ExternalID: "external"}}}
 	archive, err := intentDispositionPostimage(a, d, time.Now().UTC())
@@ -43,7 +46,7 @@ func TestIntentDispositionPostimageRejectsConflictsWithoutPartialMutation(t *tes
 			a.State.TopologyUID = "owner"
 			a.Serial = 1
 			resource := state.Resource{Address: address.Resource("sysbox_node", "node"), Driver: "docker", Private: json.RawMessage(`{"identity":"fixture"}`), ExternalID: "external", OwnerUID: "owner", ResourceUID: "resource", Generation: 1}
-			action := runtime.ActionRecord{ID: "action", Topology: "lab", RunID: "run", Resource: resource.Address, Action: controlplane.PlanActionCreate, Revision: 1, Status: runtime.ActionUncertain, OwnerUID: "owner", ResourceUID: "resource", Generation: 1, ExpectedSerial: 1, Candidate: &resource}
+			action := runtime.ActionRecord{ID: "action", Topology: "lab", RunID: "run", Resource: resource.Address, Action: model.PlanActionCreate, Revision: 1, Status: runtime.ActionUncertain, OwnerUID: "owner", ResourceUID: "resource", Generation: 1, ExpectedSerial: 1, Candidate: &resource}
 			a.Actions[action.ID] = action
 			existing := resource
 			switch kind {
@@ -77,7 +80,7 @@ func TestIntentDispositionPostimageRetainsOneExistingResourceDeterministically(t
 	at := time.Date(2026, 10, 22, 0, 0, 0, 0, time.UTC)
 	resource := state.Resource{Address: address.Resource("sysbox_node", "node"), Driver: "docker", Private: json.RawMessage(`{"identity":"fixture"}`), ExternalID: "external", OwnerUID: "owner", ResourceUID: "resource", Generation: 1, CreatedAt: at.Add(-time.Hour)}
 	a.State.Resources = []state.Resource{resource}
-	a.Actions["action"] = runtime.ActionRecord{ID: "action", Topology: "lab", RunID: "run", Resource: resource.Address, Action: controlplane.PlanActionDelete, Revision: 1, Status: runtime.ActionUncertain, OwnerUID: "owner", ResourceUID: "resource", Generation: 1, ExpectedSerial: 1, Candidate: &resource}
+	a.Actions["action"] = runtime.ActionRecord{ID: "action", Topology: "lab", RunID: "run", Resource: resource.Address, Action: model.PlanActionDelete, Revision: 1, Status: runtime.ActionUncertain, OwnerUID: "owner", ResourceUID: "resource", Generation: 1, ExpectedSerial: 1, Candidate: &resource}
 	d := controlplane.IntentDispositionDecision{ID: "decision", ExpectedSerial: 1, Actions: []controlplane.IntentDispositionAction{{ActionID: "action", Decision: "retain", ResourceUID: "resource", Generation: 1, ExternalID: "external"}}}
 	raw, err := json.Marshal(a)
 	require.NoError(t, err)
@@ -106,7 +109,7 @@ func TestResetSourceDispositionPreservesOldGenerationAndReservesTargetHistory(t 
 	require.NoError(t, source.SetProviderState(json.RawMessage(`{"identity":"fixture"}`)))
 	require.NoError(t, source.SetRuntimeValue("reset_handle", "old-action-handle"))
 	a.State.Resources = []state.Resource{source}
-	a.Actions["reset"] = runtime.ActionRecord{ID: "reset", Topology: "lab", RunID: "run", Resource: source.Address, Action: controlplane.PlanActionReset, Phase: "destroying", ReplayForbidden: true, Revision: 1, Status: runtime.ActionUncertain, OwnerUID: "owner", ResourceUID: "resource", Generation: 2, ExpectedSerial: 1, Candidate: &source}
+	a.Actions["reset"] = runtime.ActionRecord{ID: "reset", Topology: "lab", RunID: "run", Resource: source.Address, Action: model.PlanActionReset, Phase: "destroying", ReplayForbidden: true, Revision: 1, Status: runtime.ActionUncertain, OwnerUID: "owner", ResourceUID: "resource", Generation: 2, ExpectedSerial: 1, Candidate: &source}
 	d := controlplane.IntentDispositionDecision{ID: "decision", ExpectedSerial: 1, Actions: []controlplane.IntentDispositionAction{{ActionID: "reset", Decision: "retain", ResourceUID: "resource", Generation: 2, ExternalID: "source"}}}
 	archive, err := intentDispositionPostimage(a, d, time.Now().UTC())
 	require.NoError(t, err)
@@ -134,7 +137,7 @@ func TestIncompleteDispositionRetainsAttachmentEvidence(t *testing.T) {
 	a.Serial = 1
 	r := state.Resource{Address: address.Resource("sysbox_node", "node"), Driver: "docker", ExternalID: "external", OwnerUID: "owner", ResourceUID: "resource", Generation: 1, Attachments: []state.Attachment{{Name: "eth0", Driver: "docker", Node: address.Resource("sysbox_node", "node"), Network: address.Resource("sysbox_network", "lan"), MAC: "02:00:00:00:00:01"}}}
 	require.NoError(t, r.SetProviderState(json.RawMessage(`{"identity":"fixture"}`)))
-	a.Actions["action"] = runtime.ActionRecord{ID: "action", Topology: "lab", RunID: "run", Resource: r.Address, Action: controlplane.PlanActionCreate, Revision: 1, Status: runtime.ActionUncertain, OwnerUID: "owner", ResourceUID: "resource", Generation: 1, ExpectedSerial: 1, Candidate: &r}
+	a.Actions["action"] = runtime.ActionRecord{ID: "action", Topology: "lab", RunID: "run", Resource: r.Address, Action: model.PlanActionCreate, Revision: 1, Status: runtime.ActionUncertain, OwnerUID: "owner", ResourceUID: "resource", Generation: 1, ExpectedSerial: 1, Candidate: &r}
 	d := controlplane.IntentDispositionDecision{ID: "decision", ExpectedSerial: 1, Actions: []controlplane.IntentDispositionAction{{ActionID: "action", Decision: "retain-incomplete", ResourceUID: "resource", Generation: 1, ExternalID: "external"}}}
 	_, err := intentDispositionPostimage(a, d, time.Now().UTC())
 	require.NoError(t, err)
@@ -164,7 +167,7 @@ func TestResetSourceDispositionKeepsPinnedSSHAndRejectsChangedDependency(t *test
 			a.State.TopologyUID = "owner"
 			a.Serial = 1
 			a.State.Resources = []state.Resource{source, previous}
-			action := runtime.ActionRecord{ID: "reset", Topology: "lab", RunID: "run", Resource: source.Address, Action: controlplane.PlanActionReset, Phase: "destroying", ReplayForbidden: true, Revision: 1, Status: runtime.ActionUncertain, OwnerUID: "owner", ResourceUID: "resource", Generation: 2, ExpectedSerial: 1, Candidate: &source, ResetSSH: []runtime.ResetSSHDependency{{Previous: previous, DesiredDigest: "desired", ActionID: depID, Config: cfg}}}
+			action := runtime.ActionRecord{ID: "reset", Topology: "lab", RunID: "run", Resource: source.Address, Action: model.PlanActionReset, Phase: "destroying", ReplayForbidden: true, Revision: 1, Status: runtime.ActionUncertain, OwnerUID: "owner", ResourceUID: "resource", Generation: 2, ExpectedSerial: 1, Candidate: &source, ResetSSH: []runtime.ResetSSHDependency{{Previous: previous, DesiredDigest: "desired", ActionID: depID, Config: cfg}}}
 			require.NoError(t, action.ValidateResetSSH(a.State))
 			switch mode {
 			case "changed":
@@ -196,7 +199,7 @@ func TestResetSourceDispositionKeepsPinnedSSHAndRejectsChangedDependency(t *test
 
 func TestAbsentDispositionCanRemoveAttachmentMetadataOnlyWithSignedCoverage(t *testing.T) {
 	a, action, d := resetSSHDispositionFixture(t)
-	action.Action = controlplane.PlanActionDelete
+	action.Action = model.PlanActionDelete
 	action.Generation = 1
 	action.Phase = ""
 	action.EffectComplete = false
@@ -213,7 +216,7 @@ func TestAbsentDispositionCanRemoveAttachmentMetadataOnlyWithSignedCoverage(t *t
 	_, journal, err := FenceJournal(run, a.Serial, actionValues(a))
 	require.NoError(t, err)
 	d.JournalSHA256 = journal
-	report := controlplane.RunRecoveryReport{RunID: run.ID, AgentID: run.AgentID, QueuedAt: run.QueuedAt, Revision: run.Revision, RunAttempt: 1, Mode: controlplane.RunRecoveryObserve, TopologyUID: "owner", StateSerial: a.Serial, Resources: []controlplane.RecoveredResource{{ActionID: action.ID, Resource: action.Resource.String(), OwnerUID: action.OwnerUID, ResourceUID: action.ResourceUID, Generation: 1, ExternalID: action.Candidate.ExternalID, JournalStatus: string(action.Status), Status: "absent", ProviderScope: "local-only", DeleteResidueAbsent: true}}}
+	report := controlplane.RunRecoveryReport{RunID: run.ID, AgentID: run.AgentID, QueuedAt: run.QueuedAt, Revision: run.Revision, RunAttempt: 1, Mode: controlplane.RunRecoveryObserve, TopologyUID: "owner", StateSerial: a.Serial, Resources: []model.RecoveredResource{{ActionID: action.ID, Resource: action.Resource.String(), OwnerUID: action.OwnerUID, ResourceUID: action.ResourceUID, Generation: 1, ExternalID: action.Candidate.ExternalID, JournalStatus: string(action.Status), Status: "absent", ProviderScope: "local-only", DeleteResidueAbsent: true}}}
 	d.ObservationSHA256 = evidenceHash(report)
 	require.Error(t, ValidateIntentDispositionChoice(d, run, a.Serial, actionValues(a), report))
 	report.Resources[0].AttachmentResidueAbsent = true
@@ -227,7 +230,7 @@ func TestAbsentDispositionCanRemoveAttachmentMetadataOnlyWithSignedCoverage(t *t
 
 func TestIncompleteDispositionDoesNotNormalizeOriginalCandidate(t *testing.T) {
 	a, action, d := resetSSHDispositionFixture(t)
-	action.Action = controlplane.PlanActionCreate
+	action.Action = model.PlanActionCreate
 	action.ResetSSH = nil
 	action.Replacement = nil
 	action.Phase = ""

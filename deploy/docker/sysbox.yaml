@@ -2,6 +2,10 @@ version: 1
 
 api:
   listen: ":9876"
+  execution_grant:
+    signing_key_file: /etc/sysbox-api/issuer.key
+    host_public_key_files:
+      local-docker: /etc/sysbox-api/host.pub
   console:
     default_timeout: 1h
     max_timeout: 24h
@@ -57,6 +61,9 @@ providers:
   firecracker:
     enabled: false
     binary: /opt/sysbox/bin/firecracker
+    jailer: /opt/sysbox/bin/jailer
+    jail_root: /var/lib/sysbox/jails
+    cgroup_parent: sysbox/firecracker
     workdir: /var/lib/sysbox/firecracker
   libvirt:
     enabled: false

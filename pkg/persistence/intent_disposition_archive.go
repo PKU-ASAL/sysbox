@@ -4,18 +4,20 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"encoding/json"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/runtime"
-	"github.com/oslab/sysbox/pkg/state"
 	"math"
 	"strings"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
+	"github.com/oslab/sysbox/pkg/runtime"
+	"github.com/oslab/sysbox/pkg/state"
 )
 
 // intentDispositionPostimage builds a candidate lifecycle postimage after the
 // caller authenticates and prepares the exact fenced decision. It is not an
 // independently callable repository mutation and does not release authority.
-func intentDispositionPostimage(a *aggregate, d controlplane.IntentDispositionDecision, at time.Time, observations ...controlplane.RecoveredResource) (map[string]runtime.ActionRecord, error) {
+func intentDispositionPostimage(a *aggregate, d controlplane.IntentDispositionDecision, at time.Time, observations ...model.RecoveredResource) (map[string]runtime.ActionRecord, error) {
 	if a == nil || a.State == nil || d.ID == "" || d.ExpectedSerial != a.Serial || a.Serial == math.MaxInt64 || at.IsZero() || len(d.Actions) == 0 {
 		return nil, ErrConflict
 	}
@@ -38,7 +40,7 @@ func intentDispositionPostimage(a *aggregate, d controlplane.IntentDispositionDe
 			}
 			action = resolved
 		}
-		if ok && action.Action == controlplane.PlanActionReset && action.Phase == "verifying" && len(action.ResetSSH) > 0 {
+		if ok && action.Action == model.PlanActionReset && action.Phase == "verifying" && len(action.ResetSSH) > 0 {
 			if resolved, err := runtime.ResetSSHWithObservedResults(action, observations); err == nil {
 				action = resolved
 			}
@@ -75,7 +77,7 @@ func intentDispositionPostimage(a *aggregate, d controlplane.IntentDispositionDe
 		}
 		incomplete := choice.Decision == "retain-incomplete" || choice.Decision == "retain-replacement-incomplete"
 		replacement := choice.Decision == "retain-replacement-incomplete" && action.ResetReplacementRecorded()
-		if !ok || runtime.ActionSettled(action) || action.OwnerUID != next.State.TopologyUID || action.Candidate == nil || (action.Replacement != nil && !replacement) || (action.Action == controlplane.PlanActionReset && !action.ResetBeforeReplacement() && !replacement) || (len(action.ResetSSH) > 0 && (!action.ResetBeforeReplacement() || choice.Decision != "retain")) || (action.ReplayForbidden && !action.EffectComplete && !action.ResetBeforeReplacement() && !incomplete) || addresses[action.Resource.String()] {
+		if !ok || runtime.ActionSettled(action) || action.OwnerUID != next.State.TopologyUID || action.Candidate == nil || (action.Replacement != nil && !replacement) || (action.Action == model.PlanActionReset && !action.ResetBeforeReplacement() && !replacement) || (len(action.ResetSSH) > 0 && (!action.ResetBeforeReplacement() || choice.Decision != "retain")) || (action.ReplayForbidden && !action.EffectComplete && !action.ResetBeforeReplacement() && !incomplete) || addresses[action.Resource.String()] {
 			return nil, ErrConflict
 		}
 		if len(action.ResetSSH) > 0 {
@@ -348,9 +350,9 @@ func validIntentRecoveryResolution(record IntentDispositionArchive, choice contr
 		return false
 	}
 	switch action.Action {
-	case controlplane.PlanActionDelete:
+	case model.PlanActionDelete:
 		return action.Generation == choice.Generation && action.Candidate.Generation == choice.Generation && action.Candidate.ExternalID == choice.ExternalID && sameIntentProviderState(*action.Candidate, *expected)
-	case controlplane.PlanActionReset:
+	case model.PlanActionReset:
 		return action.Generation > choice.Generation && action.Candidate.Generation == action.Generation && action.Phase == "verifying" && action.EffectComplete && !action.Candidate.RecoveryRequired()
 	}
 	return false

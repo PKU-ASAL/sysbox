@@ -7,11 +7,10 @@ import (
 	"github.com/hashicorp/hcl/v2"
 
 	"github.com/oslab/sysbox/pkg/address"
-
 	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
@@ -34,11 +33,11 @@ func (DataNodeResourceHandler) Schema() ResourceSchema {
 	return ResourceSchemaFor("data_sysbox_node")
 }
 
-func (DataNodeResourceHandler) Read(_ context.Context, current state.Resource) (ResourceReadResult, error) {
+func (DataNodeResourceHandler) Read(_ context.Context, current state.Resource, providers *driver.Registry) (ResourceReadResult, error) {
 	return resourceReadOK(current), nil
 }
 
-func (DataNodeResourceHandler) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
+func (DataNodeResourceHandler) PlanDiff(desired *graph.Node, current *state.Resource) (model.PlannedChange, error) {
 	return planDiffForDataSource(desired, current)
 }
 
@@ -68,7 +67,7 @@ func (e *Executor) readDataNodeResource(ctx context.Context, n *graph.Node) (sta
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("data sysbox_node.%s: %w", n.Address.Name, err)
 	}
-	importDriver, err := driver.DefaultRegistry.RequireImport(subName)
+	importDriver, err := e.providers.RequireImport(subName)
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("data sysbox_node.%s: %w", n.Address.Name, err)
 	}
@@ -82,7 +81,7 @@ func (e *Executor) readDataNodeResource(ctx context.Context, n *graph.Node) (sta
 		"container_id": handle.ID,
 		"primary_ip":   handle.Net.PrimaryIP,
 	}
-	stateDriver, err := driver.DefaultRegistry.RequireNodeState(subName)
+	stateDriver, err := e.providers.RequireNodeState(subName)
 	if err != nil {
 		return state.Resource{}, err
 	}
@@ -115,11 +114,11 @@ func (DataNetworkResourceHandler) Schema() ResourceSchema {
 	return ResourceSchemaFor("data_sysbox_network")
 }
 
-func (DataNetworkResourceHandler) Read(_ context.Context, current state.Resource) (ResourceReadResult, error) {
+func (DataNetworkResourceHandler) Read(_ context.Context, current state.Resource, providers *driver.Registry) (ResourceReadResult, error) {
 	return resourceReadOK(current), nil
 }
 
-func (DataNetworkResourceHandler) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
+func (DataNetworkResourceHandler) PlanDiff(desired *graph.Node, current *state.Resource) (model.PlannedChange, error) {
 	return planDiffForDataSource(desired, current)
 }
 
@@ -139,7 +138,7 @@ func (DataNetworkResourceHandler) ExternalID(current state.Resource) string {
 	return current.Str("id")
 }
 
-func (DataNetworkResourceHandler) DecodeData(d config.DataBlock, ctx *hcl.EvalContext) (any, []address.Address, error) {
+func (DataNetworkResourceHandler) DecodeData(d config.DataBlock, ctx *hcl.EvalContext, providers *driver.Registry) (any, []address.Address, error) {
 	cfg := &config.DataNetworkConfig{}
 	if err := decodeDataBody(d.Remain, ctx, cfg, "sysbox_network", d.Name); err != nil {
 		return nil, nil, err
@@ -153,7 +152,7 @@ func (e *Executor) readDataNetworkResource(ctx context.Context, n *graph.Node) (
 		return state.Resource{}, fmt.Errorf("data sysbox_network.%s: wrong data type", n.Address.Name)
 	}
 
-	networkDriver, err := driver.DefaultRegistry.RequireNetwork("docker")
+	networkDriver, err := e.providers.RequireNetwork("docker")
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("data sysbox_network.%s: requires docker substrate: %w", n.Address.Name, err)
 	}
@@ -192,11 +191,11 @@ func (DataImageResourceHandler) Schema() ResourceSchema {
 	return ResourceSchemaFor("data_sysbox_image")
 }
 
-func (DataImageResourceHandler) Read(_ context.Context, current state.Resource) (ResourceReadResult, error) {
+func (DataImageResourceHandler) Read(_ context.Context, current state.Resource, providers *driver.Registry) (ResourceReadResult, error) {
 	return resourceReadOK(current), nil
 }
 
-func (DataImageResourceHandler) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
+func (DataImageResourceHandler) PlanDiff(desired *graph.Node, current *state.Resource) (model.PlannedChange, error) {
 	return planDiffForDataSource(desired, current)
 }
 
@@ -226,7 +225,7 @@ func (e *Executor) readDataImageResource(ctx context.Context, n *graph.Node) (st
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("data sysbox_image.%s: %w", n.Address.Name, err)
 	}
-	artifactDriver, err := driver.DefaultRegistry.RequireArtifact(subName)
+	artifactDriver, err := e.providers.RequireArtifact(subName)
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("data sysbox_image.%s: %w", n.Address.Name, err)
 	}

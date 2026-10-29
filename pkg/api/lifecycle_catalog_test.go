@@ -6,11 +6,12 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/runtime"
-	"github.com/stretchr/testify/require"
 )
 
 func TestLifecycleCatalogUsesDatabaseWithoutFakeTopology(t *testing.T) {
@@ -52,7 +53,7 @@ func TestLifecycleCatalogIncludesUnresolvedFirstCreate(t *testing.T) {
 	require.NoError(t, err)
 	st, err := repo.LoadState(ctx, "lab")
 	require.NoError(t, err)
-	require.NoError(t, repo.CommitActionIntent(ctx, runtime.ActionRecord{ID: "pending", RunID: "run", Topology: "lab", Resource: address.Resource("sysbox_node", "web"), Action: controlplane.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: st.TopologyUID, ResourceUID: "web-uid", Generation: 1}))
+	require.NoError(t, repo.CommitActionIntent(ctx, runtime.ActionRecord{ID: "pending", RunID: "run", Topology: "lab", Resource: address.Resource("sysbox_node", "web"), Action: model.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: st.TopologyUID, ResourceUID: "web-uid", Generation: 1}))
 	listed, err := s.workspaceService().List(ctx)
 	require.NoError(t, err)
 	require.Len(t, listed, 1)

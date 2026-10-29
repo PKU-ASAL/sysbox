@@ -10,9 +10,9 @@ import (
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
@@ -41,7 +41,7 @@ func TestNodeResourceHandlerPlanDiff(t *testing.T) {
 
 	action, err := p.PlanDiff(n, current)
 	require.NoError(t, err)
-	require.Equal(t, controlplane.PlanActionNoop, action.Action)
+	require.Equal(t, model.PlanActionNoop, action.Action)
 
 	n.Data = &config.NodeConfig{
 		Image:     "sysbox_image.alpine.id",
@@ -50,14 +50,14 @@ func TestNodeResourceHandlerPlanDiff(t *testing.T) {
 	}
 	action, err = p.PlanDiff(n, current)
 	require.NoError(t, err)
-	require.Equal(t, controlplane.PlanActionReplace, action.Action)
+	require.Equal(t, model.PlanActionReplace, action.Action)
 	change, ok := fieldChangeAt(action.Changes, "env.TOKEN")
 	require.True(t, ok)
 	require.True(t, change.Sensitive)
 }
 
 func TestNodeResourceHandlerDeleteMissingSubstrateReturnsError(t *testing.T) {
-	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
+	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion}, driver.DefaultRegistry)
 	res := state.Resource{
 		Address:    address.Resource("sysbox_node", "web"),
 		Driver:     "missing-node-provider",
@@ -167,7 +167,7 @@ func TestDestroyNodeRetriesPartiallyDeletedAttachments(t *testing.T) {
 	st.AddResource(state.Resource{Address: network, Attributes: state.MustAttributes(map[string]any{})})
 	res := state.Resource{Address: address.Resource("sysbox_node", "web"), Driver: sub.name, ExternalID: "node", Attachments: []state.Attachment{{Name: "first", Network: network}, {Name: "second", Network: network}}}
 	st.AddResource(res)
-	e := NewExecutor(graph.New(), st)
+	e := NewExecutor(graph.New(), st, driver.DefaultRegistry)
 	require.ErrorContains(t, e.destroyNodeResource(context.Background(), res), "second failed")
 	require.Zero(t, sub.destroyCalls)
 	require.NotNil(t, st.FindResource(res.Address))
@@ -185,7 +185,7 @@ func TestDestroyNodePreservesEvidenceWhenAttachmentDeleteFails(t *testing.T) {
 	st.AddResource(state.Resource{Address: network, Attributes: state.MustAttributes(map[string]any{})})
 	resource := state.Resource{Address: address.Resource("sysbox_node", "web"), Driver: sub.name, ExternalID: "node", Attachments: []state.Attachment{{Name: "nic", Network: network, Driver: sub.name}}}
 	st.AddResource(resource)
-	err := NewExecutor(graph.New(), st).destroyNodeResource(context.Background(), resource)
+	err := NewExecutor(graph.New(), st, driver.DefaultRegistry).destroyNodeResource(context.Background(), resource)
 	require.ErrorIs(t, err, sub.attachmentDeleteErr)
 	require.Zero(t, sub.destroyCalls)
 	require.NotNil(t, st.FindResource(resource.Address))
@@ -204,7 +204,7 @@ func TestDestroyNodeValidatesRecoveryEvidenceBeforeEffects(t *testing.T) {
 			}
 			st := &state.State{Version: state.SchemaVersion}
 			st.AddResource(resource)
-			require.Error(t, NewExecutor(graph.New(), st).destroyNodeResource(context.Background(), resource))
+			require.Error(t, NewExecutor(graph.New(), st, driver.DefaultRegistry).destroyNodeResource(context.Background(), resource))
 			require.Zero(t, sub.stopCalls)
 			require.Zero(t, sub.destroyCalls)
 			require.Empty(t, sub.deletedAttachments)
@@ -297,7 +297,7 @@ func TestDestroyNodeDeletesTypedAttachments(t *testing.T) {
 	st.AddResource(state.Resource{Address: address.Resource("sysbox_network", "public"), Attributes: map[string]any{"nat": true, "docker_network_id": "net-1"}})
 	resource := state.Resource{Address: address.Resource("sysbox_node", "web"), Driver: sub.name, Attributes: map[string]any{"container_id": "node-id"}, Attachments: []state.Attachment{{Name: "uplink", Network: address.Resource("sysbox_network", "public"), Driver: sub.name, DriverState: json.RawMessage(`{"id":"opaque"}`)}}}
 	st.AddResource(resource)
-	exec := NewExecutor(graph.New(), st)
+	exec := NewExecutor(graph.New(), st, driver.DefaultRegistry)
 	require.NoError(t, exec.destroyNodeResource(context.Background(), resource))
 	require.Len(t, sub.deletedAttachments, 1)
 	require.JSONEq(t, `{"id":"opaque"}`, string(sub.deletedAttachments[0]))
@@ -310,7 +310,7 @@ func TestDestroyNodePreservesStateWhenProviderCleanupFails(t *testing.T) {
 	resource := state.Resource{Address: address.Resource("sysbox_node", "worker"), Driver: sub.name, Attributes: map[string]any{"container_id": "node-id"}}
 	st := &state.State{Version: state.SchemaVersion}
 	st.AddResource(resource)
-	exec := NewExecutor(graph.New(), st)
+	exec := NewExecutor(graph.New(), st, driver.DefaultRegistry)
 
 	err := exec.destroyNodeResource(context.Background(), resource)
 	require.ErrorIs(t, err, cleanupErr)
@@ -335,7 +335,7 @@ func TestNodeResourceHandlerRunsGuestNetworkInitLifecycle(t *testing.T) {
 		coldPlug:         true,
 	}
 	registerPortTestDriver(t, sub)
-	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
+	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion}, driver.DefaultRegistry)
 	exec.state.AddResource(state.Resource{Address: address.Resource("sysbox_image", "base"), Driver: sub.name, Attributes: map[string]any{"image_id": "image-id", "repository": "base", "guest_family": "linux"}})
 	exec.state.AddResource(state.Resource{Address: address.Resource("sysbox_network", "matrix"), Driver: "network", Attributes: map[string]any{"cidr": "10.44.0.0/24"}})
 	n := &graph.Node{Address: address.Resource("sysbox_node", "node"), Data: &config.NodeConfig{
@@ -360,7 +360,7 @@ func TestNodeResourceHandlerRejectsNonConvergedGuestNetwork(t *testing.T) {
 		coldPlug:         true,
 	}
 	registerPortTestDriver(t, sub)
-	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
+	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion}, driver.DefaultRegistry)
 	exec.state.AddResource(state.Resource{Address: address.Resource("sysbox_image", "base"), Driver: sub.name, Attributes: map[string]any{"image_id": "image-id", "repository": "base", "guest_family": "linux"}})
 	n := &graph.Node{Address: address.Resource("sysbox_node", "node"), Data: &config.NodeConfig{Image: "sysbox_image.base.id", Substrate: sub.name}}
 
@@ -375,7 +375,7 @@ func TestNodeResourceHandlerPortsArePassedAndResolved(t *testing.T) {
 		exposures: []string{substrate.PortExposureNone, substrate.PortExposureDirect, substrate.PortExposureHost},
 	}
 	registerPortTestDriver(t, sub)
-	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
+	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion}, driver.DefaultRegistry)
 	exec.state.AddResource(state.Resource{
 		Address: address.Resource("sysbox_image", "nginx"),
 		Driver:  "port-test",
@@ -415,7 +415,7 @@ func TestNodeResourceHandlerPortsArePassedAndResolved(t *testing.T) {
 func TestNodeResourceHandlerPreservesTypedProviderConfig(t *testing.T) {
 	sub := &portTestSubstrate{name: "typed-config-test"}
 	registerPortTestDriver(t, sub)
-	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
+	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion}, driver.DefaultRegistry)
 	exec.state.AddResource(state.Resource{
 		Address:    address.Resource("sysbox_image", "base"),
 		Driver:     sub.name,
@@ -462,7 +462,7 @@ func TestNodeProviderLaunchChangeRequiresReplacement(t *testing.T) {
 	change, err := NodeResourceHandler{}.PlanDiff(node, current)
 
 	require.NoError(t, err)
-	require.Equal(t, controlplane.PlanActionReplace, change.Action)
+	require.Equal(t, model.PlanActionReplace, change.Action)
 	_, found := fieldChangeAt(change.Changes, "provider_config.command.value[1]")
 	require.True(t, found)
 }
@@ -485,7 +485,7 @@ func TestNodeAliasChangeRequiresReplacement(t *testing.T) {
 	change, err := NodeResourceHandler{}.PlanDiff(node, current)
 
 	require.NoError(t, err)
-	require.Equal(t, controlplane.PlanActionReplace, change.Action)
+	require.Equal(t, model.PlanActionReplace, change.Action)
 	aliasChange, found := fieldChangeAt(change.Changes, "links[0].Aliases[1]")
 	require.True(t, found)
 	require.Equal(t, "database", aliasChange.After)
@@ -497,7 +497,7 @@ func TestNodeResourceHandlerRejectsUnsupportedPortExposure(t *testing.T) {
 		exposures: []string{substrate.PortExposureNone, substrate.PortExposureDirect},
 	}
 	registerPortTestDriver(t, sub)
-	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
+	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion}, driver.DefaultRegistry)
 	exec.state.AddResource(state.Resource{
 		Address: address.Resource("sysbox_image", "nginx"),
 		Driver:  "port-direct-only",

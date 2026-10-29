@@ -14,7 +14,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -33,12 +32,9 @@ const (
 )
 
 type Options struct {
-	HostSupervisorSocket string
-	// RequireHostSupervisor is enabled by the production Agent command. Local
-	// unit fixtures may leave it false to exercise the explicit in-process CLI
-	// executor without making that path a remote control-plane fallback.
-	RequireHostSupervisor       bool
-	observationSequence         *atomic.Uint64
+	HostSupervisorSocket        string
+	HostPublicKeyFile           string
+	hostPublicKey               ed25519.PublicKey
 	ExecutionSessionFile        string
 	ExecutionSessionID          string
 	ExecutionGrantPublicKeyFile string
@@ -54,8 +50,6 @@ type Options struct {
 	RunRenewInterval            time.Duration
 	RunRenewTTL                 time.Duration
 	Policy                      config.AgentPolicyConfig
-	CapacityPath                string
-	ArtifactPaths               []string
 	ReportGuestFileStartFunc    func(context.Context, string) error
 	RequestTimeout              time.Duration
 
@@ -65,13 +59,23 @@ type Options struct {
 	httpClient *http.Client
 }
 
-func Run(ctx context.Context, opts Options, bridge Bridge) error {
+func Run(ctx context.Context, opts Options) error {
 	if opts.APIURL == "" {
 		return fmt.Errorf("api url is required")
 	}
-	if bridge == nil {
-		return fmt.Errorf("agent bridge is required")
+	if opts.HostSupervisorSocket == "" {
+		return fmt.Errorf("agent requires a host supervisor socket")
 	}
+	if opts.Token != "" {
+		return fmt.Errorf("Agent must not retain an administrator API token; re-enroll its identity")
+	}
+	public, err := os.ReadFile(opts.HostPublicKeyFile)
+	if err != nil || len(public) != ed25519.PublicKeySize {
+		return fmt.Errorf("Agent requires the pinned host public key")
+	}
+	opts.hostPublicKey = public
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	if opts.ID == "" {
 		opts.ID = DefaultAgentID
 	}
@@ -88,10 +92,13 @@ func Run(ctx context.Context, opts Options, bridge Bridge) error {
 		opts.RequestTimeout = 30 * time.Second
 	}
 	opts.httpClient = &http.Client{Timeout: opts.RequestTimeout}
+	defer opts.httpClient.CloseIdleConnections()
 	opts.APIURL = strings.TrimRight(opts.APIURL, "/")
-	if len(opts.Capabilities) == 0 {
-		opts.Capabilities, _ = agent.DetectCapabilities()
+	probe, err := opts.observeHost(ctx, "probe-"+uuid.NewString())
+	if err != nil {
+		return err
 	}
+	opts.Capabilities = append([]string(nil), probe.Inventory.Capabilities...)
 	if opts.HostSupervisorSocket != "" && !slices.Contains(opts.Capabilities, controlplane.RunRecoveryCapability) {
 		opts.Capabilities = append(opts.Capabilities, controlplane.RunRecoveryCapability)
 	}
@@ -119,12 +126,18 @@ func Run(ctx context.Context, opts Options, bridge Bridge) error {
 		return err
 	}
 	opts.ExecutionSessionID = session.ID
-	opts.observationSequence = &atomic.Uint64{}
 
-	executor := NewExecutorWithBridge(remoteBridge{Bridge: bridge, reporter: opts})
-	go heartbeatLoop(ctx, opts)
-	go observeLoop(ctx, opts, bridge)
-	runner := newCommandRunner(executor, opts)
+	runner := newCommandRunner(opts)
+	var workers sync.WaitGroup
+	workers.Add(2)
+	go func() { defer workers.Done(); heartbeatLoop(ctx, opts) }()
+	go func() { defer workers.Done(); observeLoop(ctx, opts) }()
+	defer func() {
+		// The command reader has returned, so no more workers can be admitted.
+		cancel()
+		workers.Wait()
+		runner.workers.Wait()
+	}()
 	for {
 		if err := commandWebSocketAndExecute(ctx, runner, opts); err != nil && ctx.Err() == nil {
 			fmt.Printf("[agent] command websocket disconnected: %v\n", err)
@@ -159,30 +172,42 @@ func heartbeatLoop(ctx context.Context, opts Options) {
 	}
 }
 
-func observeLoop(ctx context.Context, opts Options, bridge Bridge) {
+func observeLoop(ctx context.Context, opts Options) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
-	reportObserved(ctx, opts, bridge)
+	reportObserved(ctx, opts)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			reportObserved(ctx, opts, bridge)
+			reportObserved(ctx, opts)
 		}
 	}
 }
 
-func reportObserved(ctx context.Context, opts Options, bridge Bridge) {
-	projections := Observe(ctx, opts.ID, bridge)
-	for _, proj := range projections {
-		if err := opts.ReportResourceProjection(ctx, proj); err != nil {
-			fmt.Printf("[agent] report projection %s failed: %v\n", proj.Topology, err)
-		}
+func reportObserved(ctx context.Context, opts Options) {
+	observation, err := opts.observeHost(ctx, opts.ExecutionSessionID)
+	if err == nil {
+		err = post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/observations", observation, nil)
 	}
-	if err := opts.ReportInventory(ctx, Inventory(ctx, opts, bridge)); err != nil {
-		fmt.Printf("[agent] report inventory failed: %v\n", err)
+	if err != nil && ctx.Err() == nil {
+		fmt.Printf("[agent] host observation unavailable: %v\n", err)
 	}
+}
+
+func (opts Options) observeHost(ctx context.Context, session string) (controlplane.HostObservation, error) {
+	observation, err := hostsupervisor.NewTaskClient(opts.HostSupervisorSocket, hostsupervisor.TargetRef{}).HostObservation(ctx, hostsupervisor.ObservationRequest{SessionID: session})
+	if err != nil {
+		return observation, err
+	}
+	if observation.AgentID != opts.ID || observation.SessionID != session {
+		return observation, fmt.Errorf("host observation identity mismatch")
+	}
+	if err = controlplane.VerifyHostObservation(opts.hostPublicKey, observation); err != nil {
+		return observation, err
+	}
+	return observation, nil
 }
 
 func heartbeat(ctx context.Context, opts Options) error {
@@ -242,9 +267,13 @@ func commandWebSocketAndExecute(ctx context.Context, runner *commandRunner, opts
 			Status:  "ack",
 			Message: "command received",
 		})
-		go runner.Execute(ctx, &cmd, func(event controlplane.AgentCommandEvent) {
-			reporter.Report(ctx, event)
-		})
+		runner.workers.Add(1)
+		go func() {
+			defer runner.workers.Done()
+			runner.Execute(ctx, &cmd, func(event controlplane.AgentCommandEvent) {
+				reporter.Report(ctx, event)
+			})
+		}()
 	}
 }
 
@@ -255,10 +284,10 @@ func readAgentCommandMessage(ctx context.Context, conn *websocket.Conn) ([]byte,
 }
 
 type commandRunner struct {
-	mu       sync.Mutex
-	executor *Executor
-	opts     Options
-	running  map[string]*trackedCommand
+	mu      sync.Mutex
+	workers sync.WaitGroup
+	opts    Options
+	running map[string]*trackedCommand
 }
 
 type trackedCommand struct {
@@ -266,8 +295,8 @@ type trackedCommand struct {
 	keys   []string
 }
 
-func newCommandRunner(executor *Executor, opts Options) *commandRunner {
-	return &commandRunner{executor: executor, opts: opts, running: map[string]*trackedCommand{}}
+func newCommandRunner(opts Options) *commandRunner {
+	return &commandRunner{opts: opts, running: map[string]*trackedCommand{}}
 }
 
 func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentCommand, report func(controlplane.AgentCommandEvent)) {
@@ -353,41 +382,29 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 		}
 		stopRenew := startRunLeaseRenewal(runCtx, r.opts, claimed)
 		defer stopRenew()
-		if r.opts.RequireHostSupervisor && r.opts.HostSupervisorSocket == "" {
-			emit("failed", "host supervisor is required for remote Run", fmt.Errorf("host supervisor socket is not configured"))
+		if r.opts.HostSupervisorSocket == "" {
+			emit("failed", "host supervisor required", fmt.Errorf("host supervisor socket is not configured"))
 			return
 		}
-		if r.opts.HostSupervisorSocket != "" {
-			completed, err := r.executeAssignedHostRun(runCtx, *claimed, cmd, emit)
-			if err != nil {
-				emit("failed", "host supervisor run failed", err)
-				return
-			}
-			if completed == nil {
-				emit("started", "host supervisor accepted run; awaiting host receipt", nil)
-			} else if completed.Status == controlplane.RunDone {
-				emit("completed", "host supervisor run completed", nil)
-			} else {
-				emit("failed", "host supervisor run failed", errors.New(completed.Err))
-			}
-			return
-		}
-		runCtx, err = r.prepareRunWorkspace(runCtx, *claimed)
+		completed, err := r.executeAssignedHostRun(runCtx, *claimed, cmd, emit)
 		if err != nil {
-			r.executor.bridge.AttachRun(claimed)
-			r.executor.bridge.Finish(claimed, err)
-			r.executor.reportCompletion(runCtx, claimed)
-			emit("failed", "run revision delivery failed", err)
+			emit("failed", "host supervisor run failed", err)
 			return
 		}
-		r.executor.ExecuteContext(runCtx, claimed)
-		emit("completed", "run command completed", nil)
+		if completed == nil {
+			emit("started", "host supervisor accepted run; awaiting host receipt", nil)
+		} else if completed.Status == controlplane.RunDone {
+			emit("completed", "host supervisor run completed", nil)
+		} else {
+			emit("failed", "host supervisor run failed", errors.New(completed.Err))
+		}
+
 	case "session_open":
 		if cmd.Session == nil {
 			emit("failed", "missing session", fmt.Errorf("missing session"))
 			return
 		}
-		if err := openConsoleSession(runCtx, r.opts, r.executor.bridge, *cmd.Session, cmd.Request); err != nil {
+		if err := openConsoleSession(runCtx, r.opts, *cmd); err != nil {
 			fmt.Printf("[agent] console session %s failed: %v\n", cmd.Session.ID, err)
 			emit("failed", "console session failed", err)
 			return
@@ -398,26 +415,12 @@ func (r *commandRunner) Execute(ctx context.Context, cmd *controlplane.AgentComm
 		cmd.Operation.ActionID, cmd.Operation.ResourceUID, cmd.Operation.Generation = cmd.ActionID, cmd.ResourceUID, cmd.Generation
 		cmd.Operation.LeaseOwner, cmd.Operation.LeaseEpoch, cmd.Operation.Attempt = cmd.LeaseOwner, cmd.LeaseEpoch, cmd.Attempt
 		completed := executeGrantedNodeOperation(runCtx, r.opts, *cmd)
-		if cmd.Operation.Operation == "adoption_inspect" || cmd.Operation.Operation == "adoption_apply" || controlplane.IsGuestSSHAccessOperation(cmd.Operation.Operation) {
-			// The host signer owns canonical completion. Worker events report
-			// delivery/execution progress only, never a substitute result.
-			if completed.Status == controlplane.NodeOperationStatusFailed {
-				emit("failed", "host effect outcome unconfirmed", errors.New(completed.Err))
-				return
-			}
-			emit("completed", "host operation completion reported", nil)
-			return
-		}
-		if err := r.opts.ReportNodeOperationComplete(runCtx, completed); err != nil {
-			fmt.Printf("[agent] report node operation %s failed: %v\n", completed.ID, err)
-			emit("failed", "node operation report failed", err)
-			return
-		}
+		// Canonical completion comes only from the host signer, including power.
 		if completed.Status == controlplane.NodeOperationStatusFailed {
-			emit("failed", "node operation failed", errors.New(completed.Err))
+			emit("failed", "host effect outcome unconfirmed", errors.New(completed.Err))
 			return
 		}
-		emit("completed", "node operation completed", nil)
+		emit("completed", "host operation completion reported", nil)
 	case "guest_execution":
 		if cmd.Execution == nil {
 			emit("failed", "missing guest execution", fmt.Errorf("missing guest execution"))
@@ -644,7 +647,16 @@ func (r *commandEventReporter) Report(ctx context.Context, event controlplane.Ag
 	_ = r.conn.Write(ctx, websocket.MessageText, raw)
 }
 
-func openConsoleSession(ctx context.Context, opts Options, bridge Bridge, sess controlplane.ConsoleSession, req controlplane.ConsoleRequest) error {
+func openConsoleSession(ctx context.Context, opts Options, cmd controlplane.AgentCommand) error {
+	if cmd.Session == nil {
+		return errors.New("console session is required")
+	}
+	sess := *cmd.Session
+	if cmd.Request.TimeoutSeconds < 1 {
+		return errors.New("console deadline is required")
+	}
+	ctx, cancel := context.WithDeadline(ctx, sess.CreatedAt.Add(time.Duration(cmd.Request.TimeoutSeconds)*time.Second))
+	defer cancel()
 	wsURL := strings.TrimRight(opts.APIURL, "/") + "/v1/agents/" + opts.ID + "/sessions/" + sess.ID + "/attach"
 	wsURL = strings.Replace(wsURL, "http://", "ws://", 1)
 	wsURL = strings.Replace(wsURL, "https://", "wss://", 1)
@@ -662,97 +674,11 @@ func openConsoleSession(ctx context.Context, opts Options, bridge Bridge, sess c
 		return err
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "")
-	if err := bridge.OpenConsole(ctx, sess, req, conn); err != nil {
+	if err := runGrantedConsole(ctx, opts, cmd, conn); err != nil {
 		_ = writeConsoleFrame(ctx, conn, consoleFrame{Type: "error", Error: err.Error()})
 		return err
 	}
 	return nil
-}
-
-type remoteBridge struct {
-	Bridge
-	reporter Options
-}
-
-func (b remoteBridge) ReportRunComplete(ctx context.Context, run *controlplane.Run, projection controlplane.Projection) error {
-	if run != nil && b.reporter.APIURL != "" && b.reporter.ID != "" && topologyHasVM(ctx, b.Bridge, run.Topology) {
-		resources, err := observeTopology(ctx, b.reporter.ID, b.Bridge, run.Topology)
-		if err != nil {
-			return err
-		}
-		if err := b.reporter.ReportResourceProjection(ctx, resources); err != nil {
-			return err
-		}
-	}
-	return b.reporter.ReportRunComplete(ctx, run, projection)
-}
-
-func topologyHasVM(ctx context.Context, bridge Bridge, topology string) bool {
-	if bridge == nil || topology == "" {
-		return false
-	}
-	mgr, err := bridge.StateManager(topology)
-	if err != nil {
-		return false
-	}
-	st, err := mgr.LoadWithContext(ctx)
-	return err == nil && stateHasVM(st)
-}
-
-func (opts Options) ReportRunComplete(ctx context.Context, run *controlplane.Run, projection controlplane.Projection) error {
-	if run == nil || opts.APIURL == "" || opts.ID == "" {
-		return nil
-	}
-	if projection.AgentID == "" {
-		projection.AgentID = opts.ID
-	}
-	reported := *run
-	reported.Cleanup = nil
-	return post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/runs/"+run.ID+"/complete", controlplane.RunCompletion{
-		Cleanup:    run.Cleanup,
-		Run:        reported,
-		Projection: projection,
-	}, nil)
-}
-
-func (opts Options) ReportResourceProjection(ctx context.Context, projection controlplane.ResourceProjection) error {
-	if opts.APIURL == "" || opts.ID == "" || projection.Topology == "" {
-		return nil
-	}
-	if projection.AgentID == "" {
-		projection.AgentID = opts.ID
-	}
-	if opts.ExecutionSessionID == "" || opts.observationSequence == nil {
-		return fmt.Errorf("observation requires execution session")
-	}
-	projection.SessionID = opts.ExecutionSessionID
-	projection.Sequence = opts.observationSequence.Add(1)
-	return post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/projections/resources", projection, nil)
-}
-
-func (opts Options) ReportInventory(ctx context.Context, inv controlplane.AgentInventory) error {
-	if opts.APIURL == "" || opts.ID == "" {
-		return nil
-	}
-	if inv.AgentID == "" {
-		inv.AgentID = opts.ID
-	}
-	if opts.ExecutionSessionID == "" || opts.observationSequence == nil {
-		return fmt.Errorf("observation requires execution session")
-	}
-	inv.SessionID = opts.ExecutionSessionID
-	inv.Sequence = opts.observationSequence.Add(1)
-	return post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/inventory", inv, nil)
-}
-
-func (opts Options) ReportNodeOperationComplete(ctx context.Context, op controlplane.NodeOperation) error {
-	if opts.APIURL == "" || opts.ID == "" || op.ID == "" {
-		return nil
-	}
-	if op.AgentID == "" {
-		op.AgentID = opts.ID
-	}
-	return post(ctx, opts, opts.APIURL+"/v1/agents/"+opts.ID+"/node-operations/"+op.ID+"/complete", op, nil)
 }
 
 func (opts Options) ReportGuestExecutionStart(ctx context.Context, id string) error {
@@ -840,10 +766,12 @@ func renewRunLease(ctx context.Context, opts Options, run *controlplane.Run) err
 
 func startRunLeaseRenewal(ctx context.Context, opts Options, run *controlplane.Run) func() {
 	renewCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
 	// The executor mutates its own Run as work completes. Renewal owns a fixed
 	// claim copy and never writes the API response into that executing object.
 	claim := *run
 	go func() {
+		defer close(done)
 		ticker := time.NewTicker(opts.RunRenewInterval)
 		defer ticker.Stop()
 		for {
@@ -857,7 +785,7 @@ func startRunLeaseRenewal(ctx context.Context, opts Options, run *controlplane.R
 			}
 		}
 	}()
-	return cancel
+	return func() { cancel(); <-done }
 }
 
 func requestClient(opts Options) *http.Client {
@@ -939,6 +867,9 @@ func (r *commandRunner) executeAssignedHostRun(ctx context.Context, run controlp
 		return nil, controlplane.ErrInvalidExecutionGrant
 	}
 	node := run.Target
+	if cmd.ResourceUID == "" {
+		node = ""
+	}
 	if i := strings.LastIndex(node, "."); i >= 0 {
 		node = node[i+1:]
 	}
@@ -980,7 +911,7 @@ func (r *commandRunner) executeAssignedHostRun(ctx context.Context, run controlp
 		err := post(ctx, r.opts, endpoint+"/renew", map[string]any{"grant": current, "lease_owner": cmd.LeaseOwner}, &next)
 		return next, err
 	}
-	return awaitHostRun(ctx, client, req, run, grant, ed25519.PublicKey(key), renew)
+	return awaitHostRun(hostsupervisor.WithRunInputs(ctx, run.Inputs), client, req, run, grant, ed25519.PublicKey(key), renew)
 }
 
 // The wire protocol carries only the durable terminal Run as evidence.
@@ -990,13 +921,4 @@ func decodeHostRunEvidence(raw json.RawMessage) (*controlplane.Run, error) {
 		return &run, nil
 	}
 	return nil, fmt.Errorf("host supervisor returned non-terminal run evidence")
-}
-
-func (b remoteBridge) PrepareExecution(ctx context.Context, run *controlplane.Run) (context.Context, func(), error) {
-	if provider, ok := b.Bridge.(interface {
-		PrepareExecution(context.Context, *controlplane.Run) (context.Context, func(), error)
-	}); ok {
-		return provider.PrepareExecution(ctx, run)
-	}
-	return ctx, func() {}, nil
 }

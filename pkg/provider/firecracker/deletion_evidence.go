@@ -16,6 +16,7 @@ import (
 // The VM lock remains held through both writes. A cold reader must acquire that
 // lock and independently establish absence; a record alone is not completion.
 type deletionEvidence struct {
+	Jail      *jailIdentity               `json:"jail,omitempty"`
 	Version   int                         `json:"version"`
 	Identity  substrate.OperationIdentity `json:"identity"`
 	VMID      string                      `json:"vm_id"`
@@ -52,7 +53,7 @@ func (s *Substrate) recordStoppedDeletion(ctx context.Context, h substrate.NodeH
 	if err != nil {
 		return err
 	}
-	e := deletionEvidence{Version: 1, Identity: id, VMID: m.VMID, Directory: m.Handle.VMDir, Socket: m.Handle.Socket, Vsock: m.Handle.VsockUDS, Process: m.Process, StoppedAt: time.Now().UTC()}
+	e := deletionEvidence{Jail: m.Jail, Version: 1, Identity: id, VMID: m.VMID, Directory: m.Handle.VMDir, Socket: m.Handle.Socket, Vsock: m.Handle.VsockUDS, Process: m.Process, StoppedAt: time.Now().UTC()}
 	raw, err := json.Marshal(e)
 	if err != nil {
 		return err
@@ -91,7 +92,14 @@ func (s *Substrate) proveDeletedQuiescence(h substrate.NodeHandle, operationID s
 	if !ok || hs == nil || e.Version != 1 || e.Identity != id || operationID != id.ActionID || e.VMID != h.ID || e.Directory != dir || e.StoppedAt.IsZero() || h.Generation != id.Generation || hs.OwnerUID != id.OwnerUID || hs.ResourceUID != id.ResourceUID || hs.TopologyUID != id.TopologyUID || hs.Generation != id.Generation || e.Socket != hs.Socket || e.Vsock != hs.VsockUDS {
 		return zero, fmt.Errorf("firecracker deletion evidence identity conflict")
 	}
-	for _, p := range []string{dir, e.Socket, e.Vsock} {
+	extra := []string{dir, e.Socket, e.Vsock}
+	if e.Jail != nil {
+		extra = append(extra, e.Jail.Root, jailCgroup(e.Jail))
+		if e.Jail.Root != hs.JailRoot {
+			return zero, fmt.Errorf("deleted jail binding mismatch")
+		}
+	}
+	for _, p := range extra {
 		if p == "" {
 			continue
 		}

@@ -7,7 +7,6 @@ import (
 	"github.com/hashicorp/hcl/v2/gohcl"
 
 	"github.com/oslab/sysbox/pkg/address"
-
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/driver"
 )
@@ -23,12 +22,12 @@ func decodeDependsOn(deps []address.Address, items []string) ([]address.Address,
 	return deps, nil
 }
 
-func decodeNodeProviderConfig(cfg *config.NodeConfig, ctx *hcl.EvalContext) error {
+func decodeNodeProviderConfig(cfg *config.NodeConfig, ctx *hcl.EvalContext, providers *driver.Registry) error {
 	subName, err := config.ResolveSubstrateRef(cfg.Substrate)
 	if err != nil {
 		return err
 	}
-	nodeDriver, err := driver.DefaultRegistry.RequireNode(subName)
+	nodeDriver, err := providers.RequireNode(subName)
 	if err != nil {
 		return err
 	}

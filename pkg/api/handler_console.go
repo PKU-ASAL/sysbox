@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/coder/websocket"
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"io"
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/coder/websocket"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 )
 
 func (s *Server) handleCreateConsoleSession(w http.ResponseWriter, r *http.Request) {
@@ -48,7 +51,7 @@ func (s *Server) handleCreateConsoleSession(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, result.Status, result.Session)
 }
 
-func consoleHealthReason(resource controlplane.ResourceHealth) string {
+func consoleHealthReason(resource model.ResourceHealth) string {
 	if resource.Reason != "" {
 		return resource.Reason
 	}

@@ -11,59 +11,51 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 )
 
-func Observe(ctx context.Context, agentID string, bridge Bridge) []controlplane.ResourceProjection {
-	if bridge == nil {
-		return nil
-	}
-	topologies := bridge.Topologies(ctx)
-	out := make([]controlplane.ResourceProjection, 0, len(topologies))
-	for _, topology := range topologies {
-		mgr, err := bridge.StateManager(topology)
-		if err != nil {
-			continue
-		}
-		st, err := mgr.Load()
-		if err != nil || st == nil {
-			continue
-		}
-		if stateHasVM(st) {
-			projection, err := observeTopology(ctx, agentID, bridge, topology)
-			if err == nil {
-				out = append(out, projection)
-			}
-			continue
-		}
-		// Preserve the original Docker observation path and its state semantics.
-		meta, _ := mgr.Metadata(ctx)
-		health := runtime.EvaluateTopologyHealth(ctx, st)
-		out = append(out, controlplane.ResourceProjection{
-			AgentID: agentID, Workspace: topology, Topology: topology,
-			Serial: meta.Serial, ObservedAt: time.Now().UTC(),
-			Health: health, Resources: health.Resources,
-		})
-	}
-	return out
+type HostObservationOptions struct {
+	Capabilities  []string
+	ID            string
+	Labels        map[string]string
+	CapacityPath  string
+	ArtifactPaths []string
 }
 
-func stateHasVM(st *state.State) bool {
-	if st == nil {
-		return false
+type ObservationSource interface {
+	ObservationTopologies(context.Context) ([]string, error)
+	StateManager(string) (*state.Manager, error)
+	HCLFile(string) string
+}
+
+// CollectHostObservation is wired only inside the privileged host service.
+// Failures preserve uncertainty instead of publishing an empty fresh inventory.
+func CollectHostObservation(ctx context.Context, opts HostObservationOptions, source ObservationSource) (controlplane.AgentInventory, []controlplane.ResourceProjection, error) {
+	topologies, err := source.ObservationTopologies(ctx)
+	if err != nil {
+		return controlplane.AgentInventory{}, nil, err
 	}
-	for _, resource := range st.Resources {
-		if resource.Driver == "firecracker" || resource.Driver == "libvirt" {
-			return true
+	projections := make([]controlplane.ResourceProjection, 0, len(topologies))
+	items := make([]controlplane.InventoryItem, 0, len(topologies))
+	for _, name := range topologies {
+		p, err := observeTopology(ctx, opts.ID, source, name)
+		if err != nil {
+			return controlplane.AgentInventory{}, nil, err
 		}
+		projections = append(projections, p)
+		items = append(items, controlplane.InventoryItem{Workspace: p.Workspace, Topology: p.Topology, Serial: p.Serial, ResourceCount: len(p.Resources), Health: string(p.Health.Status), Available: localWorkspaceAvailable(source.HCLFile(name))})
 	}
-	return false
+	resources, artifacts := hostInventory(opts.CapacityPath, opts.ArtifactPaths)
+	return controlplane.AgentInventory{AgentID: opts.ID, Capabilities: append([]string(nil), opts.Capabilities...), Labels: opts.Labels, Resources: resources, Topologies: items, Artifacts: artifacts, ObservedAt: time.Now().UTC()}, projections, nil
 }
 
 // Timestamp the snapshot before probing: a slow older probe must not outrank
 // the completion snapshot. Serial and resources come from the same state read.
-func observeTopology(ctx context.Context, agentID string, bridge Bridge, topology string) (controlplane.ResourceProjection, error) {
+func observeTopology(ctx context.Context, agentID string, bridge interface {
+	StateManager(string) (*state.Manager, error)
+}, topology string) (controlplane.ResourceProjection, error) {
 	observedAt := time.Now().UTC()
 	mgr, err := bridge.StateManager(topology)
 	if err != nil {
@@ -76,7 +68,7 @@ func observeTopology(ctx context.Context, agentID string, bridge Bridge, topolog
 	if st == nil {
 		return controlplane.ResourceProjection{}, fmt.Errorf("state unavailable for topology %q", topology)
 	}
-	health := runtime.EvaluateTopologyHealth(ctx, st)
+	health := runtime.EvaluateTopologyHealth(ctx, st, driver.DefaultRegistry)
 	if err := ctx.Err(); err != nil {
 		return controlplane.ResourceProjection{}, err
 	}
@@ -85,31 +77,6 @@ func observeTopology(ctx context.Context, agentID string, bridge Bridge, topolog
 		Serial: st.Meta.Serial, ObservedAt: observedAt,
 		Health: health, Resources: health.Resources,
 	}, nil
-}
-
-func Inventory(ctx context.Context, opts Options, bridge Bridge) controlplane.AgentInventory {
-	projections := Observe(ctx, opts.ID, bridge)
-	items := make([]controlplane.InventoryItem, 0, len(projections))
-	for _, proj := range projections {
-		items = append(items, controlplane.InventoryItem{
-			Workspace:     proj.Workspace,
-			Topology:      proj.Topology,
-			Serial:        proj.Serial,
-			ResourceCount: len(proj.Resources),
-			Health:        string(proj.Health.Status),
-			Available:     localWorkspaceAvailable(bridge.HCLFile(proj.Topology)),
-		})
-	}
-	resources, artifacts := hostInventory(opts.CapacityPath, opts.ArtifactPaths)
-	return controlplane.AgentInventory{
-		AgentID:      opts.ID,
-		Capabilities: append([]string{}, opts.Capabilities...),
-		Labels:       opts.Labels,
-		Resources:    resources,
-		Topologies:   items,
-		Artifacts:    artifacts,
-		ObservedAt:   time.Now().UTC(),
-	}
 }
 
 func hostInventory(capacityPath string, artifactPaths []string) (controlplane.HostResourceInventory, []controlplane.InventoryItem) {

@@ -12,6 +12,9 @@ import (
 // Resume only durable terminal command outcomes; never reissue session_open or
 // infer a result from an expired lease, a retired delivery alone, or disconnect.
 func (s *AgentService) reconcileConsoleCompletions(ctx context.Context) error {
+	if err := s.reconcileConsoleAuthority(ctx); err != nil {
+		return err
+	}
 	return s.reconcileConsoleCompletion(ctx, "")
 }
 

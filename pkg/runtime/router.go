@@ -8,11 +8,10 @@ import (
 	"github.com/hashicorp/hcl/v2"
 
 	"github.com/oslab/sysbox/pkg/address"
-
 	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/oslab/sysbox/pkg/util"
@@ -34,12 +33,12 @@ func (RouterResourceHandler) Schema() ResourceSchema {
 	return ResourceSchemaFor("sysbox_router")
 }
 
-func (RouterResourceHandler) Read(ctx context.Context, current state.Resource) (ResourceReadResult, error) {
-	result, err := readNodeLikeResource(ctx, current)
+func (RouterResourceHandler) Read(ctx context.Context, current state.Resource, providers *driver.Registry) (ResourceReadResult, error) {
+	result, err := readNodeLikeResource(ctx, current, providers)
 	if err != nil || result.Status != state.ResourcePresent || current.Str("policy_owner") == "" {
 		return result, err
 	}
-	policy, err := driver.DefaultRegistry.RequirePolicy(current.Driver)
+	policy, err := providers.RequirePolicy(current.Driver)
 	if err != nil {
 		return ResourceReadResult{Status: state.ResourceUnknown, Resource: current, Reason: err.Error()}, err
 	}
@@ -61,7 +60,7 @@ func (RouterResourceHandler) Read(ctx context.Context, current state.Resource) (
 	return result, nil
 }
 
-func (RouterResourceHandler) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
+func (RouterResourceHandler) PlanDiff(desired *graph.Node, current *state.Resource) (model.PlannedChange, error) {
 	return planDiffByDesiredHash(desired, current)
 }
 
@@ -71,7 +70,7 @@ func (RouterResourceHandler) Create(ctx context.Context, pc *ProviderContext, n 
 
 func (RouterResourceHandler) Delete(ctx context.Context, pc *ProviderContext, current state.Resource) error {
 	if owner := current.Str("policy_owner"); owner != "" {
-		policy, err := driver.DefaultRegistry.RequirePolicy(current.Driver)
+		policy, err := pc.exec.providers.RequirePolicy(current.Driver)
 		if err != nil {
 			return err
 		}
@@ -92,7 +91,7 @@ func (RouterResourceHandler) ExternalID(current state.Resource) string {
 	}
 	return current.Str("id")
 }
-func (RouterResourceHandler) RequiredCapabilities(node *graph.Node) ([]CapabilityRequirement, error) {
+func (RouterResourceHandler) RequiredCapabilities(node *graph.Node, providers *driver.Registry) ([]CapabilityRequirement, error) {
 	cfg, ok := node.Data.(*config.RouterConfig)
 	if !ok {
 		return nil, nil
@@ -111,7 +110,7 @@ func (RouterResourceHandler) RequiredCapabilities(node *graph.Node) ([]Capabilit
 	return required, nil
 }
 
-func (RouterResourceHandler) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext) (any, []address.Address, error) {
+func (RouterResourceHandler) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext, providers *driver.Registry) (any, []address.Address, error) {
 	cfg := &config.RouterConfig{}
 	if err := config.DecodeResource(&r, cfg, ctx); err != nil {
 		return nil, nil, err
@@ -149,15 +148,15 @@ func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (sta
 	if err != nil {
 		return state.Resource{}, err
 	}
-	nodeDriver, err := driver.DefaultRegistry.RequireNode(subName)
+	nodeDriver, err := e.providers.RequireNode(subName)
 	if err != nil {
 		return state.Resource{}, err
 	}
-	nicDriver, err := driver.DefaultRegistry.RequireNIC(subName)
+	nicDriver, err := e.providers.RequireNIC(subName)
 	if err != nil {
 		return state.Resource{}, err
 	}
-	stateDriver, err := driver.DefaultRegistry.RequireNodeState(subName)
+	stateDriver, err := e.providers.RequireNodeState(subName)
 	if err != nil {
 		return state.Resource{}, err
 	}
@@ -228,7 +227,7 @@ func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (sta
 	}
 
 	if len(cfg.Routes) > 0 {
-		guestNetwork, err := driver.DefaultRegistry.RequireGuestNetwork(subName)
+		guestNetwork, err := e.providers.RequireGuestNetwork(subName)
 		if err != nil {
 			return state.Resource{}, err
 		}
@@ -248,7 +247,7 @@ func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (sta
 			return state.Resource{}, fmt.Errorf("nat_from %q / nat_to %q must reference declared interfaces",
 				cfg.NatFrom, cfg.NatTo)
 		}
-		policy, err := driver.DefaultRegistry.RequirePolicy(subName)
+		policy, err := e.providers.RequirePolicy(subName)
 		if err != nil {
 			return state.Resource{}, err
 		}

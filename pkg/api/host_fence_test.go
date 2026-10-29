@@ -15,13 +15,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
-	"github.com/stretchr/testify/require"
 )
 
 func TestHostFenceAPIRecordsEvidenceWithoutCompletingRun(t *testing.T) {
@@ -97,9 +99,9 @@ func runHostFenceAPIContract(t *testing.T, acceptanceRoot string, releaseCase bo
 				pending := controlplane.Run{ID: "pending-other", Topology: "another", AgentID: "agent", Op: "apply", Status: controlplane.RunAssigned, QueuedAt: time.Now().UTC()}
 				require.NoError(t, store.SaveRun(ctx, pending))
 				var discovered *state.Resource
-				action := runtime.ActionRecord{ID: "action", Topology: "lab", RunID: run.ID, RunQueuedAt: run.QueuedAt, RunRevision: run.Revision, OwnerUID: st.TopologyUID, ResourceUID: "resource", Generation: 1, Resource: address.Resource("sysbox_node", "web"), Action: controlplane.PlanActionCreate, Status: runtime.ActionIntentCommitted}
+				action := runtime.ActionRecord{ID: "action", Topology: "lab", RunID: run.ID, RunQueuedAt: run.QueuedAt, RunRevision: run.Revision, OwnerUID: st.TopologyUID, ResourceUID: "resource", Generation: 1, Resource: address.Resource("sysbox_node", "web"), Action: model.PlanActionCreate, Status: runtime.ActionIntentCommitted}
 				if releaseCase {
-					action.Action = controlplane.PlanActionDelete
+					action.Action = model.PlanActionDelete
 					action.ProviderOperationID = action.ID
 					action.ProviderOperationAnchor = "action:" + action.ID
 					action.Quiescence = "unknown"
@@ -139,7 +141,7 @@ func runHostFenceAPIContract(t *testing.T, acceptanceRoot string, releaseCase bo
 						seed := action
 						seed.ID = "seed"
 						seed.RunID = "older-run"
-						seed.Action = controlplane.PlanActionCreate
+						seed.Action = model.PlanActionCreate
 						require.NoError(t, repo.CommitActionIntent(ctx, seed))
 						records, err := repo.LoadActions(ctx, "lab")
 						require.NoError(t, err)
@@ -154,11 +156,11 @@ func runHostFenceAPIContract(t *testing.T, acceptanceRoot string, releaseCase bo
 
 				}
 				if incompleteCreate {
-					action.Action = controlplane.PlanActionCreate
+					action.Action = model.PlanActionCreate
 					action.ReplayForbidden = true
 				}
 				if resetIntent {
-					action.Action = controlplane.PlanActionReset
+					action.Action = model.PlanActionReset
 					action.Generation = 2
 					action.Phase = "accepted"
 					action.ReplayForbidden = true

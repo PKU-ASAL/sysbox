@@ -9,7 +9,7 @@ import (
 )
 
 // DeleteManagedExternal is the Firecracker provider primitive used by the
-// fenced host GC coordinator. It discovers the durable v2 manifest, verifies
+// fenced host GC coordinator. It discovers the durable manifest, verifies
 // every ownership coordinate, and then uses the normal manifest destroy path.
 // A missing manifest is reported as not found so the coordinator can perform
 // its independent absence observation; ambiguous or incomplete evidence fails
@@ -26,7 +26,7 @@ func (s *Substrate) DeleteManagedExternal(ctx context.Context, externalID, owner
 		return fmt.Errorf("firecracker GC manifest handle identity changed")
 	}
 	if m.Version != manifestVersion {
-		return driver.Wrap(driver.ErrorUnsupported, "firecracker", "GC requires manifest v2", nil)
+		return driver.Wrap(driver.ErrorUnsupported, "firecracker", "GC requires current jail-aware manifest", nil)
 	}
 	handle := manifestHandle(&m)
 	if err := s.DestroyNode(ctx, handle); err != nil {

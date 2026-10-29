@@ -7,16 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/oslab/sysbox/pkg/address"
-	"github.com/oslab/sysbox/pkg/agent"
-	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/driver"
-	"github.com/oslab/sysbox/pkg/hostsupervisor"
-	"github.com/oslab/sysbox/pkg/provider/docker"
-	"github.com/oslab/sysbox/pkg/runtime"
-	"github.com/oslab/sysbox/pkg/state"
-	"github.com/stretchr/testify/require"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -25,6 +15,19 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/oslab/sysbox/pkg/address"
+	"github.com/oslab/sysbox/pkg/agent"
+	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/hostsupervisor"
+	"github.com/oslab/sysbox/pkg/model"
+	"github.com/oslab/sysbox/pkg/provider/docker"
+	"github.com/oslab/sysbox/pkg/runtime"
+	"github.com/oslab/sysbox/pkg/state"
 )
 
 type recoveryTestBridge struct {
@@ -85,7 +88,7 @@ func TestAgentRecoveryRunnerReturnsGenerationWithoutRunningEffects(t *testing.T)
 		return true
 	}, time.Second, time.Millisecond)
 	// No bridge at all on the worker: provider/state access belongs to host.
-	runner := newCommandRunner(NewExecutorWithBridge(nil), Options{HostSupervisorSocket: socket, APIURL: server.URL, ID: "agent", Policy: config.DefaultServiceConfig().Agent.Policy})
+	runner := newCommandRunner(Options{HostSupervisorSocket: socket, APIURL: server.URL, ID: "agent", Policy: config.DefaultServiceConfig().Agent.Policy})
 	cmd := controlplane.AgentCommand{ID: "observe", AgentID: "agent", ActionID: "fence-request", Type: controlplane.RunRecoveryCommand, Run: &run, RecoveryMode: "observe", LeaseOwner: "delivery", Attempt: 1, LeaseUntil: time.Now().Add(time.Minute)}
 	var events []controlplane.AgentCommandEvent
 	runner.Execute(context.Background(), &cmd, func(e controlplane.AgentCommandEvent) { events = append(events, e) })
@@ -109,7 +112,7 @@ func TestAgentRecoveryRunnerReturnsGenerationWithoutRunningEffects(t *testing.T)
 }
 
 func TestRemoteRecoveryWithoutSupervisorNeverUsesWorkerBridge(t *testing.T) {
-	runner := newCommandRunner(NewExecutorWithBridge(nil), Options{ID: "agent", Policy: config.DefaultServiceConfig().Agent.Policy})
+	runner := newCommandRunner(Options{ID: "agent", Policy: config.DefaultServiceConfig().Agent.Policy})
 	cmd := controlplane.AgentCommand{ID: "observe", AgentID: "agent", Type: controlplane.RunRecoveryCommand, RecoveryMode: "observe", Run: &controlplane.Run{ID: "run", Topology: "lab"}, LeaseOwner: "delivery", Attempt: 1, LeaseUntil: time.Now().Add(time.Minute)}
 	var events []controlplane.AgentCommandEvent
 	runner.Execute(context.Background(), &cmd, func(event controlplane.AgentCommandEvent) { events = append(events, event) })
@@ -189,7 +192,7 @@ func TestMissingIdentityObservationLoadsOnlyPinnedWorkspace(t *testing.T) {
 	st, err := repo.LoadState(context.Background(), "lab")
 	require.NoError(t, err)
 	run := controlplane.Run{ID: "run", Topology: "lab", AgentID: "agent", QueuedAt: time.Now().UTC(), Revision: revision.Revision, Attempt: 1}
-	action := runtime.ActionRecord{ID: "missing", Topology: "lab", RunID: run.ID, RunQueuedAt: run.QueuedAt, RunRevision: run.Revision, Resource: address.Resource("sysbox_node", "node"), Action: controlplane.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: st.TopologyUID, ResourceUID: "node", Generation: 1, DesiredDigest: "pinned", StateSerial: st.Meta.Serial, ExpectedSerial: st.Meta.Serial}
+	action := runtime.ActionRecord{ID: "missing", Topology: "lab", RunID: run.ID, RunQueuedAt: run.QueuedAt, RunRevision: run.Revision, Resource: address.Resource("sysbox_node", "node"), Action: model.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: st.TopologyUID, ResourceUID: "node", Generation: 1, DesiredDigest: "pinned", StateSerial: st.Meta.Serial, ExpectedSerial: st.Meta.Serial}
 	require.NoError(t, repo.CommitActionIntent(context.Background(), action))
 	bridge := &pinnedHostRecoveryBridge{observedAgentBridge: &observedAgentBridge{LocalBridge: local, repository: repo}, path: path, revision: revision.Revision}
 	cmd := controlplane.AgentCommand{ID: "observe", AgentID: "agent", Run: &run, RecoveryMode: controlplane.RunRecoveryObserve}

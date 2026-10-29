@@ -32,7 +32,7 @@ func init() {
 		false, "allow mutation with a backend that lacks locking or CAS")
 
 	rootCmd.AddCommand(initCmd, planCmd, applyCmd, destroyCmd, stateCmd, showCmd, outputCmd, validateCmd, serveCmd,
-		pauseCmd, resumeCmd, resetCmd, importCmd, versionCmd, gcCmd, newHostFenceCommand(), newOwnershipTransferCommand())
+		pauseCmd, resumeCmd, resetCmd, importCmd, versionCmd, gcCmd, newHostFenceCommand(), newOwnershipTransferCommand(), newRunCommand())
 }
 
 // Execute is called by main(). Returns an error so main() can set exit code.
@@ -40,5 +40,27 @@ func Execute() error { return rootCmd.Execute() }
 
 // ExecuteContext passes a context (with signal cancellation) to all commands.
 func ExecuteContext(ctx context.Context) error {
+	return rootCmd.ExecuteContext(ctx)
+}
+
+// ExecuteContextWithProviders initializes host capabilities only for commands
+// which still use them. Service clients do not read host configuration or keys.
+func ExecuteContextWithProviders(ctx context.Context, initialize func(string) error) error {
+	previous := rootCmd.PersistentPreRunE
+	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
+		if cmd.Annotations["service-client"] != "true" {
+			path := ""
+			if cmd.Flags().Lookup("config") != nil {
+				var err error
+				path, err = cmd.Flags().GetString("config")
+				if err != nil {
+					return err
+				}
+			}
+			return initialize(path)
+		}
+		return nil
+	}
+	defer func() { rootCmd.PersistentPreRunE = previous }()
 	return rootCmd.ExecuteContext(ctx)
 }

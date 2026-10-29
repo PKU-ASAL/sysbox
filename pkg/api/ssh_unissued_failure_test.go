@@ -32,8 +32,8 @@ func TestSSHDeliveryFailureRequiresProofOfNoExecutionGrant(t *testing.T) {
 			}
 			failed, err := store.ApplyAgentCommandEvent(ctx, controlplane.AgentCommandEvent{CommandID: command.ID, AgentID: "agent", Type: "node_operation", Status: "failed", LeaseOwner: leased.LeaseOwner, Attempt: leased.Attempt, ActionID: id, ResourceUID: id, Generation: 1})
 			require.NoError(t, err)
-			require.NoError(t, (&AgentService{store: store}).reconcileUnissuedSSHFailures(ctx))
-			require.NoError(t, reconcileUnissuedSSHFailure(ctx, store, *failed))
+			require.NoError(t, (&AgentService{store: store}).reconcileUnissuedNodeFailures(ctx))
+			require.NoError(t, reconcileUnissuedNodeFailure(ctx, store, *failed))
 			current, err := store.GetNodeOperation(ctx, id)
 			require.NoError(t, err)
 			if issued {

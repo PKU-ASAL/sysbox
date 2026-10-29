@@ -25,7 +25,7 @@ func resolveGuestFamily(image, override substrate.GuestFamily) (substrate.GuestF
 	return override, nil
 }
 
-func validateGuestFamilies(g *graph.Graph) error {
+func validateGuestFamilies(g *graph.Graph, providers *driver.Registry) error {
 	for _, node := range g.All() {
 		cfg, ok := node.Data.(*config.NodeConfig)
 		if !ok {
@@ -75,7 +75,7 @@ func validateGuestFamilies(g *graph.Graph) error {
 		if resolveErr != nil {
 			continue
 		}
-		if descriptor, exists := driver.DefaultRegistry.Get(substrateName); exists && descriptor.GuestNetworkInit != nil && len(cfg.Links) > 0 {
+		if descriptor, exists := providers.Get(substrateName); exists && descriptor.GuestNetworkInit != nil && len(cfg.Links) > 0 {
 			return fmt.Errorf("node %s: unknown guest family requires an explicit override before guest network initialization", node.Address)
 		}
 	}

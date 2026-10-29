@@ -121,6 +121,9 @@ func (b apiExecutionGrantStorage) updateExecutionAuthority(ctx context.Context, 
 			}); err != nil {
 				return nil, err
 			}
+			if err := b.checkConsoleSource(current, func(id string) (*controlplane.ConsoleSession, error) { return store.GetConsoleSession(ctx, id) }); err != nil {
+				return nil, err
+			}
 			if err := b.checkLifecycle(current, func(topology string) error {
 				repo, err := b.lifecycle(topology)
 				if err != nil {
@@ -212,6 +215,15 @@ func (b apiExecutionGrantStorage) updateExecutionAuthority(ctx context.Context, 
 		}); err != nil {
 			return err
 		}
+		if err := b.checkConsoleSource(current, func(id string) (*controlplane.ConsoleSession, error) {
+			var data []byte
+			if err := conn.QueryRowContext(ctx, "SELECT data FROM sysbox_console_sessions WHERE id=?", id).Scan(&data); err != nil {
+				return nil, err
+			}
+			return decodeConsoleRecord(id, data)
+		}); err != nil {
+			return err
+		}
 		if err := b.checkLifecycle(current, func(topology string) error {
 			var lifecycle []byte
 			if err = conn.QueryRowContext(ctx, "SELECT data FROM sysbox_lifecycle_aggregates WHERE topology=?", topology).Scan(&lifecycle); errors.Is(err, sql.ErrNoRows) {
@@ -299,6 +311,15 @@ func (b apiExecutionGrantStorage) updateExecutionAuthority(ctx context.Context, 
 			}
 			x, err := persistence.DecodeGuestExecution(id, data)
 			return &x, err
+		}); err != nil {
+			return err
+		}
+		if err := b.checkConsoleSource(current, func(id string) (*controlplane.ConsoleSession, error) {
+			var data []byte
+			if err := tx.QueryRow(ctx, "SELECT data::text FROM sysbox_console_sessions WHERE id=$1", id).Scan(&data); err != nil {
+				return nil, err
+			}
+			return decodeConsoleRecord(id, data)
 		}); err != nil {
 			return err
 		}

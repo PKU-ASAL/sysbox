@@ -33,7 +33,7 @@ func TestFileHostCompletionAcceptsConfirmedCommitAfterCancelAndLeaseExpiry(t *te
 	receipt := controlplane.SignedExecutionStopReceipt{InstallID: x.ID, InstallDigest: digest, Grant: controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: "owner", ResourceUID: "resource", Generation: 1}, AgentID: "agent", CommandID: cmd.ID, ActionID: x.ID, Digest: digest, Operation: "guest_file_install"}, FileResult: &substrate.FileInstallResult{Outcome: substrate.FileInstallCommitted, Quiescent: true, Size: 3, Mode: 0600, SHA256: req.SHA256}}
 	raw, err := fileOperationCodec.encode(x)
 	require.NoError(t, err)
-	completed, err := CompleteFileFromHost(raw, &CommandRecord{Command: cmd, Retired: true}, "agent", x.ID, receipt, time.Now())
+	completed, err := CompleteFileFromHost(raw, &CommandRecord{Command: cmd}, "agent", x.ID, receipt, time.Now())
 	require.NoError(t, err)
 	got, err := fileOperationCodec.decode(completed)
 	require.NoError(t, err)

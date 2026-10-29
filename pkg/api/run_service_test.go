@@ -17,6 +17,7 @@ import (
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 )
@@ -323,7 +324,7 @@ func TestRunServiceResumeAllowsFailedReset(t *testing.T) {
 	parent := s.jobs.startWithOptions("lab", "reset", runStartOptions{Target: "sysbox_node.web", UnsafeState: true})
 	cpPath := filepath.Join(t.TempDir(), "parent.json")
 	recorder := runtime.NewFileRecorder(cpPath, parent.ID, "lab")
-	require.NoError(t, recorder.Begin("reset", &runtime.Plan{Actions: []controlplane.PlannedChange{{Address: address.Resource("sysbox_node", "web"), Action: controlplane.PlanActionReset}}}))
+	require.NoError(t, recorder.Begin("reset", &runtime.Plan{Actions: []model.PlannedChange{{Address: address.Resource("sysbox_node", "web"), Action: model.PlanActionReset}}}))
 	cp, err := runtime.LoadCheckpointFile(cpPath)
 	require.NoError(t, err)
 	require.NoError(t, s.apiStore.SaveCheckpoint(context.Background(), "lab", parent.ID, *cp))
@@ -363,7 +364,7 @@ func TestRunServiceResumeRejectsTamperedResetCheckpoint(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
 	parent := s.jobs.startWithOptions("lab", "reset", runStartOptions{})
 	require.NoError(t, s.jobs.finish(parent, errors.New("interrupted")))
-	cp := runtime.OperationCheckpoint{RunID: parent.ID, Topology: "lab", Operation: "reset", PlanSHA256: "tampered", Plan: []controlplane.PlannedChange{{Address: address.Resource("sysbox_node", "web"), Action: controlplane.PlanActionReset}}}
+	cp := runtime.OperationCheckpoint{RunID: parent.ID, Topology: "lab", Operation: "reset", PlanSHA256: "tampered", Plan: []model.PlannedChange{{Address: address.Resource("sysbox_node", "web"), Action: model.PlanActionReset}}}
 	require.NoError(t, s.apiStore.SaveCheckpoint(context.Background(), "lab", parent.ID, cp))
 	run, _, err := s.runs().Resume(context.Background(), parent.ID)
 	require.Nil(t, run)

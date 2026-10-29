@@ -1,0 +1,18 @@
+[Unit]
+Description=Sysbox privileged host executor
+After=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/local/bin/sysbox host-supervisor --config /etc/sysbox-host/sysbox.yaml --identity /etc/sysbox-host/identity.json
+Restart=on-failure
+RuntimeDirectory=sysbox-host
+RuntimeDirectoryMode=0750
+UMask=0077
+KillMode=process
+TimeoutStopSec=120
+
+[Install]
+WantedBy=multi-user.target

@@ -32,6 +32,19 @@ func TestRunRequestDigestBindsRevisionActionAndGeneration(t *testing.T) {
 	require.Error(t, ValidateRunGrant(signed, req, "host"))
 }
 
+func TestApplyTargetBeforeFirstCreation(t *testing.T) {
+	req := RunRequest{RunID: "run", Topology: "lab", TopologyUID: "owner", Revision: "rev", ActionID: "action", Action: "apply", Target: "sysbox_node.web"}
+	require.NoError(t, req.Validate())
+	digest, err := req.Digest()
+	require.NoError(t, err)
+	req.Target = "sysbox_node.other"
+	changed, err := req.Digest()
+	require.NoError(t, err)
+	require.NotEqual(t, digest, changed)
+	req.Action = "reset"
+	require.Error(t, req.Validate(), "reset requires an existing resource identity")
+}
+
 func TestRunChildTargetRestriction(t *testing.T) {
 	run := RunRequest{Topology: "lab", TopologyUID: "owner", Target: "sysbox_node.web", ResourceUID: "old", Generation: 1}
 	ref := TargetRef{Topology: "lab", Node: "web", Scope: controlplane.ExecutionScope{TopologyUID: "owner", ResourceUID: "replacement", Generation: 2}}

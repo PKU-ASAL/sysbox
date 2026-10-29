@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
@@ -229,7 +230,7 @@ func applyFenceDeleteActions(a *aggregate, fence HostFenceRecord, rec *FenceDele
 	}
 	for _, observed := range rec.Observation.Resources {
 		action, ok := selected[observed.ActionID]
-		if !ok || action.Action != controlplane.PlanActionDelete || action.Resource.Type != "sysbox_node" || (action.Status != runtime.ActionUncertain && action.Status != runtime.ActionIntentCommitted) || action.ProviderOperationID != action.ID || action.ProviderOperationAnchor != "action:"+action.ID || action.Quiescence != "unknown" || action.ReplayForbidden || len(action.ResetSSH) != 0 || action.Replacement != nil {
+		if !ok || action.Action != model.PlanActionDelete || action.Resource.Type != "sysbox_node" || (action.Status != runtime.ActionUncertain && action.Status != runtime.ActionIntentCommitted) || action.ProviderOperationID != action.ID || action.ProviderOperationAnchor != "action:"+action.ID || action.Quiescence != "unknown" || action.ReplayForbidden || len(action.ResetSSH) != 0 || action.Replacement != nil {
 			return ErrConflict
 		}
 		candidate := action.Candidate

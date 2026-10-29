@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/runtime"
 )
 
@@ -111,7 +112,7 @@ func ApplyHostFenceRelease(authorityRaw, lifecycleRaw []byte, run controlplane.R
 		if action.RunID != run.ID {
 			continue
 		}
-		if action.Action != controlplane.PlanActionDelete || action.OwnerUID != lifecycle.State.TopologyUID || !action.RunQueuedAt.Equal(run.QueuedAt) || action.RunRevision != run.Revision {
+		if action.Action != model.PlanActionDelete || action.OwnerUID != lifecycle.State.TopologyUID || !action.RunQueuedAt.Equal(run.QueuedAt) || action.RunRevision != run.Revision {
 			return nil, zero, ErrConflict
 		}
 		selected[action.ID] = action

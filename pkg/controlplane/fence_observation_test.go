@@ -4,24 +4,27 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
-	"github.com/oslab/sysbox/pkg/state"
-	"github.com/stretchr/testify/require"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/oslab/sysbox/pkg/model"
+	"github.com/oslab/sysbox/pkg/state"
 )
 
 func TestFenceObservationSignatureBindsEntireReportAndDelivery(t *testing.T) {
 	pub, key, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
 	binding := FenceObservationBinding{RequestSHA256: strings.Repeat("a", 64), HostBootID: "11111111-1111-4111-8111-111111111111"}
-	report := RunRecoveryReport{CommandID: "observe", AgentID: "agent", RunID: "run", RunAttempt: 1, RunLeaseOwner: "run-owner", QueuedAt: time.Now().UTC(), Revision: "revision", Mode: RunRecoveryObserve, TopologyUID: "topology", StateSerial: 2, ObservedAt: time.Now().UTC(), Resources: []RecoveredResource{{ActionID: "action", OwnerUID: "topology", ResourceUID: "node", Generation: 1, Resource: "sysbox_node.web", Status: "unknown", JournalStatus: "uncertain"}}}
+	report := RunRecoveryReport{CommandID: "observe", AgentID: "agent", RunID: "run", RunAttempt: 1, RunLeaseOwner: "run-owner", QueuedAt: time.Now().UTC(), Revision: "revision", Mode: RunRecoveryObserve, TopologyUID: "topology", StateSerial: 2, ObservedAt: time.Now().UTC(), Resources: []model.RecoveredResource{{ActionID: "action", OwnerUID: "topology", ResourceUID: "node", Generation: 1, Resource: "sysbox_node.web", Status: "unknown", JournalStatus: "uncertain"}}}
 	report.Resources[0].Discovered = &state.Resource{Attachments: []state.Attachment{{DriverState: json.RawMessage(`{"long_key":9007199254740993,"a":true,"exponent":1e3}`)}}}
 	signed, err := SignFenceObservation(key, report, binding, "worker", 3)
 	require.NoError(t, err)
 	require.NoError(t, VerifyFenceObservation(pub, signed, binding, "worker", 3))
 	reformatted := signed
-	reformatted.Resources = append([]RecoveredResource(nil), signed.Resources...)
+	reformatted.Resources = append([]model.RecoveredResource(nil), signed.Resources...)
 	copyResource := *signed.Resources[0].Discovered
 	copyResource.Attachments = append([]state.Attachment(nil), copyResource.Attachments...)
 	copyResource.Attachments[0].DriverState = json.RawMessage(`{"a": true, "long_key": 9007199254740993,"exponent":1000}`)
@@ -33,7 +36,7 @@ func TestFenceObservationSignatureBindsEntireReportAndDelivery(t *testing.T) {
 		copy := signed
 		proof := *signed.HostObservation
 		copy.HostObservation = &proof
-		copy.Resources = append([]RecoveredResource(nil), signed.Resources...)
+		copy.Resources = append([]model.RecoveredResource(nil), signed.Resources...)
 		change(&copy)
 		require.Error(t, VerifyFenceObservation(pub, copy, binding, "worker", 3))
 	}
@@ -49,7 +52,7 @@ func TestFenceObservationVersionOneKeepsOriginalWire(t *testing.T) {
 	key := ed25519.NewKeyFromSeed([]byte(strings.Repeat("x", 32)))
 	binding := FenceObservationBinding{RequestSHA256: strings.Repeat("a", 64), HostBootID: "11111111-1111-4111-8111-111111111111"}
 	at := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
-	r := RunRecoveryReport{HostObservation: &HostObservationProof{Version: 1, Binding: binding, DeliveryOwner: "worker", DeliveryAttempt: 1}, CommandID: "observe", AgentID: "agent", RunID: "run", RunAttempt: 1, QueuedAt: at, Revision: "revision", Mode: RunRecoveryObserve, TopologyUID: "owner", ObservedAt: at, Resources: []RecoveredResource{{ActionID: "a", Discovered: &state.Resource{Attachments: []state.Attachment{{DriverState: json.RawMessage(`{"z":1e3,"a":9007199254740993}`)}}}}}}
+	r := RunRecoveryReport{HostObservation: &HostObservationProof{Version: 1, Binding: binding, DeliveryOwner: "worker", DeliveryAttempt: 1}, CommandID: "observe", AgentID: "agent", RunID: "run", RunAttempt: 1, QueuedAt: at, Revision: "revision", Mode: RunRecoveryObserve, TopologyUID: "owner", ObservedAt: at, Resources: []model.RecoveredResource{{ActionID: "a", Discovered: &state.Resource{Attachments: []state.Attachment{{DriverState: json.RawMessage(`{"z":1e3,"a":9007199254740993}`)}}}}}}
 	type legacyReport RunRecoveryReport
 	original, err := json.Marshal(legacyReport(r))
 	require.NoError(t, err)

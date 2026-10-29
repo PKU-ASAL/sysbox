@@ -12,18 +12,20 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/oslab/sysbox/pkg/transport"
-	"github.com/stretchr/testify/require"
 )
 
 type runSSHNode struct {
@@ -74,7 +76,7 @@ func TestHostRunSSHDispatchUsesCanonicalCandidateAndSignedChild(t *testing.T) {
 	node := runSSHNode{connection: conn}
 	name := "run-ssh-" + filepath.Base(filepath.Dir(dir))
 	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: name, Version: "1", Node: node, NodeState: node}))
-	action := runtime.ActionRecord{ID: "create", RunID: "run", Topology: "lab", Resource: address.Resource("sysbox_node", "web"), Action: controlplane.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: st.TopologyUID, ResourceUID: "node", Generation: 1}
+	action := runtime.ActionRecord{ID: "create", RunID: "run", Topology: "lab", Resource: address.Resource("sysbox_node", "web"), Action: model.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: st.TopologyUID, ResourceUID: "node", Generation: 1}
 	require.NoError(t, repo.CommitActionIntent(ctx, action))
 	action.Revision = 1
 	action.Status = runtime.ActionUncertain
@@ -145,4 +147,32 @@ func TestHostRunSSHDispatchUsesCanonicalCandidateAndSignedChild(t *testing.T) {
 	wrongTarget := executor.withRunSSH(ctx, hostsupervisor.RunRequest{RunID: "run", Topology: "lab", TopologyUID: st.TopologyUID, Target: "sysbox_node.other", ResourceUID: "other", Generation: 1})
 	_, err = transport.NewTaskClient(nil, "provider", 1).MutateSSHAccess(wrongTarget, substrate.SSHAccessMutation{ID: "ssh", Delete: true, ExpectedRevision: 1, Config: substrate.SSHAccessConfig{User: "ubuntu", AccessID: "admin"}})
 	require.Error(t, err, "a targeted Run must not derive authority for another node")
+}
+
+func TestSSHResourceTargetRequiresMatchingActionAndNode(t *testing.T) {
+	ctx := context.Background()
+	bridge := NewLocalBridge(LocalOptions{Topology: "lab", RunsDir: t.TempDir(), StatePath: filepath.Join(t.TempDir(), "state.json")})
+	repo, err := bridge.ActionRepository("lab")
+	require.NoError(t, err)
+	st, err := repo.LoadState(ctx, "lab")
+	require.NoError(t, err)
+	node := state.Resource{Address: address.Resource("sysbox_node", "web"), OwnerUID: st.TopologyUID, ResourceUID: "node", Generation: 1}
+	st.Resources = append(st.Resources, node)
+	manager, err := bridge.StateManager("lab")
+	require.NoError(t, err)
+	require.NoError(t, manager.SaveWithContext(ctx, st))
+	st, err = repo.LoadState(ctx, "lab")
+	require.NoError(t, err)
+	action := runtime.ActionRecord{ID: "ssh", RunID: "run", Topology: "lab", Resource: address.Resource("sysbox_ssh_access", "admin"), Action: model.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: st.TopologyUID, ResourceUID: "ssh-resource", Generation: 1, StateSerial: st.Meta.Serial, ExpectedSerial: st.Meta.Serial}
+	require.NoError(t, repo.CommitActionIntent(ctx, action))
+	host := HostRunExecutor{Bridge: &returnedResetBridge{LocalBridge: bridge}}
+	req := hostsupervisor.RunRequest{RunID: "run", Topology: "lab", TopologyUID: st.TopologyUID, Action: "apply", Target: "sysbox_ssh_access.admin"}
+	ref := hostsupervisor.TargetRef{Topology: "lab", Node: "web", Scope: controlplane.ExecutionScope{TopologyUID: st.TopologyUID, ResourceUID: "node", Generation: 1}}
+	mutation := substrate.SSHAccessMutation{ID: "ssh", Config: substrate.SSHAccessConfig{AccessID: "admin"}}
+	require.NoError(t, host.validateRunSSHTarget(ctx, req, ref, mutation))
+	mutation.Config.AccessID = "other"
+	require.Error(t, host.validateRunSSHTarget(ctx, req, ref, mutation))
+	mutation.Config.AccessID = "admin"
+	mutation.ID = "forged"
+	require.Error(t, host.validateRunSSHTarget(ctx, req, ref, mutation))
 }

@@ -5,7 +5,9 @@ import (
 	"path/filepath"
 
 	"github.com/hashicorp/hcl/v2"
+
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
@@ -17,7 +19,7 @@ func loadWorkspaceWithRoot() (*graph.Graph, *state.Manager, *state.State, *confi
 	if err != nil {
 		return nil, nil, nil, nil, nil, err
 	}
-	return runtime.LoadWorkspaceWithManager(flagConfigFile, mgr)
+	return runtime.LoadWorkspaceWithManager(flagConfigFile, mgr, driver.DefaultRegistry)
 }
 
 func loadWorkspace() (*graph.Graph, *state.Manager, *state.State, error) {

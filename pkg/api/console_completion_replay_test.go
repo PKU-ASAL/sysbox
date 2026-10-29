@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestConsoleCompletionReplayRepairsFailedSessionSave(t *testing.T) {
+func TestConsoleDeliveryReplayPreservesUnconfirmedExecution(t *testing.T) {
 	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
 		ctx := context.Background()
 		hub := newConsoleSessionHub(store)
@@ -36,9 +36,11 @@ func TestConsoleCompletionReplayRepairsFailedSessionSave(t *testing.T) {
 		require.NoError(t, svc.reconcileConsoleCompletions(ctx))
 		completed, err := store.GetConsoleSession(ctx, sess.ID)
 		require.NoError(t, err)
-		require.Equal(t, controlplane.ConsoleSessionStatusClosed, completed.Status)
-		require.Empty(t, completed.Err, "successful recovery clears restart transport diagnostic")
-		require.True(t, accepted.EndedAt.Equal(completed.EndedAt), "recovery must use original durable outcome time")
+		require.Equal(t, controlplane.ConsoleSessionStatusLost, completed.Status)
+		require.NotEmpty(t, completed.Err)
+		require.False(t, completed.TerminationConfirmed)
+		require.Empty(t, completed.HostCompletion)
+		require.False(t, completed.EndedAt.Before(accepted.EndedAt), "delivery replay must preserve uncertainty")
 		require.NoError(t, svc.reconcileConsoleCompletions(ctx), "scan retry does not create a new effect")
 		for _, field := range []string{"status", "agent", "attempt", "lease", "error"} {
 			bad := event
@@ -59,7 +61,8 @@ func TestConsoleCompletionReplayRepairsFailedSessionSave(t *testing.T) {
 		require.NoError(t, svc.updateCommandFromEvent(ctx, event))
 		again, err := store.GetConsoleSession(ctx, sess.ID)
 		require.NoError(t, err)
-		require.Equal(t, completed.EndedAt, again.EndedAt)
+		require.Equal(t, completed.Status, again.Status)
+		require.False(t, again.TerminationConfirmed)
 	})
 }
 

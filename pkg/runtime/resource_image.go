@@ -10,9 +10,9 @@ import (
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/artifact"
 	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/secret"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -30,13 +30,13 @@ func (ImageResourceHandler) Schema() ResourceSchema {
 	return ResourceSchemaFor("sysbox_image")
 }
 
-func (ImageResourceHandler) Read(_ context.Context, current state.Resource) (ResourceReadResult, error) {
+func (ImageResourceHandler) Read(_ context.Context, current state.Resource, providers *driver.Registry) (ResourceReadResult, error) {
 	result := resourceReadOK(current)
 	result.Reason = "resource has no runtime health probe"
 	return result, nil
 }
 
-func (ImageResourceHandler) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
+func (ImageResourceHandler) PlanDiff(desired *graph.Node, current *state.Resource) (model.PlannedChange, error) {
 	return planDiffByDesiredHash(desired, current)
 }
 
@@ -49,7 +49,7 @@ func (ImageResourceHandler) Create(ctx context.Context, pc *ProviderContext, n *
 	if err != nil {
 		return state.Resource{}, err
 	}
-	artifactDriver, err := driver.DefaultRegistry.RequireArtifact(subName)
+	artifactDriver, err := pc.exec.providers.RequireArtifact(subName)
 	if err != nil {
 		return state.Resource{}, err
 	}
@@ -127,7 +127,7 @@ func artifactHandleFromState(resource *state.Resource) substrate.ArtifactHandle 
 		Architecture: resource.Str("architecture"), GuestFamily: substrate.GuestFamily(resource.Str("guest_family")),
 	}}
 }
-func (ImageResourceHandler) RequiredCapabilities(node *graph.Node) ([]CapabilityRequirement, error) {
+func (ImageResourceHandler) RequiredCapabilities(node *graph.Node, providers *driver.Registry) ([]CapabilityRequirement, error) {
 	cfg, ok := node.Data.(*config.ImageConfig)
 	if !ok {
 		return nil, nil
@@ -139,7 +139,7 @@ func (ImageResourceHandler) RequiredCapabilities(node *graph.Node) ([]Capability
 	return []CapabilityRequirement{{name, driver.CapabilityArtifact}}, nil
 }
 
-func (ImageResourceHandler) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext) (any, []address.Address, error) {
+func (ImageResourceHandler) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext, providers *driver.Registry) (any, []address.Address, error) {
 	cfg := &config.ImageConfig{}
 	if err := config.DecodeResource(&r, cfg, ctx); err != nil {
 		return nil, nil, err
@@ -177,7 +177,7 @@ func (ImageResourceHandler) PreflightResource(r config.ResourceBlock, ctx *hcl.E
 	return checks
 }
 
-func (DataImageResourceHandler) DecodeData(d config.DataBlock, ctx *hcl.EvalContext) (any, []address.Address, error) {
+func (DataImageResourceHandler) DecodeData(d config.DataBlock, ctx *hcl.EvalContext, providers *driver.Registry) (any, []address.Address, error) {
 	cfg := &config.DataImageConfig{}
 	if err := decodeDataBody(d.Remain, ctx, cfg, "sysbox_image", d.Name); err != nil {
 		return nil, nil, err

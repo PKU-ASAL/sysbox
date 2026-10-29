@@ -18,15 +18,17 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/persistence"
 	libvirtprovider "github.com/oslab/sysbox/pkg/provider/libvirt"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
-	"github.com/stretchr/testify/require"
 )
 
 // TestAdoptionFenceWholeVMCancellationMatrixE2E fixes every scenario explicitly;
@@ -209,7 +211,7 @@ func TestAdoptionFenceWholeVMRecoveryE2E(t *testing.T) {
 	}
 	runProbe()
 	if cancelKind != "" && !sourceOwned {
-		old := runtime.ActionRecord{ID: "canonical-unknown", RunID: adopt.ID, Topology: adopt.Topology, Resource: address.Resource("sysbox_node", "adopted"), Action: controlplane.PlanActionAdopt, Status: runtime.ActionIntentCommitted, OwnerUID: adopt.TopologyUID, ResourceUID: adopt.ResourceUID, Generation: 1, DesiredDigest: "old-intent", Candidate: &state.Resource{Address: address.Resource("sysbox_node", "adopted"), Driver: adopt.Provider, ExternalID: id, OwnerUID: adopt.TopologyUID, ResourceUID: adopt.ResourceUID, Generation: 1}}
+		old := runtime.ActionRecord{ID: "canonical-unknown", RunID: adopt.ID, Topology: adopt.Topology, Resource: address.Resource("sysbox_node", "adopted"), Action: model.PlanActionAdopt, Status: runtime.ActionIntentCommitted, OwnerUID: adopt.TopologyUID, ResourceUID: adopt.ResourceUID, Generation: 1, DesiredDigest: "old-intent", Candidate: &state.Resource{Address: address.Resource("sysbox_node", "adopted"), Driver: adopt.Provider, ExternalID: id, OwnerUID: adopt.TopologyUID, ResourceUID: adopt.ResourceUID, Generation: 1}}
 		require.NoError(t, repo.CommitActionIntent(ctx, old))
 	}
 	digest, err := adopt.Digest()
@@ -299,7 +301,7 @@ func TestAdoptionFenceWholeVMRecoveryE2E(t *testing.T) {
 		require.NoError(t, err)
 		if sourceOwned {
 			require.Empty(t, actions)
-			actions = []runtime.ActionRecord{{ID: "placeholder", Topology: adopt.Topology, Resource: address.Resource("sysbox_node", "adopted"), Action: controlplane.PlanActionAdopt, Status: runtime.ActionIntentCommitted, OwnerUID: adopt.TopologyUID, ResourceUID: adopt.ResourceUID, Generation: adopt.Generation, DesiredDigest: "fresh", Candidate: &state.Resource{Address: address.Resource("sysbox_node", "adopted"), Driver: adopt.Provider, ExternalID: id, OwnerUID: adopt.TopologyUID, ResourceUID: adopt.ResourceUID, Generation: adopt.Generation}}}
+			actions = []runtime.ActionRecord{{ID: "placeholder", Topology: adopt.Topology, Resource: address.Resource("sysbox_node", "adopted"), Action: model.PlanActionAdopt, Status: runtime.ActionIntentCommitted, OwnerUID: adopt.TopologyUID, ResourceUID: adopt.ResourceUID, Generation: adopt.Generation, DesiredDigest: "fresh", Candidate: &state.Resource{Address: address.Resource("sysbox_node", "adopted"), Driver: adopt.Provider, ExternalID: id, OwnerUID: adopt.TopologyUID, ResourceUID: adopt.ResourceUID, Generation: adopt.Generation}}}
 			barrier, err := authority.InspectMaintenance(ctx, adopt.ID)
 			require.NoError(t, err)
 			require.True(t, barrier.Released)

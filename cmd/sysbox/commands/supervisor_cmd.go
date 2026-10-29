@@ -6,6 +6,13 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/spf13/cobra"
+
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/agentexec"
 	"github.com/oslab/sysbox/pkg/api"
@@ -15,11 +22,6 @@ import (
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
 	"github.com/oslab/sysbox/pkg/provider/firecracker"
 	"github.com/oslab/sysbox/pkg/substrate"
-	"github.com/spf13/cobra"
-	"io"
-	"os"
-	"path/filepath"
-	"strings"
 )
 
 var supervisorConfigFile, supervisorIdentityFile string
@@ -91,10 +93,11 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 	}
 	authority := hostsupervisor.AuthorityClient{Identity: *ident}
 	resolver := hostsupervisor.CanonicalResolver{RunsDir: cfg.Paths.RunsDir, Backend: cfg.State.Backend, AgentID: ident.ID}
-	runBridge, err := api.NewHostExecutionBridge(cfg)
+	runBridge, err := api.NewExecutionBridge(cfg)
 	if err != nil {
 		return err
 	}
+	defer runBridge.Close()
 	if err := runBridge.BindHostIdentity(ident.ID, ed25519.PrivateKey(key).Public().(ed25519.PublicKey)); err != nil {
 		return err
 	}
@@ -114,6 +117,10 @@ var supervisorCmd = &cobra.Command{Use: "host-supervisor", Short: "Serve the hos
 		return authority.ReportRun(ctx, runID, receipt, evidence)
 	}
 	server := hostsupervisor.Server{Socket: cfg.HostSupervisor.Socket, GroupID: cfg.HostSupervisor.WorkerGroupID, Dispatcher: dispatcher, Power: power, Files: files, OnRecoveryError: func(err error) { fmt.Fprintf(cmd.ErrOrStderr(), "host supervisor reconciliation: %v\n", err) }}
+	hostCapabilities, _ := agent.DetectCapabilities()
+	server.Observer = &hostsupervisor.Observer{AgentID: ident.ID, BootID: strings.TrimSpace(string(boot)), Key: key, Collect: func(ctx context.Context) (controlplane.AgentInventory, []controlplane.ResourceProjection, error) {
+		return agentexec.CollectHostObservation(ctx, agentexec.HostObservationOptions{ID: ident.ID, Capabilities: hostCapabilities, Labels: ident.Labels, CapacityPath: cfg.Paths.Home, ArtifactPaths: cfg.Artifacts.Roots}, runBridge)
+	}}
 	server.Runs = runCoordinator
 	hostRun := &agentexec.HostRunExecutor{Bridge: runBridge, Tasks: dispatcher, Resolver: resolver, Authority: authority}
 	server.RunEffect = hostRun.Execute

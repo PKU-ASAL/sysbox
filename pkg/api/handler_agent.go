@@ -159,89 +159,27 @@ func (s *Server) handleRenewAgentRun(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, run)
 }
 
-func (s *Server) handleCompleteNodeOperation(w http.ResponseWriter, r *http.Request) {
-	agentID := r.PathValue("agent")
-	opID := r.PathValue("operation")
-	if err := validatePathSegment(agentID, "agent"); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	if err := s.verifyAgentRequest(r, agentID); err != nil {
-		writeError(w, http.StatusUnauthorized, err)
-		return
-	}
-	if err := validatePathSegment(opID, "operation"); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	var op controlplane.NodeOperation
-	if err := json.NewDecoder(r.Body).Decode(&op); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("decode node operation: %w", err))
-		return
-	}
-	if op.ActionID == "" || op.ResourceUID == "" || op.Generation < 1 || op.LeaseEpoch < 1 || op.LeaseOwner == "" || op.Attempt < 1 {
-		writeError(w, http.StatusConflict, persistence.ErrConflict)
-		return
-	}
-	op, err := s.nodeOperations().CompleteFromAgent(agentID, opID, op)
-	if err != nil {
-		status := http.StatusInternalServerError
-		if errors.Is(err, persistence.ErrConflict) {
-			status = http.StatusConflict
-		} else if errors.Is(err, persistence.ErrNotFound) {
-			status = http.StatusNotFound
-		} else if errors.Is(err, persistence.ErrInvalidRecord) {
-			status = http.StatusBadRequest
-		}
-		writeError(w, status, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, op)
-}
-
-func (s *Server) handleCompleteAgentRun(w http.ResponseWriter, r *http.Request) {
-	agentID := r.PathValue("agent")
-	runID := r.PathValue("id")
-	if err := validatePathSegment(agentID, "agent"); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	if err := s.verifyAgentRequest(r, agentID); err != nil {
-		writeError(w, http.StatusUnauthorized, err)
-		return
-	}
-	if err := validatePathSegment(runID, "id"); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	var req controlplane.RunCompletion
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("decode run completion: %w", err))
-		return
-	}
-	req, err := s.agentService().CompleteRun(agentID, runID, req)
-	if err != nil {
-		status := http.StatusServiceUnavailable
-		if errors.Is(err, persistence.ErrConflict) {
-			status = http.StatusConflict
-		} else if errors.Is(err, persistence.ErrInvalidRecord) {
-			status = http.StatusBadRequest
-		} else if errors.Is(err, persistence.ErrNotFound) {
-			status = http.StatusNotFound
-		}
-		writeError(w, status, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, req)
-}
-
 func (s *Server) handleListAgentProjections(w http.ResponseWriter, r *http.Request) {
 	agentID := r.PathValue("agent")
 	if err := validatePathSegment(agentID, "agent"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"projections": s.agents.ListProjections(agentID)})
+	inventory, err := s.apiStore.GetAgentInventory(r.Context(), agentID)
+	if err != nil {
+		writeError(w, agentRepositoryErrorStatus(err), err)
+		return
+	}
+	projections := make([]controlplane.Projection, 0, len(inventory.Topologies))
+	fresh := controlplane.FreshHostObservation(inventory.ObservedAt, time.Now())
+	for _, item := range inventory.Topologies {
+		health := item.Health
+		if !fresh {
+			health = "unknown"
+		}
+		projections = append(projections, controlplane.Projection{AgentID: agentID, Workspace: item.Workspace, Topology: item.Topology, Backend: item.Backend, Serial: item.Serial, ResourceCount: item.ResourceCount, Health: health, UpdatedAt: inventory.ObservedAt})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"projections": projections})
 }
 
 func (s *Server) handleListAgentCommandEvents(w http.ResponseWriter, r *http.Request) {
@@ -315,87 +253,6 @@ func (s *Server) handleCancelAgentCommand(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusAccepted, cancelCmd)
 }
 
-func (s *Server) handlePostAgentResourceProjection(w http.ResponseWriter, r *http.Request) {
-	agentID := r.PathValue("agent")
-	if err := validatePathSegment(agentID, "agent"); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	if err := s.verifyAgentRequest(r, agentID); err != nil {
-		writeError(w, http.StatusUnauthorized, err)
-		return
-	}
-	var req controlplane.ResourceProjection
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("decode resource projection: %w", err))
-		return
-	}
-	if req.AgentID == "" {
-		req.AgentID = agentID
-	}
-	if req.AgentID != agentID {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("projection agent id mismatch"))
-		return
-	}
-	if req.Topology == "" {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("projection topology is required"))
-		return
-	}
-	if err := validatePathSegment(req.Topology, "topology"); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	if req.Workspace == "" {
-		req.Workspace = req.Topology
-	}
-	if req.ObservedAt.IsZero() {
-		req.ObservedAt = time.Now().UTC()
-	}
-	if len(req.Resources) == 0 {
-		req.Resources = req.Health.Resources
-	}
-	if err := s.apiStore.SaveResourceProjection(r.Context(), req); err != nil {
-		writeError(w, agentRepositoryErrorStatus(err), err)
-		return
-	}
-	s.agents.SaveResourceProjection(req)
-	writeJSON(w, http.StatusAccepted, req)
-}
-
-func (s *Server) handlePostAgentInventory(w http.ResponseWriter, r *http.Request) {
-	agentID := r.PathValue("agent")
-	if err := validatePathSegment(agentID, "agent"); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	if err := s.verifyAgentRequest(r, agentID); err != nil {
-		writeError(w, http.StatusUnauthorized, err)
-		return
-	}
-	var inv controlplane.AgentInventory
-	if err := json.NewDecoder(r.Body).Decode(&inv); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("decode inventory: %w", err))
-		return
-	}
-	if inv.AgentID == "" {
-		inv.AgentID = agentID
-	}
-	if inv.AgentID != agentID {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("inventory agent id mismatch"))
-		return
-	}
-	if inv.ObservedAt.IsZero() {
-		inv.ObservedAt = time.Now().UTC()
-	}
-	inv.Status = inventoryStatus(inv.ObservedAt)
-	inv.Stale = inv.Status == "stale"
-	if err := s.apiStore.SaveAgentInventory(r.Context(), inv); err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	writeJSON(w, http.StatusAccepted, inv)
-}
-
 func (s *Server) handleGetAgentInventory(w http.ResponseWriter, r *http.Request) {
 	agentID := r.PathValue("agent")
 	if err := validatePathSegment(agentID, "agent"); err != nil {
@@ -425,7 +282,7 @@ func inventoryStatus(observed time.Time) string {
 	if observed.IsZero() {
 		return "unknown"
 	}
-	if time.Since(observed) > 2*time.Minute {
+	if !controlplane.FreshHostObservation(observed, time.Now()) {
 		return "stale"
 	}
 	return "fresh"

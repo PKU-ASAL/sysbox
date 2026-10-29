@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
-	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 type adoptionTestProvider struct {
@@ -50,10 +52,10 @@ func TestAdoptionCommitsIntentBeforeEffectAndRecoversWithoutReplay(t *testing.T)
 	addr := address.Resource("sysbox_node", "web")
 	evidence := substrate.AdoptionEvidence{Provider: "adoption-test", ExternalID: "external", Fingerprint: "fingerprint"}
 	resource := state.Resource{Address: addr, Driver: evidence.Provider, ExternalID: evidence.ExternalID, OwnerUID: id.OwnerUID, ResourceUID: id.ResourceUID, Generation: 1}
-	require.Error(t, CommitAdoption(context.Background(), repo, "run", "lab", addr, evidence, resource, id, 0))
+	require.Error(t, CommitAdoption(context.Background(), repo, "run", "lab", addr, evidence, resource, id, 0, driver.DefaultRegistry))
 	require.Equal(t, 1, p.applied)
 	require.Empty(t, repo.state.Resources)
-	require.NoError(t, CommitAdoption(context.Background(), repo, "run", "lab", addr, evidence, resource, id, 0))
+	require.NoError(t, CommitAdoption(context.Background(), repo, "run", "lab", addr, evidence, resource, id, 0, driver.DefaultRegistry))
 	require.Equal(t, 1, p.applied)
 	require.Len(t, repo.state.Resources, 1)
 }

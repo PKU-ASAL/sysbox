@@ -59,7 +59,7 @@ func TestGCFenceGuestProbe(t *testing.T) {
 		op := substrate.OperationIdentity{ActionID: "create", TopologyUID: cfg.Candidate.TopologyUID, OwnerUID: cfg.Candidate.OwnerUID, ResourceUID: cfg.Candidate.ResourceUID, Generation: cfg.Candidate.Generation}
 		ctx := substrate.WithOperationIdentity(context.Background(), op)
 		if cfg.Mode == "create-firecracker" {
-			h, err := provider.CreateNode(ctx, substrate.NodeSpec{Name: "gc-fence", Image: substrate.ArtifactHandle{ID: cfg.RootFS}, ProviderConfig: &fcprovider.Config{Kernel: cfg.Kernel, AllowDirect: true}})
+			h, err := provider.CreateNode(ctx, substrate.NodeSpec{Name: "gc-fence", Image: substrate.ArtifactHandle{ID: cfg.RootFS}, ProviderConfig: &fcprovider.Config{Kernel: cfg.Kernel}})
 			require.NoError(t, err)
 			require.NoError(t, provider.StartNode(ctx, h))
 			raw, err := json.Marshal(map[string]string{"external_id": h.ID})

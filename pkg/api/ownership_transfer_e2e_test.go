@@ -190,7 +190,7 @@ func testTransferHostBoundary(t *testing.T, providerName, phase string) {
 		fc := fcprovider.New(kernel, providerRoot)
 		provider = fc
 		scopedOld := substrate.WithOperationIdentity(ctx, old)
-		handle, err := fc.CreateNode(scopedOld, substrate.NodeSpec{Name: "transfer", Image: substrate.ArtifactHandle{ID: rootfs}, ProviderConfig: &fcprovider.Config{Kernel: kernel, AllowDirect: true}})
+		handle, err := fc.CreateNode(scopedOld, substrate.NodeSpec{Name: "transfer", Image: substrate.ArtifactHandle{ID: rootfs}, ProviderConfig: &fcprovider.Config{Kernel: kernel}})
 		require.NoError(t, err)
 		id = handle.ID
 		t.Cleanup(func() {

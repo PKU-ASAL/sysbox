@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/oslab/sysbox/pkg/model"
 )
 
 func run(status RunStatus, op string) *Run {
@@ -15,8 +17,8 @@ func run(status RunStatus, op string) *Run {
 	return r
 }
 
-func healthyHealth() *TopologyHealth {
-	return &TopologyHealth{Status: ResourceHealthHealthy}
+func healthyHealth() *model.TopologyHealth {
+	return &model.TopologyHealth{Status: model.ResourceHealthHealthy}
 }
 
 func statusOf(t *testing.T, s TopologyStatus, typ string) Condition {
@@ -53,7 +55,7 @@ func TestComputeTopologyStatusFailedApply(t *testing.T) {
 
 // Drifted resources make Ready false via Provisioned.
 func TestComputeTopologyStatusDrifted(t *testing.T) {
-	s := ComputeTopologyStatus(run(RunDone, "apply"), &TopologyHealth{Status: ResourceHealthDrifted}, &AssertionResult{})
+	s := ComputeTopologyStatus(run(RunDone, "apply"), &model.TopologyHealth{Status: model.ResourceHealthDrifted}, &AssertionResult{})
 
 	require.Equal(t, PhaseFailed, s.Phase)
 	require.Equal(t, ConditionFalse, statusOf(t, s, ConditionProvisioned).Status)

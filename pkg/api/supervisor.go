@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 )
 
 type Supervisor struct {
@@ -27,15 +27,15 @@ const (
 )
 
 type HealthSnapshot struct {
-	Topology  string                      `json:"topology"`
-	Observed  time.Time                   `json:"observed_at"`
-	Health    controlplane.TopologyHealth `json:"health"`
-	Policy    SupervisorPolicy            `json:"policy"`
-	AutoHeal  bool                        `json:"auto_heal"`
-	Action    string                      `json:"action,omitempty"`
-	RunID     string                      `json:"run_id,omitempty"`
-	Recovered []string                    `json:"recovered_runs,omitempty"`
-	LastError string                      `json:"last_error,omitempty"`
+	Topology  string               `json:"topology"`
+	Observed  time.Time            `json:"observed_at"`
+	Health    model.TopologyHealth `json:"health"`
+	Policy    SupervisorPolicy     `json:"policy"`
+	AutoHeal  bool                 `json:"auto_heal"`
+	Action    string               `json:"action,omitempty"`
+	RunID     string               `json:"run_id,omitempty"`
+	Recovered []string             `json:"recovered_runs,omitempty"`
+	LastError string               `json:"last_error,omitempty"`
 }
 
 func newSupervisor(s *Server, interval time.Duration) *Supervisor {
@@ -94,7 +94,7 @@ func (s *Supervisor) Scan(ctx context.Context) {
 	if err := s.server.agentService().reconcileGuestHostCompletions(ctx); err != nil {
 		slog.Warn("guest host completion reconciliation failed", "error", err)
 	}
-	if err := s.server.agentService().reconcileUnissuedSSHFailures(ctx); err != nil {
+	if err := s.server.agentService().reconcileUnissuedNodeFailures(ctx); err != nil {
 		slog.Warn("unissued SSH failure reconciliation failed", "error", err)
 	}
 	if err := s.server.agentService().reconcileUnissuedGuestFailures(ctx); err != nil {
@@ -204,7 +204,7 @@ func (s *Supervisor) maybeRepair(topology string, snap *HealthSnapshot) {
 		snap.Action = "observe"
 		return
 	}
-	if snap.Health.Status != controlplane.ResourceHealthDrifted {
+	if snap.Health.Status != model.ResourceHealthDrifted {
 		snap.Action = "healthy"
 		return
 	}

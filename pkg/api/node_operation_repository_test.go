@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -48,31 +47,6 @@ func TestNodeOperationRepositoryPreservesIdentityAndRejectsOverwrite(t *testing.
 			require.Error(t, s.CompareAndSwapNodeOperation(ctx, next, forged), fault)
 		}
 	})
-}
-
-type failingNodeOperationReads struct {
-	apiStore
-	failure error
-	saves   int
-}
-
-func (s *failingNodeOperationReads) GetNodeOperation(context.Context, string) (*controlplane.NodeOperation, error) {
-	return nil, s.failure
-}
-func (s *failingNodeOperationReads) CompleteNodeOperation(context.Context, string, string, controlplane.NodeOperation) (*controlplane.NodeOperation, error) {
-	return nil, s.failure
-}
-func (s *failingNodeOperationReads) CreateNodeOperation(context.Context, controlplane.NodeOperation) error {
-	s.saves++
-	return nil
-}
-func TestNodeOperationCompletionDoesNotSaveOnReadFailure(t *testing.T) {
-	failure := errors.New("storage unavailable")
-	s := &failingNodeOperationReads{failure: failure}
-	service := &NodeOperationService{operations: newNodeOperationStore(s)}
-	_, err := service.CompleteFromAgent("agent", "op", controlplane.NodeOperation{ID: "op", AgentID: "agent", Topology: "lab", Status: controlplane.NodeOperationStatusDone})
-	require.ErrorIs(t, err, failure)
-	require.Zero(t, s.saves)
 }
 
 func TestNodeOperationCASHasOneWinner(t *testing.T) {

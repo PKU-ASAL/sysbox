@@ -128,31 +128,6 @@ func (s *AgentService) agentOfflineAfter() time.Duration {
 	return s.agentOfflineTTL()
 }
 
-func (s *AgentService) CompleteRun(agentID, runID string, completion controlplane.RunCompletion) (controlplane.RunCompletion, error) {
-	if s.store == nil {
-		return completion, fmt.Errorf("run store not configured")
-	}
-	stored, _, err := s.store.CompleteRun(context.Background(), agentID, runID, completion)
-	if err != nil {
-		return completion, err
-	}
-	completion.Run = *stored
-	if s.jobs != nil {
-		s.jobs.remember(stored)
-		s.jobs.logs.Close(stored.ID)
-	}
-	// The committed receipt is authoritative even after response loss/restart.
-	// Old terminal records have no projection proof; never invent one on replay.
-	completion.Projection = controlplane.Projection{}
-	if stored.CompletionProjection != nil {
-		completion.Projection = *stored.CompletionProjection
-		if s.registry != nil {
-			s.registry.RestoreCompletionProjection(completion.Projection)
-		}
-	}
-	return completion, nil
-}
-
 func (s *AgentService) PublishCommand(ctx context.Context, agentID string, cmd controlplane.AgentCommand) (controlplane.AgentCommand, error) {
 	if cmd.Type == "session_open" || (cmd.Type == "cancel_command" && cmd.Session != nil) {
 		return cmd, fmt.Errorf("%w: console admission requires an atomic session dispatch", persistence.ErrInvalidRecord)
@@ -468,7 +443,7 @@ func (s *AgentService) updateCommandFromEvent(ctx context.Context, event control
 		return err
 	}
 	if cmd.Type == "node_operation" && failedDelivery(cmd.Status) {
-		return reconcileUnissuedSSHFailure(ctx, s.store, *cmd)
+		return reconcileUnissuedNodeFailure(ctx, s.store, *cmd)
 	}
 	if cmd.Type == "guest_file_put" && cmd.FilePut != nil && (cmd.Status == controlplane.AgentCommandStatusFailed || cmd.Status == controlplane.AgentCommandStatusDenied || cmd.Status == controlplane.AgentCommandStatusCancelled) {
 		return newGuestFileOperationService(s.store).ReconcileCommandFailure(ctx, cmd.FilePut.ID, cmd.Status)
@@ -493,9 +468,8 @@ func (s *AgentService) updateConsoleSessionFromCommandEvent(cmd controlplane.Age
 		return fmt.Errorf("console session registry unavailable")
 	}
 	return s.consoles.Update(cmd.Session.ID, func(sess *controlplane.ConsoleSession) {
-		if cmd.IsTerminal() && !cmd.EndedAt.IsZero() {
-			sess.EndedAt = cmd.EndedAt
-			sess.Err = cmd.Err
+		if sess.HostCompletion != "" || sess.NotStarted {
+			return
 		}
 		switch event.Status {
 		case "started":
@@ -506,19 +480,9 @@ func (s *AgentService) updateConsoleSessionFromCommandEvent(cmd controlplane.Age
 				sess.StartedAt = now
 			}
 		case "completed":
-			if sess.Status != controlplane.ConsoleSessionStatusFailed && sess.Status != controlplane.ConsoleSessionStatusCancelled {
-				sess.Status = controlplane.ConsoleSessionStatusClosed
-			}
-			if sess.EndedAt.IsZero() {
-				sess.EndedAt = now
-			}
+			recordConsoleTransportLoss(sess, "worker finished relaying; awaiting signed host result")
 		case "failed", "denied", "cancelled":
-			sess.Status = event.Status
-			sess.Err = event.Error
-			if sess.Err == "" {
-				sess.Err = event.Message
-			}
-			sess.EndedAt = now
+			recordConsoleTransportLoss(sess, "worker delivery ended; awaiting signed host result")
 		}
 	})
 }

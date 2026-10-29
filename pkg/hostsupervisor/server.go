@@ -23,6 +23,7 @@ import (
 // which worker may submit requests; issuer signatures and canonical resource
 // identity still authorize every effect. Private keys never cross this socket.
 type Server struct {
+	Observer         *Observer
 	OwnershipPrepare func(context.Context, controlplane.OwnershipTransferPlan) (controlplane.OwnershipPreparation, error)
 	GCFencedEffect   func(context.Context, GCCandidate, controlplane.SignedExecutionGrant) (json.RawMessage, error)
 	AdoptionInspect  func(context.Context, controlplane.AdoptionInspectionRequest) (substrate.AdoptionEvidence, error)
@@ -45,7 +46,7 @@ type Server struct {
 }
 
 func (s *Server) Serve(ctx context.Context) error {
-	if s.Dispatcher == nil && s.Power == nil && s.Files == nil && s.Runs == nil && s.RunRecovery == nil && s.SSHGuest == nil && s.Adoption == nil && s.GC == nil || !filepath.IsAbs(s.Socket) {
+	if s.Dispatcher == nil && s.Power == nil && s.Files == nil && s.Runs == nil && s.RunRecovery == nil && s.SSHGuest == nil && s.Adoption == nil && s.GC == nil && s.Observer == nil || !filepath.IsAbs(s.Socket) {
 		return fmt.Errorf("absolute supervisor socket and dispatcher required")
 	}
 	directory := filepath.Dir(s.Socket)
@@ -110,7 +111,12 @@ func (s *Server) serveListener(parent context.Context, listener net.Listener) er
 	stop := context.AfterFunc(ctx, func() { listener.Close() })
 	defer stop()
 	var workers sync.WaitGroup
-	defer func() { cancel(); _ = listener.Close(); workers.Wait() }()
+	defer func() {
+		cancel()
+		_ = listener.Close()
+		workers.Wait()
+		s.Runs.Shutdown()
+	}()
 	if s.Dispatcher != nil {
 		workers.Add(1)
 		go func() { defer workers.Done(); s.recoveryLoop(ctx) }()
@@ -205,6 +211,19 @@ func (s *Server) Handle(ctx context.Context, request Request) Response {
 
 func (s *Server) handle(ctx, serviceCtx context.Context, request Request) Response {
 	response := Response{Version: 1}
+	if request.Operation == "host-observe" {
+		if request.Version != 1 || request.Target != (TargetRef{}) || request.Observation == nil {
+			response.Error = "invalid host observation request"
+			return response
+		}
+		observation, err := s.Observer.Snapshot(ctx, *request.Observation)
+		if err != nil {
+			response.Error = err.Error()
+		} else {
+			response.Observation = &observation
+		}
+		return response
+	}
 	if request.Operation == "ownership-prepare" {
 		if request.Version != 1 || request.Target != (TargetRef{}) || request.OwnershipPlan == nil || s.OwnershipPrepare == nil {
 			response.Error = "ownership preparation unavailable"
@@ -302,7 +321,7 @@ func (s *Server) handle(ctx, serviceCtx context.Context, request Request) Respon
 			response.Error = "adoption target mismatch"
 			return response
 		}
-	case "info", "start", "observe", "cancel", "renew", "output":
+	case "info", "start", "observe", "cancel", "renew", "output", "terminal-control":
 		if s.Dispatcher == nil {
 			response.Error = "host task supervisor unavailable"
 			return response
@@ -332,7 +351,7 @@ func (s *Server) handle(ctx, serviceCtx context.Context, request Request) Respon
 			response.SSHDiscovery = &result
 		}
 	case "gc-info":
-		if s.GC == nil || s.GC.HostBootID == "" {
+		if s.GC == nil && s.Observer == nil || s.GC.HostBootID == "" {
 			err = fmt.Errorf("host GC coordinator unavailable")
 			break
 		}
@@ -387,8 +406,8 @@ func (s *Server) handle(ctx, serviceCtx context.Context, request Request) Respon
 			break
 		}
 		var observation RunObservation
-		observation, err = s.Runs.StartAsync(ctx, serviceCtx, *request.RunRequest, *request.Grant, func(effectCtx context.Context) (json.RawMessage, error) {
-			return s.RunEffect(effectCtx, *request.RunRequest)
+		observation, err = s.Runs.StartAsync(WithRunInputs(ctx, request.RunInputs), serviceCtx, *request.RunRequest, *request.Grant, func(effectCtx context.Context) (json.RawMessage, error) {
+			return s.RunEffect(WithRunInputs(effectCtx, request.RunInputs), *request.RunRequest)
 		})
 		response.RunObservation = &observation
 	case "run-observe":
@@ -449,7 +468,7 @@ func (s *Server) handle(ctx, serviceCtx context.Context, request Request) Respon
 		}
 		response.AdoptionEvidence, err = s.Adoption.Observe(ctx, *request.AdoptionRequest, *request.Grant)
 	case "gc-delete":
-		if s.GC == nil || s.GCEffect == nil || request.GCCandidate == nil || request.Grant == nil {
+		if s.GC == nil && s.Observer == nil || s.GCEffect == nil || request.GCCandidate == nil || request.Grant == nil {
 			err = fmt.Errorf("host GC coordinator unavailable")
 			break
 		}
@@ -465,7 +484,7 @@ func (s *Server) handle(ctx, serviceCtx context.Context, request Request) Respon
 			return s.GCEffect(effectCtx, *request.GCCandidate)
 		})
 	case "gc-observe":
-		if s.GC == nil || request.GCCandidate == nil || request.Grant == nil {
+		if s.GC == nil && s.Observer == nil || request.GCCandidate == nil || request.Grant == nil {
 			err = fmt.Errorf("host GC coordinator unavailable")
 			break
 		}
@@ -514,6 +533,12 @@ func (s *Server) handle(ctx, serviceCtx context.Context, request Request) Respon
 		response.Result = record.Result
 	case "output":
 		response.Output, err = s.Dispatcher.ReadOutput(ctx, request.Target, request.Handle, request.Stream, request.Cursor, request.Limit)
+	case "terminal-control":
+		if request.Control == nil || request.Grant == nil {
+			err = guesttask.ErrUnauthorized
+			break
+		}
+		err = s.Dispatcher.Control(ctx, request.Target, request.Handle, *request.Grant, *request.Control)
 	default:
 		err = fmt.Errorf("unknown supervisor operation")
 	}

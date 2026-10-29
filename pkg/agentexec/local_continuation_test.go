@@ -8,11 +8,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
-	"github.com/stretchr/testify/require"
 )
 
 func TestLocalBridgeParentRunRequiresPersistedIdentityAndLoadsCheckpoint(t *testing.T) {
@@ -28,13 +30,13 @@ func TestLocalBridgeParentRunRequiresPersistedIdentityAndLoadsCheckpoint(t *test
 	require.NoError(t, err)
 	require.NoError(t, mgr.Save(st))
 	queued := time.Now().UTC()
-	action := runtime.ActionRecord{ID: "action", Topology: "lab", RunID: "parent", RunQueuedAt: queued, RunRevision: "revision", Resource: resource.Address, Action: controlplane.PlanActionReset, Status: runtime.ActionIntentCommitted, Phase: "accepted", OwnerUID: st.TopologyUID, ResourceUID: resource.ResourceUID, Generation: 2, StateSerial: st.Meta.Serial, ExpectedSerial: st.Meta.Serial, Candidate: &resource}
+	action := runtime.ActionRecord{ID: "action", Topology: "lab", RunID: "parent", RunQueuedAt: queued, RunRevision: "revision", Resource: resource.Address, Action: model.PlanActionReset, Status: runtime.ActionIntentCommitted, Phase: "accepted", OwnerUID: st.TopologyUID, ResourceUID: resource.ResourceUID, Generation: 2, StateSerial: st.Meta.Serial, ExpectedSerial: st.Meta.Serial, Candidate: &resource}
 	committer := repo.(runtime.ResetIntentCommitter)
 	require.NoError(t, committer.CommitResetIntents(context.Background(), []runtime.ActionRecord{action}))
 	checkpointPath := b.CheckpointFile("lab", "parent")
 	recorder := runtime.NewFileRecorder(checkpointPath, "parent", "lab")
 	recorder.SetStateSerialBefore(st.Meta.Serial)
-	require.NoError(t, recorder.Begin("reset", &runtime.Plan{Actions: []controlplane.PlannedChange{{Address: resource.Address, Action: controlplane.PlanActionReset}}}))
+	require.NoError(t, recorder.Begin("reset", &runtime.Plan{Actions: []model.PlannedChange{{Address: resource.Address, Action: model.PlanActionReset}}}))
 	_, err = b.ParentRun(context.Background(), "parent")
 	require.ErrorContains(t, err, "return evidence unavailable")
 	recorder.Finish(nil)

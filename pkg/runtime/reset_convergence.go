@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
@@ -28,7 +28,7 @@ func (e *Executor) convergeReset(ctx context.Context, plan *Plan) (resultErr err
 	}
 	// Decode and validate every pinned baseline before any provider effect.
 	for _, change := range plan.Actions {
-		if change.Action != controlplane.PlanActionReset {
+		if change.Action != model.PlanActionReset {
 			return fmt.Errorf("reset plan contains non-reset action %s", change.Action)
 		}
 		if _, err := e.buildResetNodeContext(ctx, change); err != nil {
@@ -66,14 +66,14 @@ func (e *Executor) convergeReset(ctx context.Context, plan *Plan) (resultErr err
 			continue
 		}
 		if record.Status == ActionSucceeded {
-			if record.Action != controlplane.PlanActionReset || record.RunID != e.resumeRunID || !permitted[record.Resource.String()] {
+			if record.Action != model.PlanActionReset || record.RunID != e.resumeRunID || !permitted[record.Resource.String()] {
 				continue
 			}
 			if record.Candidate == nil {
 				return fmt.Errorf("%w: completed reset missing identity", ErrActionUncertain)
 			}
 			handler, _ := GetResourceHandler(record.Resource.Type)
-			observed, err := checkedRead(ctx, handler, *record.Candidate, e.state)
+			observed, err := checkedRead(ctx, handler, *record.Candidate, e.state, e.providers)
 			if err != nil {
 				return err
 			}
@@ -83,7 +83,7 @@ func (e *Executor) convergeReset(ctx context.Context, plan *Plan) (resultErr err
 			pending[record.Resource.String()] = record
 			continue
 		}
-		if record.Action != controlplane.PlanActionReset || !permitted[record.Resource.String()] {
+		if record.Action != model.PlanActionReset || !permitted[record.Resource.String()] {
 			return fmt.Errorf("%w: unresolved action %s outside reset scope", ErrPlanStale, record.ID)
 		}
 		if record.RunID != e.runID && (e.resumeRunID == "" || record.RunID != e.resumeRunID) {
@@ -188,7 +188,7 @@ func (e *Executor) convergeReset(ctx context.Context, plan *Plan) (resultErr err
 		entry := entries[i]
 		record := &entry.record
 		item := entry.node
-		item.step = e.recorder.StepStart(record.Resource.String(), controlplane.PlanActionReset)
+		item.step = e.recorder.StepStart(record.Resource.String(), model.PlanActionReset)
 		if err := e.journalError(); err != nil {
 			return err
 		}
@@ -208,7 +208,7 @@ func (e *Executor) convergeReset(ctx context.Context, plan *Plan) (resultErr err
 				return e.uncertainAction(ctx, *record, item.step, err)
 			}
 			record.Phase = "prepared"
-			if err := worker.recordStepExternal(actionCtx, item.step, item.action.Address, controlplane.PlanActionReset); err != nil {
+			if err := worker.recordStepExternal(actionCtx, item.step, item.action.Address, model.PlanActionReset); err != nil {
 				return err
 			}
 		} else {
@@ -231,7 +231,7 @@ func (e *Executor) convergeReset(ctx context.Context, plan *Plan) (resultErr err
 			}
 		}
 		handler, _ := GetResourceHandler(item.action.Address.Type)
-		old, err := checkedRead(actionCtx, handler, *item.current, e.state)
+		old, err := checkedRead(actionCtx, handler, *item.current, e.state, e.providers)
 		if err != nil {
 			return err
 		}
@@ -255,12 +255,12 @@ func (e *Executor) convergeReset(ctx context.Context, plan *Plan) (resultErr err
 			// Persist callback return separately from the subsequent absence
 			// observation. Recovery may observe, but cannot repeat destruction.
 			record.Phase = "destroy_returned"
-			if err := worker.recordStepExternal(actionCtx, item.step, item.action.Address, controlplane.PlanActionReset); err != nil {
+			if err := worker.recordStepExternal(actionCtx, item.step, item.action.Address, model.PlanActionReset); err != nil {
 				return err
 			}
 		}
 		// The old generation must be gone before the replacement is authorized.
-		old, err = checkedRead(actionCtx, handler, *item.current, e.state)
+		old, err = checkedRead(actionCtx, handler, *item.current, e.state, e.providers)
 		if err != nil {
 			return e.uncertainAction(ctx, *record, item.step, err)
 		}
@@ -268,7 +268,7 @@ func (e *Executor) convergeReset(ctx context.Context, plan *Plan) (resultErr err
 			return e.uncertainAction(ctx, *record, item.step, fmt.Errorf("%w: reset old generation still present", ErrVerification))
 		}
 		record.Phase = "destroyed"
-		if err := worker.recordStepExternal(actionCtx, item.step, item.action.Address, controlplane.PlanActionReset); err != nil {
+		if err := worker.recordStepExternal(actionCtx, item.step, item.action.Address, model.PlanActionReset); err != nil {
 			return err
 		}
 	}
@@ -294,12 +294,12 @@ func (e *Executor) convergeReset(ctx context.Context, plan *Plan) (resultErr err
 			record.Phase = "verifying"
 			record.EffectComplete = true
 			record.Quiescence = "returned"
-			if err := worker.recordStepExternal(actionCtx, item.step, item.action.Address, controlplane.PlanActionReset); err != nil {
+			if err := worker.recordStepExternal(actionCtx, item.step, item.action.Address, model.PlanActionReset); err != nil {
 				return err
 			}
 		}
 		handler, _ := GetResourceHandler(record.Resource.Type)
-		observed, err := checkedRead(actionCtx, handler, *record.Candidate, e.state)
+		observed, err := checkedRead(actionCtx, handler, *record.Candidate, e.state, e.providers)
 		if err != nil {
 			return e.uncertainAction(ctx, *record, item.step, err)
 		}

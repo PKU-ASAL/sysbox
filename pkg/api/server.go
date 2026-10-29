@@ -9,8 +9,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"path/filepath"
-	"sync"
 	"time"
 
 	"github.com/oslab/sysbox/pkg/config"
@@ -26,28 +24,27 @@ type Server struct {
 	fenceTargets   map[string]hostFenceTarget
 	grantSigner    ed25519.PrivateKey
 	grantHostKeys  map[string]ed25519.PublicKey
-	repositoryMu   sync.Mutex
-	repositories   map[string]*persistence.Repository
-	runsDir        string
-	workspacesDir  string
-	stateBackend   string
-	cfg            config.ServiceConfig
-	apiStore       apiStore
-	initErr        error
-	agents         *agentRegistry
-	agentSvc       *AgentService
-	agentStream    *AgentStreamService
-	jobs           *Jobs
-	runService     *RunService
-	scheduler      *SchedulerService
-	workspaces     *WorkspaceService
-	nodeService    *NodeOperationService
-	consoleSvc     *ConsoleService
-	guestExecSvc   *GuestExecutionService
-	consoles       *consoleSessionHub
-	nodeOps        *nodeOperationStore
-	supervisor     *Supervisor
-	mux            *http.ServeMux
+	lifecycleRepositories
+	runsDir       string
+	workspacesDir string
+	stateBackend  string
+	cfg           config.ServiceConfig
+	apiStore      apiStore
+	initErr       error
+	agents        *agentRegistry
+	agentSvc      *AgentService
+	agentStream   *AgentStreamService
+	jobs          *Jobs
+	runService    *RunService
+	scheduler     *SchedulerService
+	workspaces    *WorkspaceService
+	nodeService   *NodeOperationService
+	consoleSvc    *ConsoleService
+	guestExecSvc  *GuestExecutionService
+	consoles      *consoleSessionHub
+	nodeOps       *nodeOperationStore
+	supervisor    *Supervisor
+	mux           *http.ServeMux
 }
 
 // NewServer creates a Server rooted at runsDir (state files) and
@@ -80,33 +77,7 @@ func newServerWithConfig(cfg config.ServiceConfig, recoverInterrupted bool) *Ser
 		workspacesDir = config.DefaultWorkspacesDir()
 	}
 	stateBackend := cfg.State.Backend
-	apiStore, initErr := newAPIStore(runsDir, stateBackend)
-	if initErr == nil && cfg.RevisionRegistry != "" {
-		if stateBackend != "" {
-			initErr = fmt.Errorf("revision_registry requires local metadata backend")
-		} else {
-			initErr = revisiongate.Enroll(context.Background(), runsDir, cfg.RevisionRegistry)
-		}
-	}
-	if initErr == nil && cfg.RevisionRemote != nil {
-		if stateBackend != "" || cfg.RevisionRegistry != "" || len(cfg.RevisionConsumers) > 0 {
-			initErr = fmt.Errorf("remote registry consumer requires exclusive local metadata backend")
-		} else {
-			initErr = revisiongate.BindRemote(context.Background(), runsDir, revisiongate.RemoteBinding{URL: cfg.RevisionRemote.URL, Consumer: cfg.RevisionRemote.Consumer, TokenFile: cfg.RevisionRemote.TokenFile})
-		}
-	}
-	var remoteRegistry *revisiongate.RemoteRegistry
-	if initErr == nil && len(cfg.RevisionConsumers) > 0 {
-		if stateBackend != "" {
-			initErr = fmt.Errorf("remote registry service requires local registry backend")
-		} else {
-			var catalog string
-			catalog, initErr = revisiongate.Catalog(runsDir)
-			if initErr == nil {
-				remoteRegistry, initErr = revisiongate.NewRemoteRegistry(catalog, cfg.RevisionConsumers)
-			}
-		}
-	}
+	apiStore, remoteRegistry, initErr := openExecutionStorage(cfg, runsDir, stateBackend)
 	if initErr != nil {
 		// Keep construction safe for non-Start consumers; Start reports the
 		// error so the API server refuses to bind.
@@ -131,41 +102,14 @@ func newServerWithConfig(cfg config.ServiceConfig, recoverInterrupted bool) *Ser
 	if s.initErr == nil && s.consoles.initErr != nil {
 		s.initErr = fmt.Errorf("initialize console registry: %w", s.consoles.initErr)
 	}
-	if s.initErr == nil && (len(cfg.RevisionSQLConsumers) > 0 || cfg.RevisionRegistryID != "") {
-		if stateBackend != "" {
-			s.initErr = fmt.Errorf("federated coordinator requires file registry")
-		} else {
-			catalog, err := revisiongate.Catalog(runsDir)
-			if err == nil {
-				err = os.MkdirAll(catalog, 0700)
-			}
-			if err == nil {
-				var release func()
-				release, err = revisiongate.Lock(context.Background(), catalog)
-				if err == nil {
-					_, err = s.enrolledSQLConsumers(catalog)
-					release()
-				}
-			}
-			if err != nil {
-				s.initErr = err
-			}
-		}
-	}
+
 	if err := s.loadHostFenceTargets(); err != nil && s.initErr == nil {
 		s.initErr = err
 	}
 	s.agentSvc = newAgentService(s)
 	if s.initErr == nil {
-		runs, err := s.apiStore.LoadRuns(context.Background())
-		if err != nil {
-			s.initErr = fmt.Errorf("restore completion projections: %w", err)
-		} else {
-			for _, run := range runs {
-				if run.Status.IsTerminal() && run.CompletionProjection != nil {
-					s.agents.RestoreCompletionProjection(*run.CompletionProjection)
-				}
-			}
+		if _, err := s.apiStore.LoadRuns(context.Background()); err != nil {
+			s.initErr = fmt.Errorf("initialize run history: %w", err)
 		}
 	}
 	s.workspaces = newWorkspaceService(s.runsDir, s.workspacesDir, s.stateBackend, s.stateManager, s.apiStore)
@@ -190,7 +134,6 @@ func newServerWithConfig(cfg config.ServiceConfig, recoverInterrupted bool) *Ser
 		s.scheduling(),
 		s.agentService().WakeCommand,
 		s.authorizeConsole,
-		s.workspaceService().HCLFile,
 		s.workspaceService().LoadState,
 		s.authoritativeTopologyHealth,
 		defaultConsoleTimeout,
@@ -212,42 +155,7 @@ func (s *Server) stateManager(topology string) (*state.Manager, error) {
 }
 
 func (s *Server) actionRepository(topology string) (*persistence.Repository, error) {
-	if err := validatePathSegment(topology, "topology"); err != nil {
-		return nil, err
-	}
-	path := filepath.Join(s.runsDir, topology, "state.json")
-	raw, path, err := persistence.ResolveLocation(s.stateBackend, path, topology)
-	if err != nil {
-		return nil, err
-	}
-	// A cached pool must not hide newly discovered legacy state corruption.
-	if raw == "" {
-		if _, statErr := os.Stat(path); statErr == nil {
-			return nil, fmt.Errorf("%w: standalone state requires explicit rebuild", persistence.ErrUnsupportedVersion)
-		} else if !os.IsNotExist(statErr) {
-			return nil, statErr
-		}
-	}
-	key := raw
-	if key == "" {
-		key = path
-	}
-	s.repositoryMu.Lock()
-	defer s.repositoryMu.Unlock()
-	if repo := s.repositories[key]; repo != nil {
-		return repo, nil
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	repo, err := persistence.OpenConfigured(ctx, raw, path)
-	if err != nil {
-		return nil, err
-	}
-	if s.repositories == nil {
-		s.repositories = map[string]*persistence.Repository{}
-	}
-	s.repositories[key] = repo
-	return repo, nil
+	return s.lifecycleRepositories.open(s.runsDir, s.stateBackend, topology)
 }
 
 func (s *Server) runs() *RunService {
@@ -303,7 +211,6 @@ func (s *Server) consoleService() *ConsoleService {
 			s.scheduling(),
 			s.agentService().WakeCommand,
 			s.authorizeConsole,
-			s.workspaceService().HCLFile,
 			s.workspaceService().LoadState,
 			s.authoritativeTopologyHealth,
 			defaultConsoleTimeout,
@@ -421,16 +328,13 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("POST /v1/agents/{agent}/heartbeat", s.handleAgentHeartbeat)
 	m.HandleFunc("GET /v1/agents/{agent}/projections", s.handleListAgentProjections)
 	m.HandleFunc("GET /v1/agents/{agent}/inventory", s.handleGetAgentInventory)
-	m.HandleFunc("POST /v1/agents/{agent}/inventory", s.handlePostAgentInventory)
+	m.HandleFunc("POST /v1/agents/{agent}/observations", s.handleHostObservation)
 	m.HandleFunc("GET /v1/agents/{agent}/commands", s.handleListAgentCommands)
 	m.HandleFunc("POST /v1/agents/{agent}/commands/{command}/cancel", s.handleCancelAgentCommand)
 	m.HandleFunc("GET /v1/agents/{agent}/command-events", s.handleListAgentCommandEvents)
-	m.HandleFunc("POST /v1/agents/{agent}/projections/resources", s.handlePostAgentResourceProjection)
-	m.HandleFunc("POST /v1/agents/{agent}/node-operations/{operation}/complete", s.handleCompleteNodeOperation)
 	m.HandleFunc("POST /v1/agents/{agent}/runs/{id}/claim", s.handleClaimAgentRun)
 	m.HandleFunc("POST /v1/agents/{agent}/runs/{id}/revision", s.handleRunRevision)
 	m.HandleFunc("POST /v1/agents/{agent}/runs/{id}/renew", s.handleRenewAgentRun)
-	m.HandleFunc("POST /v1/agents/{agent}/runs/{id}/complete", s.handleCompleteAgentRun)
 	m.HandleFunc("GET /v1/agents/{agent}/commands/stream", s.handleAgentCommandStream)
 	m.HandleFunc("GET /v1/agents/{agent}/sessions/{session}/attach", s.handleAgentAttachConsole)
 	m.HandleFunc("GET /v1/artifacts", s.handleListArtifacts)
@@ -501,6 +405,7 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("GET /v1/topologies/{topology}/outputs", s.handleGetOutputs)
 	m.HandleFunc("GET /v1/topologies/{topology}/health", s.handleGetTopologyHealth)
 	m.HandleFunc("GET /v1/topologies/{topology}/plan", s.handleGetPlan)
+	m.HandleFunc("POST /v1/topologies/{topology}/plan", s.handleRevisionPlan)
 	m.HandleFunc("GET /v1/topologies/{topology}/graph", s.handleGetGraph)
 	m.HandleFunc("GET /v1/topologies/{topology}/preflight", s.handlePreflight)
 	m.HandleFunc("POST /v1/topologies/{topology}/apply", s.handleApply)
@@ -513,6 +418,7 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("GET /v1/runs", s.handleListRuns)
 	m.HandleFunc("GET /v1/runs/{id}", s.handleGetRun)
 	m.HandleFunc("POST /v1/runs/{id}/resume", s.handleResumeRun)
+	m.HandleFunc("POST /v1/runs/{id}/cancel", s.handleCancelRun)
 	m.HandleFunc("POST /v1/runs/{id}/recover", s.handleRecoverRun)
 	m.HandleFunc("POST /v1/runs/{id}/cleanup", s.handleCleanupRun)
 	m.HandleFunc("GET /v1/runs/{id}/checkpoint", s.handleGetRunCheckpoint)
@@ -535,7 +441,6 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("POST /v1/executions/{execution}/cancel", s.handleCancelGuestExecution)
 	m.HandleFunc("POST /v1/agents/{agent}/guest-executions/{execution}/start", s.handleStartGuestExecution)
 	m.HandleFunc("POST /v1/agents/{agent}/guest-file-operations/{operation}/start", s.handleStartGuestFileOperation)
-	m.HandleFunc("POST /v1/agents/{agent}/guest-file-operations/{operation}/complete", s.handleCompleteGuestFileOperation)
 	m.HandleFunc("PUT /v1/topologies/{topology}/nodes/{node}/files", s.handlePutGuestFile)
 	m.HandleFunc("GET /v1/file-operations/{operation}", s.handleGetGuestFileOperation)
 	m.HandleFunc("POST /v1/file-operations/{operation}/cancel", s.handleCancelGuestFileOperation)
@@ -545,7 +450,6 @@ func (s *Server) registerRoutes() {
 	m.HandleFunc("POST /v1/topologies/{topology}/import", s.handleImport)
 	m.HandleFunc("POST /v1/topologies/{topology}/adoption-plan", s.handleAdoptionPlan)
 	m.HandleFunc("POST /v1/topologies/{topology}/ssh-access", s.handleSSHAccess)
-	m.HandleFunc("POST /v1/agents/{agent}/adoption-confirm", s.handleAdoptionConfirm)
 	m.HandleFunc("GET /v1/topologies/{topology}/resources", s.handleListResources)
 	m.HandleFunc("GET /v1/topologies/{topology}/status/stream", s.handleTopologyStatusStream)
 	m.HandleFunc("GET /v1/topologies/{topology}/resources/{resource}/health", s.handleGetResourceHealth)
@@ -566,6 +470,10 @@ func authMiddleware(next http.Handler) http.Handler {
 				got = "Bearer " + r.URL.Query().Get("token")
 			}
 			if len(got) != len(expectedPrefix) || subtle.ConstantTimeCompare([]byte(got), []byte(expectedPrefix)) != 1 {
+				if s, ok := next.(*Server); ok && s.authenticateAgentProtocol(w, r) {
+					next.ServeHTTP(w, r)
+					return
+				}
 				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 				return
 			}

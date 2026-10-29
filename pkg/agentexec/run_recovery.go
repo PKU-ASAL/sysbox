@@ -3,14 +3,17 @@ package agentexec
 import (
 	"context"
 	"fmt"
-	"github.com/oslab/sysbox/pkg/artifact"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/graph"
-	"github.com/oslab/sysbox/pkg/runtime"
-	"github.com/oslab/sysbox/pkg/secret"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/artifact"
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/model"
+	"github.com/oslab/sysbox/pkg/runtime"
+	"github.com/oslab/sysbox/pkg/secret"
 )
 
 type RevisionWorkspaceProvider interface {
@@ -65,14 +68,14 @@ func (e *Executor) ObserveRecoverRun(ctx context.Context, agentID string, cmd co
 		if err != nil {
 			return nil, err
 		}
-		g, _, st, _, _, err := runtime.LoadWorkspaceWithInputs(path, mgr, auth.Inputs)
+		g, _, st, _, _, err := runtime.LoadWorkspaceWithInputs(path, mgr, auth.Inputs, driver.DefaultRegistry)
 		if err != nil {
 			return nil, err
 		}
 		if err := runtime.ValidateArtifactSources(ctx, g, filepath.Dir(path), secret.EnvironmentResolver{}); err != nil {
 			return nil, err
 		}
-		exec := runtime.NewExecutor(g, st)
+		exec := runtime.NewExecutor(g, st, driver.DefaultRegistry)
 		exec.SetRunContext(run.Topology, run.ID)
 		exec.SetRunIncarnation(run.QueuedAt, run.Revision)
 		exec.SetWorkspaceFromHCLFile(path)
@@ -87,7 +90,7 @@ func (e *Executor) ObserveRecoverRun(ctx context.Context, agentID string, cmd co
 	if auth.Mode == controlplane.RunRecoveryObserve && auth.Revision != nil {
 		needsDiscovery := false
 		for _, a := range journal {
-			if a.RunID == run.ID && a.Action == controlplane.PlanActionCreate && a.Candidate == nil {
+			if a.RunID == run.ID && a.Action == model.PlanActionCreate && a.Candidate == nil {
 				needsDiscovery = true
 			}
 		}
@@ -104,14 +107,14 @@ func (e *Executor) ObserveRecoverRun(ctx context.Context, agentID string, cmd co
 			if err != nil {
 				return nil, err
 			}
-			g, _, _, _, _, err := runtime.LoadWorkspaceWithInputs(path, mgr, nil)
+			g, _, _, _, _, err := runtime.LoadWorkspaceWithInputs(path, mgr, nil, driver.DefaultRegistry)
 			if err != nil {
 				return nil, err
 			}
 			observedGraph = g
 		}
 	}
-	st, resources, err := runtime.ObserveRunActions(ctx, repo, run.Topology, run.ID, observedGraph)
+	st, resources, err := runtime.ObserveRunActions(ctx, repo, run.Topology, run.ID, driver.DefaultRegistry, observedGraph)
 	if err != nil {
 		return nil, err
 	}
@@ -145,18 +148,4 @@ func (r *incarnationRecoveryRepository) LoadActions(ctx context.Context, topolog
 		out = append(out, record)
 	}
 	return out, nil
-}
-func (b remoteBridge) ActionRepository(topology string) (runtime.ActionRepository, error) {
-	p, ok := b.Bridge.(ActionRepositoryProvider)
-	if !ok {
-		return nil, runtime.ErrConvergenceUnsupported
-	}
-	return p.ActionRepository(topology)
-}
-func (b remoteBridge) PinnedRevisionWorkspace(ctx context.Context, run controlplane.Run, revision *controlplane.GlobalRevision) (string, error) {
-	p, ok := b.Bridge.(RevisionWorkspaceProvider)
-	if !ok {
-		return "", runtime.ErrConvergenceUnsupported
-	}
-	return p.PinnedRevisionWorkspace(ctx, run, revision)
 }

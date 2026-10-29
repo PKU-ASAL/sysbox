@@ -12,8 +12,9 @@ import (
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/secret"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -69,8 +70,8 @@ func (e *Executor) converge(ctx context.Context, plan *Plan, operation string) (
 	}
 	effective := plan.clone()
 	for i := range effective.Actions {
-		if e.recoveredCreates[effective.Actions[i].Address.String()] && effective.Actions[i].Action == controlplane.PlanActionReplace {
-			effective.Actions[i].Action = controlplane.PlanActionNoop
+		if e.recoveredCreates[effective.Actions[i].Address.String()] && effective.Actions[i].Action == model.PlanActionReplace {
+			effective.Actions[i].Action = model.PlanActionNoop
 		}
 	}
 	plan = effective
@@ -81,7 +82,7 @@ func (e *Executor) converge(ctx context.Context, plan *Plan, operation string) (
 	// Validate every target before the first effect. Observe again at the
 	// action boundary, after dependencies have finished.
 	for _, change := range plan.Actions {
-		if operation == "destroy" && change.Action != controlplane.PlanActionDelete && change.Action != controlplane.PlanActionNoop {
+		if operation == "destroy" && change.Action != model.PlanActionDelete && change.Action != model.PlanActionNoop {
 			return fmt.Errorf("invalid destroy action %s", change.Action)
 		}
 		if plan.excluded[change.Address.String()] {
@@ -106,11 +107,11 @@ func (e *Executor) converge(ctx context.Context, plan *Plan, operation string) (
 		if plan.excluded[change.Address.String()] {
 			continue
 		}
-		if change.Action == controlplane.PlanActionDelete {
+		if change.Action == model.PlanActionDelete {
 			continue
 		}
-		if change.Action == controlplane.PlanActionReplace {
-			change.Action = controlplane.PlanActionCreate
+		if change.Action == model.PlanActionReplace {
+			change.Action = model.PlanActionCreate
 		}
 		needed, err := e.authorizeObserved(ctx, change)
 		if err != nil {
@@ -120,7 +121,7 @@ func (e *Executor) converge(ctx context.Context, plan *Plan, operation string) (
 			continue
 		}
 		switch change.Action {
-		case controlplane.PlanActionCreate, controlplane.PlanActionRead, controlplane.PlanActionDelete:
+		case model.PlanActionCreate, model.PlanActionRead, model.PlanActionDelete:
 			if err := e.runAction(ctx, change); err != nil {
 				return err
 			}
@@ -132,12 +133,12 @@ func (e *Executor) converge(ctx context.Context, plan *Plan, operation string) (
 // Destruction follows persisted dependencies, even when storage sorts records
 // differently. A dependent outside the approved destructive scope invalidates
 // the plan instead of silently adding another replacement.
-func (e *Executor) orderedDestruction(plan *Plan) ([]controlplane.PlannedChange, error) {
-	selected := map[string]controlplane.PlannedChange{}
+func (e *Executor) orderedDestruction(plan *Plan) ([]model.PlannedChange, error) {
+	selected := map[string]model.PlannedChange{}
 	for _, change := range plan.Actions {
-		if change.Action == controlplane.PlanActionDelete || change.Action == controlplane.PlanActionReplace {
+		if change.Action == model.PlanActionDelete || change.Action == model.PlanActionReplace {
 			if e.state.FindResource(change.Address) != nil {
-				change.Action = controlplane.PlanActionDelete
+				change.Action = model.PlanActionDelete
 				selected[change.Address.String()] = change
 			}
 		}
@@ -155,7 +156,7 @@ func (e *Executor) orderedDestruction(plan *Plan) ([]controlplane.PlannedChange,
 		}
 	}
 	visited := map[string]int{}
-	out := []controlplane.PlannedChange{}
+	out := []model.PlannedChange{}
 	var visit func(string) error
 	visit = func(key string) error {
 		if visited[key] == 2 {
@@ -194,7 +195,7 @@ func (e *Executor) observeTarget(ctx context.Context, id address.Address) (Resou
 		return ResourceReadResult{}, fmt.Errorf("%w: handler %s", ErrConvergenceUnsupported, id.Type)
 	}
 	if current := e.state.FindResource(id); current != nil {
-		return checkedRead(ctx, handler, *current, e.state)
+		return checkedRead(ctx, handler, *current, e.state, e.providers)
 	}
 	node := e.graph.Get(id)
 	if node == nil {
@@ -230,8 +231,8 @@ func (e *Executor) observeTarget(ctx context.Context, id address.Address) (Resou
 	return validateObservation(observed, err, id)
 }
 
-func checkedRead(ctx context.Context, handler ResourceHandler, current state.Resource, st *state.State) (ResourceReadResult, error) {
-	observed, err := readResourceWithAttachments(ctx, handler, current, st)
+func checkedRead(ctx context.Context, handler ResourceHandler, current state.Resource, st *state.State, providers *driver.Registry) (ResourceReadResult, error) {
+	observed, err := readResourceWithAttachments(ctx, handler, current, st, providers)
 	observed, err = validateObservation(observed, err, current.Address)
 	if err != nil {
 		return observed, err
@@ -257,14 +258,14 @@ func validateObservation(observed ResourceReadResult, err error, id address.Addr
 	return observed, nil
 }
 
-func (e *Executor) authorizeObserved(ctx context.Context, change controlplane.PlannedChange) (bool, error) {
+func (e *Executor) authorizeObserved(ctx context.Context, change model.PlannedChange) (bool, error) {
 	if err := e.journalError(); err != nil {
 		return false, err
 	}
-	if change.Action == controlplane.PlanActionUnknown || change.Action == controlplane.PlanActionReset {
+	if change.Action == model.PlanActionUnknown || change.Action == model.PlanActionReset {
 		return false, fmt.Errorf("%w: action %s for %s", ErrConvergenceUnsupported, change.Action, change.Address)
 	}
-	if change.Action == controlplane.PlanActionDelete && e.state.FindResource(change.Address) == nil {
+	if change.Action == model.PlanActionDelete && e.state.FindResource(change.Address) == nil {
 		if e.recoveredDeletes[change.Address.String()] {
 			return false, nil
 		}
@@ -282,24 +283,24 @@ func (e *Executor) authorizeObserved(ctx context.Context, change controlplane.Pl
 		return false, err
 	}
 	switch change.Action {
-	case controlplane.PlanActionNoop:
+	case model.PlanActionNoop:
 		if observed.Status != state.ResourcePresent {
 			return false, fmt.Errorf("%w: %s is %s; a new plan is required", ErrPlanStale, change.Address, observed.Status)
 		}
 		return false, nil
-	case controlplane.PlanActionDelete:
+	case model.PlanActionDelete:
 		if resourcePreventDestroy(e.graph.Get(change.Address), e.state.FindResource(change.Address)) {
 			return false, fmt.Errorf("prevent_destroy blocks %s", change.Address)
 		}
 		return true, nil
-	case controlplane.PlanActionReplace:
+	case model.PlanActionReplace:
 		if resourcePreventDestroy(e.graph.Get(change.Address), e.state.FindResource(change.Address)) {
 			return false, fmt.Errorf("prevent_destroy blocks %s", change.Address)
 		}
 		return true, nil
-	case controlplane.PlanActionRead:
+	case model.PlanActionRead:
 		return true, nil
-	case controlplane.PlanActionCreate:
+	case model.PlanActionCreate:
 		if observed.Status == state.ResourceAbsent {
 			return true, nil
 		}
@@ -309,7 +310,7 @@ func (e *Executor) authorizeObserved(ctx context.Context, change controlplane.Pl
 			if err != nil {
 				return false, err
 			}
-			if diff.Action == controlplane.PlanActionNoop {
+			if diff.Action == model.PlanActionNoop {
 				return false, nil
 			}
 		}
@@ -318,7 +319,7 @@ func (e *Executor) authorizeObserved(ctx context.Context, change controlplane.Pl
 	return false, fmt.Errorf("unsupported action %s", change.Action)
 }
 
-func (e *Executor) newAction(ctx context.Context, change controlplane.PlannedChange) (ActionRecord, error) {
+func (e *Executor) newAction(ctx context.Context, change model.PlannedChange) (ActionRecord, error) {
 	var id [16]byte
 	if _, err := rand.Read(id[:]); err != nil {
 		return ActionRecord{}, err
@@ -339,7 +340,7 @@ func (e *Executor) newAction(ctx context.Context, change controlplane.PlannedCha
 		}
 		record.DesiredDigest = digest
 		if cfg, ok := node.Data.(*config.NodeConfig); ok {
-			record.ReplayForbidden = change.Action != controlplane.PlanActionDelete && len(cfg.Provisioners) > 0
+			record.ReplayForbidden = change.Action != model.PlanActionDelete && len(cfg.Provisioners) > 0
 		}
 	}
 	if requiresCompositeCompletion(change.Address.Type, change.Action) {
@@ -363,7 +364,7 @@ func (e *Executor) newAction(ctx context.Context, change controlplane.PlannedCha
 		// A fenced reset retired before replacement admission reserved a generation
 		// but never created it. New operations use the retained source generation (or its
 		// next generation for reset); the old request remains disposition-blocked.
-		if (change.Action == controlplane.PlanActionReset || change.Action == controlplane.PlanActionRead || change.Action == controlplane.PlanActionDelete) && old.DispositionID != "" && old.ResetBeforeReplacement() && old.Resource.Equal(change.Address) && record.Candidate != nil && old.OwnerUID == record.OwnerUID && old.ResourceUID == record.ResourceUID && old.Candidate.ExternalID == record.Candidate.ExternalID && old.Candidate.Driver == record.Candidate.Driver && old.Candidate.Generation == record.Candidate.Generation {
+		if (change.Action == model.PlanActionReset || change.Action == model.PlanActionRead || change.Action == model.PlanActionDelete) && old.DispositionID != "" && old.ResetBeforeReplacement() && old.Resource.Equal(change.Address) && record.Candidate != nil && old.OwnerUID == record.OwnerUID && old.ResourceUID == record.ResourceUID && old.Candidate.ExternalID == record.Candidate.ExternalID && old.Candidate.Driver == record.Candidate.Driver && old.Candidate.Generation == record.Candidate.Generation {
 			continue
 		}
 		if old.Resource.Equal(change.Address) && old.Generation > maxGeneration {
@@ -371,16 +372,16 @@ func (e *Executor) newAction(ctx context.Context, change controlplane.PlannedCha
 			record.ResourceUID = old.ResourceUID
 		}
 	}
-	if maxGeneration > record.Generation || maxGeneration > 0 && change.Action == controlplane.PlanActionCreate {
+	if maxGeneration > record.Generation || maxGeneration > 0 && change.Action == model.PlanActionCreate {
 		record.Generation = maxGeneration
-		if change.Action == controlplane.PlanActionCreate || change.Action == controlplane.PlanActionReset {
+		if change.Action == model.PlanActionCreate || change.Action == model.PlanActionReset {
 			record.Generation++
 		}
 	}
-	if change.Action == controlplane.PlanActionReset && record.Candidate != nil && record.Generation <= record.Candidate.Generation {
+	if change.Action == model.PlanActionReset && record.Candidate != nil && record.Generation <= record.Candidate.Generation {
 		record.Generation = record.Candidate.Generation + 1
 	}
-	if change.Action == controlplane.PlanActionReset {
+	if change.Action == model.PlanActionReset {
 		if err := e.pinResetSSH(&record); err != nil {
 			return record, err
 		}
@@ -388,7 +389,7 @@ func (e *Executor) newAction(ctx context.Context, change controlplane.PlannedCha
 	return record, nil
 }
 
-func (e *Executor) runAction(ctx context.Context, change controlplane.PlannedChange) error {
+func (e *Executor) runAction(ctx context.Context, change model.PlannedChange) error {
 	ctx = secret.WithResolver(ctx, e.resolver())
 	if e.actions == nil {
 		return fmt.Errorf("%w: durable action repository required for %s", ErrConvergenceUnsupported, change.Address)
@@ -419,12 +420,12 @@ func (e *Executor) runAction(ctx context.Context, change controlplane.PlannedCha
 	worker.currentResourceStep = step
 	handler, _ := GetResourceHandler(change.Address.Type)
 	var effectErr error
-	if change.Action == controlplane.PlanActionDelete {
+	if change.Action == model.PlanActionDelete {
 		current := e.state.FindResource(change.Address)
 		if current == nil {
 			return fmt.Errorf("%w: identity disappeared", ErrPlanStale)
 		}
-		before, readErr := checkedRead(ctx, handler, *current, e.state)
+		before, readErr := checkedRead(ctx, handler, *current, e.state, e.providers)
 		if readErr != nil {
 			return e.uncertainAction(ctx, record, step, readErr)
 		}
@@ -454,7 +455,7 @@ func (e *Executor) runAction(ctx context.Context, change controlplane.PlannedCha
 	record.Error = "awaiting postcondition verification"
 	evidenceCtx := ctx
 	releaseEvidence := func() {}
-	if change.Action == controlplane.PlanActionDelete {
+	if change.Action == model.PlanActionDelete {
 		// A successful deletion return is evidence, not fresh execution
 		// authority. Preserve it even when cancellation raced the response;
 		// state publication and further effects still use the original context.
@@ -469,18 +470,18 @@ func (e *Executor) runAction(ctx context.Context, change controlplane.PlannedCha
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if _, referenceOnly := handler.(ReferenceOnlyResource); referenceOnly && change.Action == controlplane.PlanActionDelete {
+	if _, referenceOnly := handler.(ReferenceOnlyResource); referenceOnly && change.Action == model.PlanActionDelete {
 		if worker.state.FindResource(change.Address) != nil {
 			return e.uncertainAction(ctx, record, step, ErrVerification)
 		}
 		return e.commitVerifiedAction(ctx, record, step)
 	}
-	observed, err := checkedRead(ctx, handler, *record.Candidate, e.state)
+	observed, err := checkedRead(ctx, handler, *record.Candidate, e.state, e.providers)
 	if err != nil {
 		return e.uncertainAction(ctx, record, step, err)
 	}
 	expected := state.ResourcePresent
-	if change.Action == controlplane.PlanActionDelete {
+	if change.Action == model.PlanActionDelete {
 		expected = state.ResourceAbsent
 	}
 	if observed.Status != expected {
@@ -499,12 +500,12 @@ func derivedResourceUID(topologyUID string, id address.Address) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func desiredActionDigest(node *graph.Node, change controlplane.PlannedChange) (string, error) {
+func desiredActionDigest(node *graph.Node, change model.PlannedChange) (string, error) {
 	digest, err := desiredHash(node)
 	if err != nil {
 		return "", err
 	}
-	if change.Action == controlplane.PlanActionReset {
+	if change.Action == model.PlanActionReset {
 		raw, err := json.Marshal(change.Changes)
 		if err != nil {
 			return "", err
@@ -535,7 +536,7 @@ func (e *Executor) commitVerifiedAction(ctx context.Context, record ActionRecord
 	record.ExpectedSerial = e.state.Meta.Serial
 	log := resourceLog(*record.Candidate)
 	patch := StatePatch{Index: step, Resource: record.Resource.String(), Action: record.Action, Op: StatePatchUpsert, State: &log}
-	if record.Action == controlplane.PlanActionDelete {
+	if record.Action == model.PlanActionDelete {
 		patch.Op = StatePatchDelete
 	}
 	record.Status = ActionSucceeded

@@ -4,12 +4,44 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 // Validate the complete cold-plug configuration before launching any process.
 func lockStartAttachments(ctx context.Context, m *vmManifest) (func(), error) {
+	return lockStartAttachmentsForUID(ctx, m, 0)
+}
+
+// A reserved UID cannot be recycled while it still owns an earlier TAP.
+func revokeJailTapAccess(m *vmManifest) error {
+	ctx := context.Background()
+	id := substrate.OperationIdentity{ActionID: "release-jail", OwnerUID: m.OwnerUID, TopologyUID: m.TopologyUID, ResourceUID: m.ResourceUID, Generation: m.Generation}
+	for _, a := range m.Handle.Attachments {
+		alias, err := network.AttachmentAlias(id, a.Name)
+		if err != nil {
+			return err
+		}
+		if err = network.ObserveOwnedAttachment(ctx, a.Link, alias); driver.IsCategory(err, driver.ErrorNotFound) {
+			continue
+		} else if err != nil {
+			return err
+		}
+		bridge, err := network.OpenOwnedBridge(ctx, a.Target)
+		if err != nil {
+			return err
+		}
+		err = bridge.SetTapOwner(ctx, a.Link, alias, 0)
+		bridge.Close()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func lockStartAttachmentsForUID(ctx context.Context, m *vmManifest, uid uint32) (func(), error) {
 	raw, err := readRegularFile(m.Handle.ConfigPath)
 	if err != nil {
 		return nil, err
@@ -41,6 +73,9 @@ func lockStartAttachments(ctx context.Context, m *vmManifest) (func(), error) {
 		alias, err := network.AttachmentAlias(id, a.Name)
 		if err == nil {
 			err = bridges[i].ObserveAttachment(ctx, a.Link, alias)
+		}
+		if err == nil && uid != 0 {
+			err = bridges[i].SetTapOwner(ctx, a.Link, alias, uid)
 		}
 		if err != nil {
 			unlock()

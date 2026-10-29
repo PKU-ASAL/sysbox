@@ -6,14 +6,14 @@ import (
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/state"
 )
 
 type Plan struct {
-	Actions     []controlplane.PlannedChange `json:"actions"`
+	Actions     []model.PlannedChange `json:"actions"`
 	bindings    map[string]planBinding
 	excluded    map[string]bool
 	stateSerial int64
@@ -32,8 +32,8 @@ func (p Plan) Validate() error {
 		}
 		seen[change.Address.String()] = struct{}{}
 		switch change.Action {
-		case controlplane.PlanActionNoop, controlplane.PlanActionCreate, controlplane.PlanActionRead,
-			controlplane.PlanActionReplace, controlplane.PlanActionDelete, controlplane.PlanActionReset, controlplane.PlanActionUnknown:
+		case model.PlanActionNoop, model.PlanActionCreate, model.PlanActionRead,
+			model.PlanActionReplace, model.PlanActionDelete, model.PlanActionReset, model.PlanActionUnknown:
 		default:
 			return fmt.Errorf("unsupported plan action %q for %s", change.Action, change.Address)
 		}
@@ -41,7 +41,7 @@ func (p Plan) Validate() error {
 	return nil
 }
 
-func ComputePlan(g *graph.Graph, s *state.State) (*Plan, error) {
+func ComputePlan(g *graph.Graph, s *state.State, providers *driver.Registry) (*Plan, error) {
 	inferManagedBridgeExposure(g, s)
 	for _, resource := range s.Resources {
 		if _, ok := GetResourceHandler(resource.Address.Type); !ok {
@@ -51,7 +51,7 @@ func ComputePlan(g *graph.Graph, s *state.State) (*Plan, error) {
 	if err := g.Validate(); err != nil {
 		return nil, fmt.Errorf("validate graph: %w", err)
 	}
-	if err := validateGuestFamilies(g); err != nil {
+	if err := validateGuestFamilies(g, providers); err != nil {
 		return nil, err
 	}
 	order, err := g.TopoSort()
@@ -65,12 +65,12 @@ func ComputePlan(g *graph.Graph, s *state.State) (*Plan, error) {
 		node := g.Get(resourceAddress)
 		if declarer, ok := GetResourceHandler(resourceAddress.Type); ok {
 			if required, ok := declarer.(CapabilityDeclarer); ok {
-				requirements, err := required.RequiredCapabilities(node)
+				requirements, err := required.RequiredCapabilities(node, providers)
 				if err != nil {
 					return nil, err
 				}
 				for _, requirement := range requirements {
-					if _, err := driver.DefaultRegistry.Require(requirement.Driver, requirement.Capability); err != nil {
+					if _, err := providers.Require(requirement.Driver, requirement.Capability); err != nil {
 						return nil, fmt.Errorf("%s: %w", resourceAddress, err)
 					}
 				}
@@ -80,13 +80,13 @@ func ComputePlan(g *graph.Graph, s *state.State) (*Plan, error) {
 		if err != nil {
 			return nil, err
 		}
-		if change.Action == controlplane.PlanActionReplace && resourcePreventDestroy(g.Get(resourceAddress), s.FindResource(resourceAddress)) {
+		if change.Action == model.PlanActionReplace && resourcePreventDestroy(g.Get(resourceAddress), s.FindResource(resourceAddress)) {
 			return nil, fmt.Errorf("%s: lifecycle.prevent_destroy blocks replacement", resourceAddress)
 		}
 		plan.Actions = append(plan.Actions, change)
 	}
 
-	deletes := make([]controlplane.PlannedChange, 0)
+	deletes := make([]model.PlannedChange, 0)
 	for _, resource := range s.Resources {
 		if _, exists := inGraph[resource.Address.String()]; exists || isDataType(resource.Address.Type) {
 			continue
@@ -94,7 +94,7 @@ func ComputePlan(g *graph.Graph, s *state.State) (*Plan, error) {
 		if resource.LifecyclePreventDestroy() {
 			return nil, fmt.Errorf("%s: lifecycle.prevent_destroy blocks deletion", resource.Address)
 		}
-		deletes = append(deletes, controlplane.PlannedChange{Address: resource.Address, Action: controlplane.PlanActionDelete, Reason: "resource no longer declared"})
+		deletes = append(deletes, model.PlannedChange{Address: resource.Address, Action: model.PlanActionDelete, Reason: "resource no longer declared"})
 	}
 	sort.Slice(deletes, func(i, j int) bool { return deletes[j].Address.Less(deletes[i].Address) })
 	plan.Actions = append(plan.Actions, deletes...)
@@ -112,20 +112,20 @@ func resourcePreventDestroy(node *graph.Node, current *state.Resource) bool {
 	return current != nil && current.LifecyclePreventDestroy()
 }
 
-func planActionForDesired(node *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
+func planActionForDesired(node *graph.Node, current *state.Resource) (model.PlannedChange, error) {
 	if provider, ok := GetResourceHandler(node.Address.Type); ok {
 		return provider.PlanDiff(node, current)
 	}
 	return planDiffByDesiredHash(node, current)
 }
 
-func planDiffForDataSource(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
+func planDiffForDataSource(desired *graph.Node, current *state.Resource) (model.PlannedChange, error) {
 	change, err := planDiffByDesiredHash(desired, current)
 	if err != nil {
-		return controlplane.PlannedChange{}, err
+		return model.PlannedChange{}, err
 	}
-	if change.Action == controlplane.PlanActionCreate || change.Action == controlplane.PlanActionReplace {
-		change.Action = controlplane.PlanActionRead
+	if change.Action == model.PlanActionCreate || change.Action == model.PlanActionReplace {
+		change.Action = model.PlanActionRead
 		if change.Reason == "resource not present in state" {
 			change.Reason = "data source not present in state"
 		}
@@ -133,10 +133,10 @@ func planDiffForDataSource(desired *graph.Node, current *state.Resource) (contro
 	return change, nil
 }
 
-func planDiffByDesiredHash(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
-	change := controlplane.PlannedChange{Address: desired.Address, Action: controlplane.PlanActionNoop}
+func planDiffByDesiredHash(desired *graph.Node, current *state.Resource) (model.PlannedChange, error) {
+	change := model.PlannedChange{Address: desired.Address, Action: model.PlanActionNoop}
 	if current == nil {
-		change.Action = controlplane.PlanActionCreate
+		change.Action = model.PlanActionCreate
 		change.Reason = "resource not present in state"
 		return change, nil
 	}
@@ -147,7 +147,7 @@ func planDiffByDesiredHash(desired *graph.Node, current *state.Resource) (contro
 	if len(change.Changes) == 0 {
 		return change, nil
 	}
-	change.Action = controlplane.PlanActionReplace
+	change.Action = model.PlanActionReplace
 	if change.Reason == "" {
 		change.Reason = "desired configuration changed; replacement required"
 	}
@@ -156,13 +156,13 @@ func planDiffByDesiredHash(desired *graph.Node, current *state.Resource) (contro
 
 func FilterPlanByTarget(plan *Plan, typ, name string) *Plan {
 	filtered := plan.clone()
-	filtered.Actions = make([]controlplane.PlannedChange, 0, len(plan.Actions))
+	filtered.Actions = make([]model.PlannedChange, 0, len(plan.Actions))
 	filtered.excluded = map[string]bool{}
 	for _, change := range plan.Actions {
-		if change.Address.Type != typ || change.Address.Name != name {
+		if !change.Address.Equal(address.Resource(typ, name)) {
 			filtered.excluded[change.Address.String()] = true
-			if change.Action != controlplane.PlanActionDelete {
-				change.Action = controlplane.PlanActionNoop
+			if change.Action != model.PlanActionDelete {
+				change.Action = model.PlanActionNoop
 				change.Reason = ""
 				change.Changes = nil
 				filtered.Actions = append(filtered.Actions, change)
@@ -177,40 +177,40 @@ func FilterPlanByTarget(plan *Plan, typ, name string) *Plan {
 func (p Plan) HasChanges() bool {
 	for _, change := range p.Actions {
 		switch change.Action {
-		case controlplane.PlanActionCreate, controlplane.PlanActionRead, controlplane.PlanActionReplace, controlplane.PlanActionDelete, controlplane.PlanActionReset, controlplane.PlanActionUnknown:
+		case model.PlanActionCreate, model.PlanActionRead, model.PlanActionReplace, model.PlanActionDelete, model.PlanActionReset, model.PlanActionUnknown:
 			return true
 		}
 	}
 	return false
 }
 
-func (p Plan) ChangeFor(resourceAddress address.Address) (controlplane.PlannedChange, bool) {
+func (p Plan) ChangeFor(resourceAddress address.Address) (model.PlannedChange, bool) {
 	for _, change := range p.Actions {
 		if change.Address.Equal(resourceAddress) {
 			return change, true
 		}
 	}
-	return controlplane.PlannedChange{}, false
+	return model.PlannedChange{}, false
 }
 
 func (p Plan) Summary() string {
-	counts := map[controlplane.PlanActionType]int{}
+	counts := map[model.PlanActionType]int{}
 	for _, change := range p.Actions {
 		counts[change.Action]++
 	}
-	if counts[controlplane.PlanActionReset] > 0 {
-		return fmt.Sprintf("Plan: %d to reset.", counts[controlplane.PlanActionReset])
+	if counts[model.PlanActionReset] > 0 {
+		return fmt.Sprintf("Plan: %d to reset.", counts[model.PlanActionReset])
 	}
-	return fmt.Sprintf("Plan: %d to add, %d to replace, %d to destroy, %d unchanged.", counts[controlplane.PlanActionCreate]+counts[controlplane.PlanActionRead], counts[controlplane.PlanActionReplace], counts[controlplane.PlanActionDelete], counts[controlplane.PlanActionNoop])
+	return fmt.Sprintf("Plan: %d to add, %d to replace, %d to destroy, %d unchanged.", counts[model.PlanActionCreate]+counts[model.PlanActionRead], counts[model.PlanActionReplace], counts[model.PlanActionDelete], counts[model.PlanActionNoop])
 }
 
 func PrintPlan(plan *Plan, _ bool) {
 	fmt.Println(plan.Summary())
 	for _, change := range plan.Actions {
-		symbol := map[controlplane.PlanActionType]string{
-			controlplane.PlanActionCreate: "+", controlplane.PlanActionRead: "<=", controlplane.PlanActionReplace: "-/+",
-			controlplane.PlanActionDelete: "-", controlplane.PlanActionNoop: " ", controlplane.PlanActionUnknown: "?",
-			controlplane.PlanActionReset: "~>",
+		symbol := map[model.PlanActionType]string{
+			model.PlanActionCreate: "+", model.PlanActionRead: "<=", model.PlanActionReplace: "-/+",
+			model.PlanActionDelete: "-", model.PlanActionNoop: " ", model.PlanActionUnknown: "?",
+			model.PlanActionReset: "~>",
 		}[change.Action]
 		fmt.Printf("  %s %s", symbol, change.Address)
 		if change.Reason != "" {

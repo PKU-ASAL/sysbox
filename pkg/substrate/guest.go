@@ -46,6 +46,7 @@ func ValidateShellKind(shell ShellKind) error {
 }
 
 type ExecRequest struct {
+	Terminal    *TerminalOptions
 	Program     string
 	Args        []string
 	Environment map[string]string
@@ -60,6 +61,11 @@ type ExecRequest struct {
 }
 
 func (r ExecRequest) Validate() error {
+	if r.Terminal != nil {
+		if err := r.Terminal.Validate(); err != nil {
+			return err
+		}
+	}
 	if r.OutputLimitBytes < 0 || r.Timeout < 0 {
 		return fmt.Errorf("execution budgets must not be negative")
 	}
@@ -82,6 +88,10 @@ func (r ExecRequest) Context(ctx context.Context) (context.Context, context.Canc
 }
 
 func (r ExecRequest) Clone() ExecRequest {
+	if r.Terminal != nil {
+		options := *r.Terminal
+		r.Terminal = &options
+	}
 	r.Args = append([]string{}, r.Args...)
 	r.Environment = cloneStringMap(r.Environment)
 	return r

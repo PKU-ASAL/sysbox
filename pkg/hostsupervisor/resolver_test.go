@@ -3,19 +3,22 @@ package hostsupervisor
 import (
 	"context"
 	"encoding/json"
-	"github.com/oslab/sysbox/pkg/address"
-	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/driver"
-	"github.com/oslab/sysbox/pkg/persistence"
-	"github.com/oslab/sysbox/pkg/runtime"
-	"github.com/oslab/sysbox/pkg/state"
-	"github.com/oslab/sysbox/pkg/substrate"
-	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/oslab/sysbox/pkg/address"
+	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/model"
+	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/oslab/sysbox/pkg/runtime"
+	"github.com/oslab/sysbox/pkg/state"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 type candidateNode struct {
@@ -53,7 +56,7 @@ func TestResolveRunTaskVerifiesPersistedCandidateBeforeConnecting(t *testing.T) 
 	node := &candidateNode{}
 	name := "candidate-resolver-" + filepath.Base(filepath.Dir(dir))
 	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: name, Version: "1", Node: node, NodeState: node}))
-	a := runtime.ActionRecord{ID: "create", RunID: "run", Topology: "lab", Resource: address.Resource("sysbox_node", "web"), Action: controlplane.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: st.TopologyUID, ResourceUID: "node", Generation: 1}
+	a := runtime.ActionRecord{ID: "create", RunID: "run", Topology: "lab", Resource: address.Resource("sysbox_node", "web"), Action: model.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: st.TopologyUID, ResourceUID: "node", Generation: 1}
 	require.NoError(t, repo.CommitActionIntent(ctx, a))
 	a.Revision = 1
 	a.Status = runtime.ActionUncertain
@@ -178,7 +181,7 @@ func TestResolveRunTaskVerifiesPersistedCandidateBeforeConnecting(t *testing.T) 
 func TestRunTaskResourceSelection(t *testing.T) {
 	ref := TargetRef{Topology: "lab", Node: "web", Scope: controlplane.ExecutionScope{TopologyUID: "topology", ResourceUID: "node", Generation: 2}}
 	candidate := state.Resource{Address: address.Resource("sysbox_node", "web"), OwnerUID: "topology", ResourceUID: "node", Generation: 2}
-	action := runtime.ActionRecord{Topology: "lab", RunID: "run", Resource: candidate.Address, Action: controlplane.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: "topology", ResourceUID: "node", Generation: 2, Candidate: &candidate}
+	action := runtime.ActionRecord{Topology: "lab", RunID: "run", Resource: candidate.Address, Action: model.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: "topology", ResourceUID: "node", Generation: 2, Candidate: &candidate}
 	for _, tc := range []struct {
 		name   string
 		change func(*state.State, *[]runtime.ActionRecord)
@@ -198,21 +201,21 @@ func TestRunTaskResourceSelection(t *testing.T) {
 			r := candidate
 			r.Generation = 1
 			s.Resources = []state.Resource{r}
-			(*a)[0].Action = controlplane.PlanActionReset
+			(*a)[0].Action = model.PlanActionReset
 			(*a)[0].EffectComplete = true
 		}, true},
 		{"reset old checkpoint", func(s *state.State, a *[]runtime.ActionRecord) {
 			r := candidate
 			r.Generation = 1
 			s.Resources = []state.Resource{r}
-			(*a)[0].Action = controlplane.PlanActionReset
+			(*a)[0].Action = model.PlanActionReset
 			(*a)[0].Candidate = &r
 		}, false},
 		{"reset replacement before initialization completes", func(s *state.State, a *[]runtime.ActionRecord) {
 			old := candidate
 			old.Generation = 1
 			s.Resources = []state.Resource{old}
-			(*a)[0].Action, (*a)[0].Phase = controlplane.PlanActionReset, "applying"
+			(*a)[0].Action, (*a)[0].Phase = model.PlanActionReset, "applying"
 			(*a)[0].Candidate = &old
 			(*a)[0].Replacement = &candidate
 		}, true},

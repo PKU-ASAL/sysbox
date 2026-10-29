@@ -4,13 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/graph"
-	"github.com/oslab/sysbox/pkg/substrate"
 	"time"
 
-	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/state"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 // ResetSSHResultsRecorded is a journal shape, not evidence of cessation or
@@ -22,7 +23,7 @@ func (a ActionRecord) ResetSSHResultsRecorded() bool { return a.resetSSHDisposit
 func (a ActionRecord) ResetSSHIncompleteSupported() bool { return a.resetSSHDispositionShape(true) }
 
 func (a ActionRecord) resetSSHDispositionShape(incomplete bool) bool {
-	if a.Action != controlplane.PlanActionReset || a.Phase != "verifying" || !a.EffectComplete || len(a.ResetSSH) == 0 || a.Generation < 2 || a.Candidate == nil || a.Candidate.Generation != a.Generation || a.Candidate.OwnerUID != a.OwnerUID || a.Candidate.ResourceUID != a.ResourceUID || !a.Candidate.Address.Equal(a.Resource) || a.Candidate.ExternalID == "" || (!incomplete && len(a.Candidate.Attachments) > 0) {
+	if a.Action != model.PlanActionReset || a.Phase != "verifying" || !a.EffectComplete || len(a.ResetSSH) == 0 || a.Generation < 2 || a.Candidate == nil || a.Candidate.Generation != a.Generation || a.Candidate.OwnerUID != a.OwnerUID || a.Candidate.ResourceUID != a.ResourceUID || !a.Candidate.Address.Equal(a.Resource) || a.Candidate.ExternalID == "" || (!incomplete && len(a.Candidate.Attachments) > 0) {
 		return false
 	}
 	if a.Replacement != nil && (a.Replacement.ExternalID != a.Candidate.ExternalID || a.Replacement.Generation != a.Generation || a.Replacement.OwnerUID != a.OwnerUID || a.Replacement.ResourceUID != a.ResourceUID || a.Replacement.Driver != a.Candidate.Driver || !a.Replacement.Address.Equal(a.Resource)) {
@@ -54,7 +55,7 @@ func (a ActionRecord) resetSSHDispositionShape(incomplete bool) bool {
 	return true
 }
 
-func planResetSSHDisposition(a ActionRecord, observations []controlplane.RecoveredResource, p IntentDispositionPlan) IntentDispositionPlan {
+func planResetSSHDisposition(a ActionRecord, observations []model.RecoveredResource, p IntentDispositionPlan) IntentDispositionPlan {
 	p.ResourceDecision = "review-reset"
 	resolved, err := ResetSSHWithObservedResults(a, observations)
 	if err == nil {
@@ -65,7 +66,7 @@ func planResetSSHDisposition(a ActionRecord, observations []controlplane.Recover
 		p.Blockers = append(p.Blockers, "reset_ssh_committed_results_required")
 		return p
 	}
-	var observed *controlplane.RecoveredResource
+	var observed *model.RecoveredResource
 	for i := range observations {
 		if observations[i].ActionID == a.ID {
 			if observed != nil {
@@ -126,12 +127,12 @@ func planResetSSHDisposition(a ActionRecord, observations []controlplane.Recover
 	}
 	return p
 }
-func resetObservedIdentity(o controlplane.RecoveredResource, id string, r state.Resource, status ActionStatus) bool {
+func resetObservedIdentity(o model.RecoveredResource, id string, r state.Resource, status ActionStatus) bool {
 	return o.ActionID == id && o.Resource == r.Address.String() && o.OwnerUID == r.OwnerUID && o.ResourceUID == r.ResourceUID && o.Generation == r.Generation && o.ExternalID == r.ExternalID && o.JournalStatus == string(status)
 }
 
-func observeResetSSHDisposition(ctx context.Context, a ActionRecord, st *state.State, item *controlplane.RecoveredResource) {
-	if a.Action != controlplane.PlanActionReset || a.Phase != "verifying" || !a.EffectComplete || a.Candidate == nil || len(a.ResetSSH) == 0 || a.ValidateResetSSH(st) != nil {
+func observeResetSSHDisposition(ctx context.Context, a ActionRecord, st *state.State, item *model.RecoveredResource, providers *driver.Registry) {
+	if a.Action != model.PlanActionReset || a.Phase != "verifying" || !a.EffectComplete || a.Candidate == nil || len(a.ResetSSH) == 0 || a.ValidateResetSSH(st) != nil {
 		return
 	}
 	source := st.FindResource(a.Resource)
@@ -139,10 +140,10 @@ func observeResetSSHDisposition(ctx context.Context, a ActionRecord, st *state.S
 		return
 	}
 	prior := a
-	prior.Action = controlplane.PlanActionDelete
+	prior.Action = model.PlanActionDelete
 	prior.Generation = source.Generation
 	prior.Candidate = source
-	old := observeIntentResource(ctx, prior, source, st)
+	old := observeIntentResource(ctx, prior, source, st, providers)
 	item.ResetSource = &old
 	staged, err := cloneExecutionState(st)
 	if err != nil {
@@ -156,7 +157,7 @@ func observeResetSSHDisposition(ctx context.Context, a ActionRecord, st *state.S
 		if r == nil && dep.Started {
 			id := substrate.OperationIdentity{ActionID: dep.ActionID, OwnerUID: a.OwnerUID, TopologyUID: a.OwnerUID, ResourceUID: a.ResourceUID, Generation: a.Generation}
 			childCtx := substrate.WithOperationIdentity(ctx, id)
-			readCtx, connection, query, err := sshNodeConnection(childCtx, staged, a.Resource.String(), dep.Config.AccessID)
+			readCtx, connection, query, err := sshNodeConnection(childCtx, staged, a.Resource.String(), dep.Config.AccessID, providers)
 			if err == nil {
 				found, err := connection.DiscoverSSHAccess(readCtx, query)
 				if err == nil && found.Validate(query) == nil && found.Status == "present" && found.Current != nil {
@@ -169,11 +170,11 @@ func observeResetSSHDisposition(ctx context.Context, a ActionRecord, st *state.S
 			}
 		}
 		if r == nil {
-			item.ResetSSH = append(item.ResetSSH, controlplane.RecoveredResource{ActionID: dep.ActionID, Resource: dep.Previous.Address.String(), OwnerUID: a.OwnerUID, ResourceUID: dep.Previous.ResourceUID, Generation: dep.Previous.Generation + 1, ExternalID: dep.Config.AccessID, Status: "unknown", JournalStatus: string(a.Status)})
+			item.ResetSSH = append(item.ResetSSH, model.RecoveredResource{ActionID: dep.ActionID, Resource: dep.Previous.Address.String(), OwnerUID: a.OwnerUID, ResourceUID: dep.Previous.ResourceUID, Generation: dep.Previous.Generation + 1, ExternalID: dep.Config.AccessID, Status: "unknown", JournalStatus: string(a.Status)})
 			continue
 		}
-		child := ActionRecord{ID: dep.ActionID, Resource: r.Address, OwnerUID: r.OwnerUID, ResourceUID: r.ResourceUID, Generation: r.Generation, Status: a.Status, Action: controlplane.PlanActionRead, Candidate: r}
-		observed := observeIntentResource(ctx, child, r, staged)
+		child := ActionRecord{ID: dep.ActionID, Resource: r.Address, OwnerUID: r.OwnerUID, ResourceUID: r.ResourceUID, Generation: r.Generation, Status: a.Status, Action: model.PlanActionRead, Candidate: r}
+		observed := observeIntentResource(ctx, child, r, staged, providers)
 		observed.SSHCommitted = committed
 		item.ResetSSH = append(item.ResetSSH, observed)
 	}
@@ -183,10 +184,10 @@ func observeResetSSHDisposition(ctx context.Context, a ActionRecord, st *state.S
 // committed read evidence. It never fills the original journal's missing Result.
 // Configuration changes require reconstructed desired metadata to match the
 // immutable admitted digest; the previous node reference alone grants nothing.
-func ResetSSHWithObservedResults(a ActionRecord, observations []controlplane.RecoveredResource) (ActionRecord, error) {
+func ResetSSHWithObservedResults(a ActionRecord, observations []model.RecoveredResource) (ActionRecord, error) {
 	out := a
 	out.ResetSSH = append([]ResetSSHDependency(nil), a.ResetSSH...)
-	var observed *controlplane.RecoveredResource
+	var observed *model.RecoveredResource
 	for i := range observations {
 		if observations[i].ActionID != a.ID {
 			continue
@@ -203,7 +204,7 @@ func ResetSSHWithObservedResults(a ActionRecord, observations []controlplane.Rec
 		if !dep.Started || observed == nil {
 			return a, ErrObservationUnknown
 		}
-		var child *controlplane.RecoveredResource
+		var child *model.RecoveredResource
 		for j := range observed.ResetSSH {
 			if observed.ResetSSH[j].ActionID != dep.ActionID {
 				continue

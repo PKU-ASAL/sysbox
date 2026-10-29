@@ -5,9 +5,8 @@ import (
 	"testing"
 )
 
-func TestResetResumeRejectsTargetBeforeWorkspaceRead(t *testing.T) {
-	oldResume, oldTarget := flagResetResume, flagResetTarget
-	t.Cleanup(func() { flagResetResume, flagResetTarget = oldResume, oldTarget })
-	flagResetResume, flagResetTarget = "original", "sysbox_node.web"
-	require.ErrorContains(t, runReset(resetCmd, nil), "--resume and --target cannot be combined")
+func TestResetResumeRejectsChangedTarget(t *testing.T) {
+	cmd := newLifecycleCommand("reset")
+	cmd.SetArgs([]string{"--resume", "old-run", "--target", "sysbox_node.web"})
+	require.ErrorContains(t, cmd.Execute(), "--resume retains")
 }

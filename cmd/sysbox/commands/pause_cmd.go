@@ -3,85 +3,91 @@ package commands
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/oslab/sysbox/pkg/address"
-	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/spf13/cobra"
 )
 
-var pauseCmd = &cobra.Command{
-	Use:   "pause <resource_type.name>",
-	Short: "Pause a running node (freeze VM or container)",
-	Args:  cobra.ExactArgs(1),
-	RunE:  runPause,
+var pauseCmd = newPowerCommand("pause")
+var resumeCmd = newPowerCommand("resume")
+
+func newPowerCommand(operation string) *cobra.Command {
+	var service serviceOptions
+	var key string
+	var detach bool
+	cmd := &cobra.Command{Use: operation + " <sysbox_node.name>", Short: operation + " a node through the host service", Args: cobra.ExactArgs(1), Annotations: map[string]string{"service-client": "true"}}
+	service.flags(cmd, true)
+	cmd.Flags().StringVar(&key, "key", "", "stable request key; reuse for the same operation")
+	cmd.Flags().BoolVar(&detach, "detach", false, "return after durable acceptance")
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if err := rejectLocalExecutionFlags(cmd); err != nil {
+			return err
+		}
+		target, err := address.Parse(args[0])
+		if err != nil {
+			return err
+		}
+		if target.Type != "sysbox_node" || !target.Equal(address.Resource(target.Type, target.Name)) {
+			return fmt.Errorf("power target must be an unindexed root sysbox_node.name")
+		}
+		client, err := service.client()
+		if err != nil {
+			return err
+		}
+		defer client.http.CloseIdleConnections()
+		if key == "" {
+			key = uuid.NewString()
+		}
+		if !clientKey.MatchString(key) {
+			return fmt.Errorf("invalid request key")
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "%s %s in topology %s\nRequest key: %s\n", operation, target, service.topology, key)
+		var accepted controlplane.NodeOperation
+		path := "/v1/topologies/" + service.topology + "/nodes/" + target.Name + "/" + operation
+		if err = client.request(cmd.Context(), http.MethodPost, path, key, nil, &accepted); err != nil {
+			return fmt.Errorf("request %s: %w", key, err)
+		}
+		if !clientSegment.MatchString(accepted.ID) || accepted.Topology != service.topology || accepted.Node != target.Name || accepted.Operation != operation {
+			return fmt.Errorf("service returned a different node operation identity; retry the same key")
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "Operation: %s\n", accepted.ID)
+		if detach {
+			return nil
+		}
+		return waitPowerOperation(cmd.Context(), client, accepted, cmd)
+	}
+	return cmd
 }
 
-var resumeCmd = &cobra.Command{
-	Use:   "resume <resource_type.name>",
-	Short: "Resume a paused node",
-	Args:  cobra.ExactArgs(1),
-	RunE:  runResume,
-}
-
-func runPause(cmd *cobra.Command, args []string) error {
-	return pauseResumeOp(args[0], false)
-}
-
-func runResume(cmd *cobra.Command, args []string) error {
-	return pauseResumeOp(args[0], true)
-}
-
-func pauseResumeOp(addr string, resume bool) error {
-	resourceAddress, err := address.Parse(addr)
-	if err != nil {
-		return err
+func waitPowerOperation(ctx context.Context, client *serviceClient, accepted controlplane.NodeOperation, cmd *cobra.Command) error {
+	for {
+		var current controlplane.NodeOperation
+		if err := client.request(ctx, http.MethodGet, "/v1/node-operations/"+accepted.ID, "", nil, &current); err != nil {
+			return err
+		}
+		if current.ID != accepted.ID || current.Topology != accepted.Topology || current.Node != accepted.Node || current.Operation != accepted.Operation || current.ResourceUID != accepted.ResourceUID || current.Generation != accepted.Generation || current.AgentID != accepted.AgentID {
+			return fmt.Errorf("node operation identity changed")
+		}
+		switch current.Status {
+		case controlplane.NodeOperationStatusDone:
+			fmt.Fprintf(cmd.OutOrStdout(), "Operation %s: done\n", current.ID)
+			return nil
+		case controlplane.NodeOperationStatusFailed:
+			return fmt.Errorf("operation %s failed; inspect its result before issuing a new key", current.ID)
+		case controlplane.NodeOperationStatusQueued, controlplane.NodeOperationStatusRunning:
+		default:
+			return fmt.Errorf("operation %s has unrecognized status %q", current.ID, current.Status)
+		}
+		timer := time.NewTimer(500 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return fmt.Errorf("%w; operation %s may still be running; retry the original key to query it", ctx.Err(), accepted.ID)
+		case <-timer.C:
+		}
 	}
-	if resourceAddress.Type != "sysbox_node" {
-		return fmt.Errorf("pause/resume only supported for sysbox_node, got %q", resourceAddress.Type)
-	}
-
-	mgr, err := newManager()
-	if err != nil {
-		return err
-	}
-	s, err := mgr.Load()
-	if err != nil {
-		return fmt.Errorf("load state: %w", err)
-	}
-
-	r := s.FindResource(resourceAddress)
-	if r == nil {
-		return fmt.Errorf("resource %s not found in state", resourceAddress)
-	}
-
-	subName := r.Driver
-	powerDriver, err := driver.DefaultRegistry.RequirePower(subName)
-	if err != nil {
-		return err
-	}
-	stateDriver, err := driver.DefaultRegistry.RequireNodeState(subName)
-	if err != nil {
-		return err
-	}
-	handle, err := r.ReconstructHandle(stateDriver)
-	if err != nil {
-		return err
-	}
-
-	ctx := context.Background()
-	op := "pause"
-	if resume {
-		op = "resume"
-	}
-
-	if resume {
-		err = powerDriver.Resume(ctx, handle)
-	} else {
-		err = powerDriver.Pause(ctx, handle)
-	}
-	if err != nil {
-		return fmt.Errorf("%s %s: %w", op, resourceAddress, err)
-	}
-	fmt.Printf("%sed %s\n", op, resourceAddress)
-	return nil
 }

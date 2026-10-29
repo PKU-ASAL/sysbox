@@ -11,8 +11,9 @@ import (
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/artifact"
 	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/secret"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -30,11 +31,11 @@ func (KernelResourceHandler) Schema() ResourceSchema {
 	return ResourceSchemaFor("sysbox_kernel")
 }
 
-func (KernelResourceHandler) Read(_ context.Context, current state.Resource) (ResourceReadResult, error) {
+func (KernelResourceHandler) Read(_ context.Context, current state.Resource, providers *driver.Registry) (ResourceReadResult, error) {
 	result := resourceReadOK(current)
 	path := current.Str("path")
 	if path == "" {
-		result.Checks = map[string]controlplane.ResourceCheckHealth{"file": {OK: false, Reason: "kernel path missing from state"}}
+		result.Checks = map[string]model.ResourceCheckHealth{"file": {OK: false, Reason: "kernel path missing from state"}}
 		result.Status = state.ResourceDrifted
 		result.Reason = "kernel path missing from state"
 		return result, nil
@@ -45,16 +46,16 @@ func (KernelResourceHandler) Read(_ context.Context, current state.Resource) (Re
 			result.Reason = err.Error()
 			return result, err
 		}
-		result.Checks = map[string]controlplane.ResourceCheckHealth{"file": {OK: false, Reason: err.Error()}}
+		result.Checks = map[string]model.ResourceCheckHealth{"file": {OK: false, Reason: err.Error()}}
 		result.Status = state.ResourceDrifted
 		result.Reason = err.Error()
 		return result, nil
 	}
-	result.Checks = map[string]controlplane.ResourceCheckHealth{"file": {OK: true}}
+	result.Checks = map[string]model.ResourceCheckHealth{"file": {OK: true}}
 	return result, nil
 }
 
-func (p KernelResourceHandler) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
+func (p KernelResourceHandler) PlanDiff(desired *graph.Node, current *state.Resource) (model.PlannedChange, error) {
 	return planDiffByDesiredHash(desired, current)
 }
 
@@ -124,7 +125,7 @@ func (KernelResourceHandler) ExternalID(current state.Resource) string {
 	return current.Str("id")
 }
 
-func (KernelResourceHandler) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext) (any, []address.Address, error) {
+func (KernelResourceHandler) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext, providers *driver.Registry) (any, []address.Address, error) {
 	cfg := &config.KernelConfig{}
 	if err := config.DecodeResource(&r, cfg, ctx); err != nil {
 		return nil, nil, err

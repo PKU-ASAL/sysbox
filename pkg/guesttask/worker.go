@@ -21,6 +21,7 @@ import (
 )
 
 type boundedFile struct {
+	overflow  chan struct{}
 	f         *os.File
 	limit     int64
 	size      int64
@@ -36,6 +37,12 @@ func (w *boundedFile) Write(p []byte) (int, error) {
 	if int64(len(p)) > remaining {
 		p = p[:remaining]
 		w.truncated = true
+		if w.overflow != nil {
+			select {
+			case w.overflow <- struct{}{}:
+			default:
+			}
+		}
 	}
 	n, err := w.f.Write(p)
 	w.size += int64(n)
@@ -170,6 +177,12 @@ func RunWorker(root, cgroupRoot, id string) error {
 	defer stderr.Close()
 	out := &boundedFile{f: stdout, limit: int64(req.OutputLimit)}
 	errOut := &boundedFile{f: stderr, limit: int64(req.OutputLimit)}
+	var outputLimit <-chan struct{}
+	if req.Terminal != nil {
+		overflow := make(chan struct{}, 1)
+		out.overflow, errOut.overflow = overflow, overflow
+		outputLimit = overflow
+	}
 	cmd := exec.Command(req.Args[0], req.Args[1:]...)
 	if req.Args[0] == PolicyProgram {
 		if _, err := PolicyBuiltin(req); err != nil {
@@ -197,6 +210,19 @@ func RunWorker(root, cgroupRoot, id string) error {
 	cmd.Stderr = errOut
 	cmd.WaitDelay = 100 * time.Millisecond
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, UseCgroupFD: true, CgroupFD: int(group.Fd()), Credential: &syscall.Credential{Uid: req.UserID, Gid: req.UserID, NoSetGroups: false}}
+	var terminal *terminalRuntime
+	if req.Terminal != nil {
+		if req.Args[0] == PolicyProgram {
+			unlock()
+			return ErrUnauthorized
+		}
+		terminal, err = prepareTerminal(e.taskPath(id), cmd, *req.Terminal, out, errOut)
+		if err != nil {
+			unlock()
+			return err
+		}
+		defer terminal.Close()
+	}
 	if req.Args[0] == PolicyProgram {
 		if _, err := PolicyBuiltin(req); err != nil {
 			unlock()
@@ -256,6 +282,9 @@ func RunWorker(root, cgroupRoot, id string) error {
 	deadline := time.NewTimer(remaining)
 	defer deadline.Stop()
 	unlock()
+	if terminal != nil {
+		terminal.Start()
+	}
 	waited := make(chan error, 1)
 	go func() { waited <- cmd.Wait() }()
 	ticker := time.NewTicker(25 * time.Millisecond)
@@ -266,6 +295,11 @@ running:
 	for {
 		select {
 		case waitErr = <-waited:
+			break running
+		case <-outputLimit:
+			cancelled = true
+			_ = killGroup(group)
+			waitErr = <-waited
 			break running
 		case <-deadline.C:
 			current, loadErr := e.load(id)
@@ -309,6 +343,11 @@ running:
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+	var terminalErr error
+	if terminal != nil {
+		terminalErr = terminal.Drain()
+		_ = terminal.Close()
+	}
 	outSize, outTruncated, outErr := out.finish()
 	errSize, errTruncated, stderrErr := errOut.finish()
 	unlock, err = e.lock(ctx, id)
@@ -337,7 +376,7 @@ running:
 			current.Error = waitErr.Error()
 		}
 	}
-	if outErr != nil || stderrErr != nil {
+	if outErr != nil || stderrErr != nil || terminalErr != nil {
 		current.Status = "unknown"
 		current.Error = "output durability failed"
 	}
@@ -499,6 +538,8 @@ func (e *Engine) Handle(ctx context.Context, call Call) Response {
 		response.Records, err = e.List(ctx)
 	case "output":
 		response.Output, response.NextCursor, err = e.ReadOutput(ctx, call.ID, call.Digest, call.Stream, call.Cursor, call.Limit)
+	case "terminal-control":
+		err = e.Control(ctx, call)
 	default:
 		err = fmt.Errorf("unknown guest task operation")
 	}

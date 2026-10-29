@@ -4,10 +4,11 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/runtime"
 	"net/http"
 	"sort"
+
+	"github.com/oslab/sysbox/pkg/model"
+	"github.com/oslab/sysbox/pkg/runtime"
 )
 
 type historicalIntent struct {
@@ -88,10 +89,10 @@ func (s *Server) handleHistoricalIntents(w http.ResponseWriter, r *http.Request)
 		if a.Quiescence == "unknown" {
 			item.Blockers = append(item.Blockers, "provider_inflight_stop_unproven")
 		}
-		if a.Action == controlplane.PlanActionReset && !a.EffectComplete {
+		if a.Action == model.PlanActionReset && !a.EffectComplete {
 			item.Blockers = append(item.Blockers, "explicit_reset_phase_continuation_required")
 		}
-		if a.Action != controlplane.PlanActionDelete && a.ReplayForbidden && !a.EffectComplete {
+		if a.Action != model.PlanActionDelete && a.ReplayForbidden && !a.EffectComplete {
 			item.Blockers = append(item.Blockers, "guest_effect_completion_unproven")
 		}
 		if a.Candidate == nil {

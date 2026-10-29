@@ -109,7 +109,7 @@ func manifestFixture(t *testing.T, live bool) (*Substrate, substrate.NodeHandle,
 		manifest["phase"] = "running"
 	}
 	writeFixtureManifest(t, dir, manifest)
-	s := &Substrate{rootfsDir: root}
+	s := &Substrate{rootfsDir: root, jailBase: "/var/lib/sysbox/jails", firecrackerBin: "/usr/local/bin/firecracker"}
 	h := substrate.NodeHandle{ID: id, Generation: 1, Provider: hs}
 	t.Cleanup(func() { vmMu.Lock(); delete(vmStore, hs.VMDir); vmMu.Unlock() })
 	return s, h, manifest, cmd
@@ -156,7 +156,7 @@ func TestManifestMissingRecordIsUnknownAndCreateRetainsResidue(t *testing.T) {
 	require.NoError(t, os.Mkdir(dir, 0700))
 	sentinel := filepath.Join(dir, "rootfs.ext4")
 	require.NoError(t, os.WriteFile(sentinel, []byte("retain"), 0600))
-	s := &Substrate{rootfsDir: root}
+	s := &Substrate{rootfsDir: root, jailBase: "/var/lib/sysbox/jails", firecrackerBin: "/usr/local/bin/firecracker"}
 	h := substrate.NodeHandle{ID: "orphan", Provider: &HandleState{VMDir: dir}}
 	obs, err := s.ObserveNode(context.Background(), h)
 	require.Error(t, err)
@@ -424,7 +424,7 @@ func TestMissingManifestProcessRequiresMatchingStartTime(t *testing.T) {
 
 func TestManifestManagedDiscoveryRetainsGenerationIdentity(t *testing.T) {
 	root := t.TempDir()
-	s := &Substrate{rootfsDir: root}
+	s := &Substrate{rootfsDir: root, jailBase: "/var/lib/sysbox/jails", firecrackerBin: "/usr/local/bin/firecracker"}
 	identity := substrate.OperationIdentity{OwnerUID: "owner", ResourceUID: "resource", TopologyUID: "topology", Generation: 9, ActionID: "create-action"}
 	_, err := s.DiscoverManagedNode(context.Background(), identity, "node")
 	require.True(t, driver.IsCategory(err, driver.ErrorNotFound))
@@ -451,7 +451,7 @@ func TestManifestCreatePersistsCanonicalManagedGeneration(t *testing.T) {
 	root := t.TempDir()
 	source := filepath.Join(t.TempDir(), "image.ext4")
 	require.NoError(t, os.WriteFile(source, []byte("harmless image fixture"), 0600))
-	s := &Substrate{rootfsDir: root, kernelPath: "/fixture/kernel"}
+	s := &Substrate{rootfsDir: root, kernelPath: "/fixture/kernel", jailBase: "/var/lib/sysbox/jails", firecrackerBin: "/usr/local/bin/firecracker"}
 	op := substrate.OperationIdentity{ActionID: "create", OwnerUID: "owner", ResourceUID: "resource", TopologyUID: "topology", Generation: 3}
 	ctx := substrate.WithOperationIdentity(context.Background(), op)
 	h, err := s.CreateNode(ctx, substrate.NodeSpec{Name: "node", Image: substrate.ArtifactHandle{ID: source}})
@@ -479,7 +479,7 @@ func TestManifestHandlePathConflictCannotSignal(t *testing.T) {
 
 func TestManifestInvalidCreateHasNoGenerationEffects(t *testing.T) {
 	root := t.TempDir()
-	s := &Substrate{rootfsDir: root}
+	s := &Substrate{rootfsDir: root, jailBase: "/var/lib/sysbox/jails", firecrackerBin: "/usr/local/bin/firecracker"}
 	_, err := s.CreateNode(substrate.WithOperationIdentity(context.Background(), substrate.OperationIdentity{OwnerUID: "owner", ResourceUID: "invalid", TopologyUID: "topology", Generation: 1, ActionID: "create"}), substrate.NodeSpec{Name: "invalid", Memory: "broken"})
 	require.ErrorContains(t, err, "memory")
 	require.NoDirExists(t, filepath.Join(root, "invalid"))

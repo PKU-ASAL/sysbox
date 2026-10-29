@@ -9,16 +9,6 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
-	"github.com/google/uuid"
-	"github.com/oslab/sysbox/pkg/agent"
-	"github.com/oslab/sysbox/pkg/agentexec"
-	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/hostsupervisor"
-	"github.com/oslab/sysbox/pkg/persistence"
-	libvirtprovider "github.com/oslab/sysbox/pkg/provider/libvirt"
-	"github.com/oslab/sysbox/pkg/substrate"
-	"github.com/stretchr/testify/require"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -30,6 +20,18 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+
+	"github.com/oslab/sysbox/pkg/agent"
+	"github.com/oslab/sysbox/pkg/agentexec"
+	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/hostsupervisor"
+	"github.com/oslab/sysbox/pkg/persistence"
+	libvirtprovider "github.com/oslab/sysbox/pkg/provider/libvirt"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 func TestRemoteLibvirtGCBatchRecoveryE2E(t *testing.T) {
@@ -144,19 +146,17 @@ func TestRemoteLibvirtGCBatchRecoveryE2E(t *testing.T) {
 		}
 		return json.RawMessage(`{"deleted":true}`), nil
 	}}
+	hostPublicFile := wireTestHostObserver(t, host, cfg, "gc-agent", []string{"libvirt"}, hostKey)
 	hostCtx, stopHost := context.WithCancel(ctx)
 	hostDone := make(chan error, 1)
 	go func() { hostDone <- host.Serve(hostCtx) }()
 	defer func() { stopHost(); require.NoError(t, <-hostDone) }()
 	require.Eventually(t, func() bool { _, err := os.Stat(socket); return err == nil }, time.Second, 10*time.Millisecond)
-	workerCfg := cfg
-	workerCfg.Paths.RunsDir = private()
-	workerCfg.Paths.WorkspacesDir = private()
-	workerCfg.State.Backend = "sqlite://" + filepath.Join(private(), "worker.db")
 	workerCtx, stopWorker := context.WithCancel(ctx)
 	workerDone := make(chan error, 1)
-	opts := agentexec.Options{ID: "gc-agent", Secret: "gc-secret", APIURL: httpServer.URL, Capabilities: []string{"libvirt"}, PollInterval: 20 * time.Millisecond, ExecutionSessionFile: filepath.Join(private(), "session.json"), ExecutionGrantPublicKeyFile: keyFile, HostSupervisorSocket: socket, RequireHostSupervisor: true}
-	go func() { workerDone <- agentexec.Run(workerCtx, opts, NewExecutionBridge(workerCfg)) }()
+	opts := agentexec.Options{ID: "gc-agent", Secret: "gc-secret", APIURL: httpServer.URL, Capabilities: []string{"libvirt"}, PollInterval: 20 * time.Millisecond, ExecutionSessionFile: filepath.Join(private(), "session.json"), ExecutionGrantPublicKeyFile: keyFile, HostSupervisorSocket: socket}
+	opts.HostPublicKeyFile = hostPublicFile
+	go func() { workerDone <- agentexec.Run(workerCtx, opts) }()
 	defer func() {
 		stopWorker()
 		select {

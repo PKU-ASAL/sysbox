@@ -104,6 +104,10 @@ func (s *Substrate) RecoverFencedAdoption(ctx context.Context, p controlplane.Ad
 	}
 	current.AdoptionFence = fenceDigest
 	current.AdoptionFenceArchive = fmt.Sprintf("%x", sha256.Sum256(archive))
+	if err = removeJail(current); err != nil {
+		return zero, err
+	}
+	current.Jail = nil
 	current.Process = processIdentity{}
 	current.Handle.PID, current.Handle.PIDStart, current.Handle.Ready = 0, "", false
 	current.Phase = "stopped"

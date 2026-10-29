@@ -27,6 +27,6 @@ func TestFirecrackerRejectsGuessedDockerBridge(t *testing.T) {
 }
 
 func TestValidateAllowsProvenManagedNetworkAttachments(t *testing.T) {
-	err := (&Substrate{}).Validate(substrate.NodeSpec{ManagedNetwork: true, ProviderConfig: &Config{AllowDirect: true, Kernel: "kernel"}})
+	err := (&Substrate{}).Validate(substrate.NodeSpec{ManagedNetwork: true, ProviderConfig: &Config{Kernel: "kernel"}})
 	require.NoError(t, err)
 }

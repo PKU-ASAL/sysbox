@@ -70,7 +70,7 @@ func TestFirecrackerRealGenerationLifecycleE2E(t *testing.T) {
 	defer cancel()
 	identity := substrate.OperationIdentity{ActionID: "create", OwnerUID: "owner", ResourceUID: "resource", TopologyUID: "topology", Generation: 1}
 	ctx = substrate.WithOperationIdentity(ctx, identity)
-	h, err := s.CreateNode(ctx, substrate.NodeSpec{Name: "e2e-node", Image: substrate.ArtifactHandle{ID: rootfs}, ProviderConfig: &Config{Kernel: kernel, AllowDirect: true}})
+	h, err := s.CreateNode(ctx, substrate.NodeSpec{Name: "e2e-node", Image: substrate.ArtifactHandle{ID: rootfs}, ProviderConfig: &Config{Kernel: kernel}})
 	require.NoError(t, err)
 	cleanupRealVM(t, s, h)
 	require.NoError(t, s.StartNode(ctx, h))
@@ -128,7 +128,7 @@ func TestFirecrackerRealResetGenerationAndColdAdoptionE2E(t *testing.T) {
 	digest, err := digestFile(rootfs)
 	require.NoError(t, err)
 	baseline := substrate.ArtifactIdentity{Kind: substrate.ArtifactRootFS, Source: rootfs, Digest: digest, Architecture: "amd64", GuestFamily: substrate.GuestFamilyLinux}
-	node := substrate.NodeSpec{Name: "e2e-reset", Image: substrate.ArtifactHandle{ID: rootfs, Identity: baseline}, ProviderConfig: &Config{Kernel: kernel, AllowDirect: true}}
+	node := substrate.NodeSpec{Name: "e2e-reset", Image: substrate.ArtifactHandle{ID: rootfs, Identity: baseline}, ProviderConfig: &Config{Kernel: kernel}}
 	original := substrate.OperationIdentity{ActionID: "create", OwnerUID: "owner", ResourceUID: "resource", TopologyUID: "topology", Generation: 1}
 	oldCtx := substrate.WithOperationIdentity(ctx, original)
 	old, err := s.CreateNode(oldCtx, node)
@@ -237,7 +237,7 @@ func TestFirecrackerRealCrossProcessRecoveryE2E(t *testing.T) {
 	defer cancel()
 	id := substrate.OperationIdentity{ActionID: "create", OwnerUID: "owner", ResourceUID: "resource", TopologyUID: "topology", Generation: 1}
 	ctx = substrate.WithOperationIdentity(ctx, id)
-	h, err := s.CreateNode(ctx, substrate.NodeSpec{Name: "e2e-process", Image: substrate.ArtifactHandle{ID: rootfs}, ProviderConfig: &Config{Kernel: kernel, AllowDirect: true}})
+	h, err := s.CreateNode(ctx, substrate.NodeSpec{Name: "e2e-process", Image: substrate.ArtifactHandle{ID: rootfs}, ProviderConfig: &Config{Kernel: kernel}})
 	require.NoError(t, err)
 	cleanupRealVM(t, s, h)
 	require.NoError(t, s.StartNode(ctx, h))

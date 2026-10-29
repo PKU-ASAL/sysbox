@@ -14,10 +14,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/oslab/sysbox/pkg/address"
-
 	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/secret"
 	"github.com/oslab/sysbox/pkg/state"
 )
@@ -33,7 +33,7 @@ func TestKernelResourceHandlerCreateAndDelete(t *testing.T) {
 			Architecture: "amd64",
 		},
 	}
-	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
+	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion}, driver.DefaultRegistry)
 	p := KernelResourceHandler{}
 
 	res, err := p.Create(context.Background(), &ProviderContext{exec: exec}, n)
@@ -63,7 +63,7 @@ func TestKernelResourceHandlerResolvesSourceSecretReferenceAtExecution(t *testin
 		Address: address.Resource("sysbox_kernel", "fc"),
 		Data:    &config.KernelConfig{Substrate: "firecracker", Source: reference, Architecture: "amd64"},
 	}
-	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
+	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion}, driver.DefaultRegistry)
 	exec.SetSecretResolver(secret.EnvironmentResolver{Lookup: func(name string) (string, bool) {
 		return src, name == "SYSBOX_KERNEL"
 	}})
@@ -94,12 +94,12 @@ func TestKernelResourceHandlerPlanDiff(t *testing.T) {
 
 	action, err := p.PlanDiff(n, current)
 	require.NoError(t, err)
-	require.Equal(t, controlplane.PlanActionNoop, action.Action)
+	require.Equal(t, model.PlanActionNoop, action.Action)
 
 	n.Data = &config.KernelConfig{Substrate: "firecracker", Source: "/tmp/vmlinux-b"}
 	action, err = p.PlanDiff(n, current)
 	require.NoError(t, err)
-	require.Equal(t, controlplane.PlanActionReplace, action.Action)
+	require.Equal(t, model.PlanActionReplace, action.Action)
 	_, ok := fieldChangeAt(action.Changes, "source")
 	require.True(t, ok)
 }
@@ -132,7 +132,7 @@ func TestKernelResourceHandlerPullsMissingPinnedKernel(t *testing.T) {
 			PullSource: server.URL + "/vmlinux", SHA256: pin, Architecture: "amd64",
 		},
 	}
-	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
+	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion}, driver.DefaultRegistry)
 	res, err := KernelResourceHandler{}.Create(context.Background(), &ProviderContext{exec: exec}, n)
 	require.NoError(t, err)
 	require.Equal(t, localPath, res.Str("source"))

@@ -8,14 +8,15 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
-	"github.com/stretchr/testify/require"
 )
 
 type nodeGuardDriver struct {
@@ -127,7 +128,7 @@ func TestNodeJournalFailureDoesNotInvokeCleanup(t *testing.T) {
 				if phase == "prepare_guest_network" {
 					d.guestInitModes = []substrate.GuestNetworkInitMode{substrate.GuestNetworkInitCloudInit}
 				}
-				err := e.Apply(context.Background(), &Plan{Actions: []controlplane.PlannedChange{{Address: addr, Action: controlplane.PlanActionCreate}}})
+				err := e.Apply(context.Background(), &Plan{Actions: []model.PlannedChange{{Address: addr, Action: model.PlanActionCreate}}})
 				require.ErrorIs(t, err, want)
 				require.Equal(t, 1, d.creates)
 				require.Zero(t, d.destroys, "a journal failure must not trigger a destructive callback")
@@ -144,7 +145,7 @@ func TestNodeWarningDoesNotContinueAfterJournalFailure(t *testing.T) {
 				e, d, cfg, addr := nodeGuardExecutor(t, &nodePhaseFailure{phase: phase, status: status, err: want})
 				cfg.Routes = []config.RouteConfig{{Destination: "10.0.1.0/24", Via: "10.0.0.1"}}
 				cfg.Provisioners = []config.ProvisionerConfig{{Type: "file", Source: "source", Destination: "destination"}}
-				err := e.Apply(context.Background(), &Plan{Actions: []controlplane.PlannedChange{{Address: addr, Action: controlplane.PlanActionCreate}}})
+				err := e.Apply(context.Background(), &Plan{Actions: []model.PlannedChange{{Address: addr, Action: model.PlanActionCreate}}})
 				require.ErrorIs(t, err, want)
 				require.Empty(t, d.conn.copiedSrc, "provisioners must not run after a journal failure")
 				require.Zero(t, d.entries, "image entry must not run after a journal failure")
@@ -159,7 +160,7 @@ func TestNodeOperationalCleanupAndWarningsRemainUnchanged(t *testing.T) {
 		e, d, _, addr := nodeGuardExecutor(t, nil)
 		want := errors.New("provider start failure")
 		d.startErr = want
-		require.ErrorIs(t, e.Apply(context.Background(), &Plan{Actions: []controlplane.PlannedChange{{Address: addr, Action: controlplane.PlanActionCreate}}}), want)
+		require.ErrorIs(t, e.Apply(context.Background(), &Plan{Actions: []model.PlannedChange{{Address: addr, Action: model.PlanActionCreate}}}), want)
 		require.Zero(t, d.destroys)
 	})
 	t.Run("ordinary warnings continue", func(t *testing.T) {
@@ -167,7 +168,7 @@ func TestNodeOperationalCleanupAndWarningsRemainUnchanged(t *testing.T) {
 		d.prepareErr, d.routeErr = errors.New("prepare warning"), errors.New("route warning")
 		cfg.Routes = []config.RouteConfig{{Destination: "10.0.1.0/24", Via: "10.0.0.1"}}
 		cfg.Provisioners = []config.ProvisionerConfig{{Type: "file", Source: "source", Destination: "destination"}}
-		require.NoError(t, e.Apply(context.Background(), &Plan{Actions: []controlplane.PlannedChange{{Address: addr, Action: controlplane.PlanActionCreate}}}))
+		require.NoError(t, e.Apply(context.Background(), &Plan{Actions: []model.PlannedChange{{Address: addr, Action: model.PlanActionCreate}}}))
 		require.Equal(t, "source", d.conn.copiedSrc)
 		require.Equal(t, 1, d.entries)
 	})
@@ -180,10 +181,10 @@ func TestRollbackStopsWhenEarlierDeletionBreaksJournal(t *testing.T) {
 	require.NoError(t, e.graph.AddNode(second, nil))
 	require.NoError(t, e.graph.SetData(second, cfg))
 	d.onDestroy = func() { e.recorder.SubstepStart(-1, "rollback", nil) }
-	err := e.Apply(context.Background(), &Plan{Actions: []controlplane.PlannedChange{
-		{Address: first, Action: controlplane.PlanActionCreate},
-		{Address: second, Action: controlplane.PlanActionCreate},
-		{Address: address.Resource("sysbox_node", "unknown"), Action: controlplane.PlanActionUnknown},
+	err := e.Apply(context.Background(), &Plan{Actions: []model.PlannedChange{
+		{Address: first, Action: model.PlanActionCreate},
+		{Address: second, Action: model.PlanActionCreate},
+		{Address: address.Resource("sysbox_node", "unknown"), Action: model.PlanActionUnknown},
 	}})
 	require.ErrorIs(t, err, ErrConvergenceUnsupported)
 	require.Zero(t, d.creates, "unknown action invalidates plan before any effect")
@@ -193,12 +194,12 @@ func TestRollbackStopsWhenEarlierDeletionBreaksJournal(t *testing.T) {
 
 func TestCreatedNodeRetainsDesiredPayloadForFuturePlans(t *testing.T) {
 	e, _, cfg, addr := nodeGuardExecutor(t, nil)
-	require.NoError(t, e.Apply(context.Background(), &Plan{Actions: []controlplane.PlannedChange{{Address: addr, Action: controlplane.PlanActionCreate}}}))
+	require.NoError(t, e.Apply(context.Background(), &Plan{Actions: []model.PlannedChange{{Address: addr, Action: model.PlanActionCreate}}}))
 	current := e.state.FindResource(addr)
 	require.NotNil(t, current)
 	require.NotNil(t, current.AttributeMap()[desiredPayloadKey])
 	cfg.Memory = "1024MiB"
 	change, err := (NodeResourceHandler{}).PlanDiff(e.graph.Get(addr), current)
 	require.NoError(t, err)
-	require.Equal(t, controlplane.PlanActionReplace, change.Action)
+	require.Equal(t, model.PlanActionReplace, change.Action)
 }

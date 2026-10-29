@@ -30,7 +30,7 @@ func TestFirecrackerGuestInitializationBarrierE2E(t *testing.T) {
 	defer cancel()
 	id := substrate.OperationIdentity{ActionID: "create", OwnerUID: "readiness", TopologyUID: "readiness", ResourceUID: "barrier", Generation: 1}
 	ctx = substrate.WithOperationIdentity(ctx, id)
-	h, err := s.CreateNode(ctx, substrate.NodeSpec{Name: "readiness-e2e", Image: substrate.ArtifactHandle{ID: rootfs}, ProviderConfig: &Config{Kernel: kernel, AllowDirect: true}})
+	h, err := s.CreateNode(ctx, substrate.NodeSpec{Name: "readiness-e2e", Image: substrate.ArtifactHandle{ID: rootfs}, ProviderConfig: &Config{Kernel: kernel}})
 	require.NoError(t, err)
 	cleanupRealVM(t, s, h)
 	dropin := filepath.Join(t.TempDir(), "delay.conf")

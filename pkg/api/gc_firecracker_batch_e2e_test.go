@@ -9,6 +9,16 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/agentexec"
@@ -18,17 +28,6 @@ import (
 	"github.com/oslab/sysbox/pkg/persistence"
 	fcprovider "github.com/oslab/sysbox/pkg/provider/firecracker"
 	"github.com/oslab/sysbox/pkg/substrate"
-	"github.com/stretchr/testify/require"
-	"net/http"
-	"net/http/httptest"
-	"os"
-
-	"path/filepath"
-
-	"sync"
-	"sync/atomic"
-	"testing"
-	"time"
 )
 
 func TestRemoteFirecrackerGCBatchRecoveryE2E(t *testing.T) {
@@ -82,7 +81,7 @@ func TestRemoteFirecrackerGCBatchRecoveryE2E(t *testing.T) {
 	create := func(uid string) string {
 		id := substrate.OperationIdentity{OwnerUID: refs.TopologyUID, TopologyUID: refs.TopologyUID, ResourceUID: uid, Generation: 1, ActionID: "create-" + uid}
 		scoped := substrate.WithOperationIdentity(ctx, id)
-		h, err := provider.CreateNode(scoped, substrate.NodeSpec{Name: uid, Image: substrate.ArtifactHandle{ID: os.Getenv("SYSBOX_FIRECRACKER_ROOTFS")}, ProviderConfig: &fcprovider.Config{Kernel: os.Getenv("SYSBOX_FIRECRACKER_KERNEL"), AllowDirect: true}})
+		h, err := provider.CreateNode(scoped, substrate.NodeSpec{Name: uid, Image: substrate.ArtifactHandle{ID: os.Getenv("SYSBOX_FIRECRACKER_ROOTFS")}, ProviderConfig: &fcprovider.Config{Kernel: os.Getenv("SYSBOX_FIRECRACKER_KERNEL")}})
 		require.NoError(t, err)
 		t.Cleanup(func() {
 			cleanup, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -147,6 +146,7 @@ func TestRemoteFirecrackerGCBatchRecoveryE2E(t *testing.T) {
 		}
 		return json.RawMessage(`{"deleted":true}`), nil
 	}}
+	hostPublicFile := wireTestHostObserver(t, host, cfg, "gc-agent", []string{"firecracker"}, hostKey)
 	hostCtx, stopHost := context.WithCancel(ctx)
 	hostDone := make(chan error, 1)
 	go func() { hostDone <- host.Serve(hostCtx) }()
@@ -157,14 +157,11 @@ func TestRemoteFirecrackerGCBatchRecoveryE2E(t *testing.T) {
 		}
 	}()
 	require.Eventually(t, func() bool { _, err := os.Stat(socket); return err == nil }, time.Second, 10*time.Millisecond)
-	workerCfg := cfg
-	workerCfg.Paths.RunsDir = private()
-	workerCfg.Paths.WorkspacesDir = private()
-	workerCfg.State.Backend = "sqlite://" + filepath.Join(private(), "worker.db")
 	workerCtx, stopWorker := context.WithCancel(ctx)
 	workerDone := make(chan error, 1)
-	opts := agentexec.Options{ID: "gc-agent", Secret: "gc-secret", APIURL: httpServer.URL, Capabilities: []string{"firecracker"}, PollInterval: 20 * time.Millisecond, ExecutionSessionFile: filepath.Join(private(), "session.json"), ExecutionGrantPublicKeyFile: keyFile, HostSupervisorSocket: socket, RequireHostSupervisor: true}
-	go func() { workerDone <- agentexec.Run(workerCtx, opts, NewExecutionBridge(workerCfg)) }()
+	opts := agentexec.Options{ID: "gc-agent", Secret: "gc-secret", APIURL: httpServer.URL, Capabilities: []string{"firecracker"}, PollInterval: 20 * time.Millisecond, ExecutionSessionFile: filepath.Join(private(), "session.json"), ExecutionGrantPublicKeyFile: keyFile, HostSupervisorSocket: socket}
+	opts.HostPublicKeyFile = hostPublicFile
+	go func() { workerDone <- agentexec.Run(workerCtx, opts) }()
 	defer func() {
 		stopWorker()
 		select {

@@ -8,7 +8,10 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/guesttask"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/state"
 )
@@ -18,9 +21,8 @@ type ConsoleService struct {
 	scheduler      *SchedulerService
 	wakeCommand    func(string, controlplane.AgentCommand) error
 	authorize      func(requestSubject, controlplane.ConsoleSession) error
-	hclFile        func(string) string
 	loadState      func(string) (*state.State, error)
-	topologyHealth func(context.Context, string, *state.State) controlplane.TopologyHealth
+	topologyHealth func(context.Context, string, *state.State) model.TopologyHealth
 	defaultTimeout time.Duration
 	maxTimeout     time.Duration
 }
@@ -51,9 +53,8 @@ func newConsoleService(
 	scheduler *SchedulerService,
 	wakeCommand func(string, controlplane.AgentCommand) error,
 	authorize func(requestSubject, controlplane.ConsoleSession) error,
-	hclFile func(string) string,
 	loadState func(string) (*state.State, error),
-	topologyHealth func(context.Context, string, *state.State) controlplane.TopologyHealth,
+	topologyHealth func(context.Context, string, *state.State) model.TopologyHealth,
 	defaultTimeout time.Duration,
 	maxTimeout time.Duration,
 ) *ConsoleService {
@@ -62,7 +63,6 @@ func newConsoleService(
 		scheduler:      scheduler,
 		wakeCommand:    wakeCommand,
 		authorize:      authorize,
-		hclFile:        hclFile,
 		loadState:      loadState,
 		topologyHealth: topologyHealth,
 		defaultTimeout: defaultTimeout,
@@ -74,15 +74,21 @@ func (s *ConsoleService) CreateSession(ctx context.Context, topology, node strin
 	if err := s.normalizeRequest(&req, subj); err != nil {
 		return ConsoleCreateResult{Status: http.StatusBadRequest}, err
 	}
-	required, err := requiredCapabilitiesForNode(s.hclFile(topology), node)
+	st, err := s.loadState(topology)
 	if err != nil {
 		return ConsoleCreateResult{Status: http.StatusBadRequest}, err
 	}
-	agent, err := s.scheduler.SelectAgentForTopology(ctx, topology, required, "")
+	resource := st.FindResource(address.Resource("sysbox_node", node))
+	if resource == nil || st.TopologyUID == "" || resource.OwnerUID != st.TopologyUID || resource.ResourceUID == "" || resource.Generation < 1 {
+		return ConsoleCreateResult{Status: http.StatusConflict}, fmt.Errorf("console requires an owned node with a known generation")
+	}
+	agent, err := s.scheduler.SelectAgentForTopology(ctx, topology, []string{resource.Driver}, "")
 	if err != nil {
 		return ConsoleCreateResult{Status: http.StatusConflict}, err
 	}
 	sess := newConsoleSession(topology, node, agent.ID, req)
+	sess.CommandID = "console-open-" + sess.ID
+	sess.TopologyUID, sess.ResourceUID, sess.Generation = st.TopologyUID, resource.ResourceUID, resource.Generation
 	if err := s.authorize(subj, sess); err != nil {
 		sess.Status = controlplane.ConsoleSessionStatusDenied
 		sess.Err = err.Error()
@@ -105,9 +111,13 @@ func (s *ConsoleService) CreateSession(ctx context.Context, topology, node strin
 		return ConsoleCreateResult{Session: sess, Status: http.StatusConflict}, err
 	}
 	cmd := persistence.DurableCommand(controlplane.AgentCommand{
-		ID: "console-open-" + sess.ID, AgentID: agent.ID, Type: "session_open",
+		ID: sess.CommandID, AgentID: agent.ID, Type: "session_open",
+		TopologyUID: sess.TopologyUID, ResourceUID: sess.ResourceUID, Generation: sess.Generation, ActionID: sess.ID,
 		Session: &sess, Request: req, CreatedAt: sess.CreatedAt,
 	})
+	if _, err := guesttask.FromConsoleCommand(cmd); err != nil {
+		return ConsoleCreateResult{Status: http.StatusBadRequest}, err
+	}
 	if _, err := s.consoles.persistSession(ctx, sess, req, &cmd); err != nil {
 		return ConsoleCreateResult{Status: http.StatusServiceUnavailable}, err
 	}
@@ -160,7 +170,7 @@ func (s *ConsoleService) normalizeRequest(req *controlplane.ConsoleRequest, subj
 	if req.TimeoutSeconds == 0 && defaultTimeout > 0 {
 		req.TimeoutSeconds = int(defaultTimeout.Seconds())
 	}
-	if req.TimeoutSeconds < 0 || time.Duration(req.TimeoutSeconds)*time.Second > maxTimeout {
+	if req.TimeoutSeconds < 0 || req.TimeoutSeconds > int(maxTimeout/time.Second) {
 		return fmt.Errorf("timeout_seconds must be between 0 and %d", int(maxTimeout.Seconds()))
 	}
 	// Identity and roles come from the server's request subject, never from the

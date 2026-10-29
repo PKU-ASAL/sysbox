@@ -3,7 +3,7 @@ package persistence
 import (
 	"context"
 
-	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/runtime"
 )
 
@@ -19,7 +19,7 @@ func (r *Repository) CommitResetIntents(ctx context.Context, batch []runtime.Act
 		if err := validateAction(a); err != nil {
 			return err
 		}
-		if a.Action != controlplane.PlanActionReset || a.Phase != "accepted" || a.Status != runtime.ActionIntentCommitted || a.Revision != 0 || a.EffectComplete || a.Topology != first.Topology || a.RunID != first.RunID || a.OwnerUID != first.OwnerUID || !a.RunQueuedAt.Equal(first.RunQueuedAt) || a.RunRevision != first.RunRevision || a.StateSerial != first.StateSerial || a.ExpectedSerial != first.ExpectedSerial || ids[a.ID] || resources[a.Resource.String()] {
+		if a.Action != model.PlanActionReset || a.Phase != "accepted" || a.Status != runtime.ActionIntentCommitted || a.Revision != 0 || a.EffectComplete || a.Topology != first.Topology || a.RunID != first.RunID || a.OwnerUID != first.OwnerUID || !a.RunQueuedAt.Equal(first.RunQueuedAt) || a.RunRevision != first.RunRevision || a.StateSerial != first.StateSerial || a.ExpectedSerial != first.ExpectedSerial || ids[a.ID] || resources[a.Resource.String()] {
 			return ErrConflict
 		}
 		ids[a.ID], resources[a.Resource.String()] = true, true
@@ -29,7 +29,7 @@ func (r *Repository) CommitResetIntents(ctx context.Context, batch []runtime.Act
 		// repair partial historical batches or expand the original operation.
 		existing := 0
 		for _, old := range a.Actions {
-			if old.RunID != first.RunID || old.Action != controlplane.PlanActionReset {
+			if old.RunID != first.RunID || old.Action != model.PlanActionReset {
 				continue
 			}
 			if !ids[old.ID] {

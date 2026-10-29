@@ -3,15 +3,17 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
-	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 type exposedBridgeTestDriver struct{ recordingNetworkDriver }
@@ -33,7 +35,7 @@ func TestExposureUpgradeRejectsImplicitLiveAttachmentRewire(t *testing.T) {
 	require.NoError(t, g.SetData(network, &config.NetworkConfig{NAT: true}))
 	require.NoError(t, g.AddNode(node, []address.Address{network}))
 	require.NoError(t, g.SetData(node, &config.NodeConfig{Substrate: "firecracker", Links: []config.LinkConfig{{Network: "sysbox_network.nat.id"}}}))
-	executor := NewExecutor(g, &state.State{Resources: []state.Resource{{Address: network}, {Address: address.Resource("sysbox_node", "existing"), Attachments: []state.Attachment{{Network: network}}}}})
+	executor := NewExecutor(g, &state.State{Resources: []state.Resource{{Address: network}, {Address: address.Resource("sysbox_node", "existing"), Attachments: []state.Attachment{{Network: network}}}}}, driver.DefaultRegistry)
 	require.ErrorContains(t, executor.preflightManagedBridges(context.Background()), "remove existing attached nodes")
 }
 
@@ -52,7 +54,7 @@ func TestAddingMixedConsumerChangesNetworkDesiredIdentity(t *testing.T) {
 	inferManagedBridgeExposure(g, &state.State{Resources: []state.Resource{current}})
 	change, err := (NetworkResourceHandler{}).PlanDiff(g.Get(network), &current)
 	require.NoError(t, err)
-	require.Equal(t, controlplane.PlanActionReplace, change.Action)
+	require.Equal(t, model.PlanActionReplace, change.Action)
 }
 
 func TestManagedBridgeExposureFollowsConsumers(t *testing.T) {
@@ -83,7 +85,7 @@ func TestNATCreationPersistsManagedBridgeProof(t *testing.T) {
 	defer func() { driver.DefaultRegistry = previous }()
 	proof := substrate.ManagedBridgeTarget{Version: 1, Provider: "docker", NetworkID: "network-id", Bridge: "sb-owned", Index: 42, Device: 4, Inode: 9007199254740993, Alias: "owned", Identity: substrate.OperationIdentity{ActionID: "create", OwnerUID: "owner", TopologyUID: "owner", ResourceUID: "network", Generation: 9007199254740993}}
 	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "docker", Version: "test", Network: &bridgePublicationDriver{proof: &proof}}))
-	executor := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
+	executor := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion}, driver.DefaultRegistry)
 	node := &graph.Node{Address: address.Resource("sysbox_network", "nat"), Data: &config.NetworkConfig{CIDR: "10.44.0.0/24", NAT: true, ExposeBridge: true}}
 	result, err := (NetworkResourceHandler{}).Create(context.Background(), &ProviderContext{exec: executor}, node)
 	require.NoError(t, err)
@@ -113,7 +115,7 @@ func TestNATDiscoveryPersistsManagedBridgeProof(t *testing.T) {
 	identity := substrate.OperationIdentity{ActionID: "discover", OwnerUID: "owner", TopologyUID: "owner", ResourceUID: "network", Generation: 9007199254740993}
 	proof := substrate.ManagedBridgeTarget{Version: 1, Provider: "docker", NetworkID: "network-id", Bridge: "sb-owned", Index: 42, Device: 4, Inode: 9007199254740993, Alias: "owned", Identity: identity}
 	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "docker", Version: "test", Network: &bridgePublicationDriver{proof: &proof}}))
-	executor := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
+	executor := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion}, driver.DefaultRegistry)
 	node := &graph.Node{Address: address.Resource("sysbox_network", "nat"), Data: &config.NetworkConfig{CIDR: "10.44.0.0/24", NAT: true, ExposeBridge: true}}
 	result, err := (NetworkResourceHandler{}).Discover(substrate.WithOperationIdentity(context.Background(), identity), &ProviderContext{exec: executor}, node)
 	require.NoError(t, err)

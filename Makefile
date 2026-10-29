@@ -12,11 +12,11 @@ ARCH := $(shell $(GO) env GOARCH)
 
 TOPO ?= two-networks
 API_URL ?= http://127.0.0.1:9876
-AGENT_API_URL ?= http://sysbox-api:9876
+AGENT_API_URL ?= $(API_URL)
 API_DATA_DIR ?= $(or $(SYSBOX_HOST_HOME_DIR),.sysbox/api)
 API_DATA_ABS := $(abspath $(API_DATA_DIR))
 AGENT_ID ?= local-docker
-AGENT_SUBSTRATES ?=
+AGENT_SUBSTRATES ?= docker
 
 HCL := examples/$(TOPO)/field.sysbox.hcl
 STATE := .sysbox/runs/$(TOPO)/state.json
@@ -194,7 +194,7 @@ help: ## Show command groups
 	@echo "  make test           Run unit tests"
 	@echo "  make lint           Run go vet"
 	@echo "  make test-e2e       Run API e2e smoke test against make api deploy-full"
-	@echo "  make test-firecracker-e2e  Run direct Firecracker/KVM lifecycle acceptance"
+	@echo "  make test-firecracker-e2e  Run jailed Firecracker/KVM lifecycle acceptance"
 	@echo "  make test-docker-launch  Run Docker ENTRYPOINT/CMD override acceptance"
 	@echo "  make test-docker-network-alias  Run Docker managed-network DNS alias acceptance"
 	@echo "  make test-privileged-compile  Compile privileged recovery tests without running them"
@@ -233,8 +233,8 @@ docs-test: ## Validate canonical documentation structure and links
 test-e2e: ## Run black-box API e2e tests
 	bash tests/e2e/api_smoke.sh
 
-test-firecracker-e2e: ## Run real Firecracker/KVM generation fencing E2E (requires /dev/kvm)
-	$(GOENV) $(GO) test -tags e2e -v ./pkg/provider/firecracker -run '^TestFirecrackerReal.*E2E$$' -count=1 -timeout=10m
+test-firecracker-e2e: build-all ## Run jailed Firecracker/KVM lifecycle E2E (requires prepared root host)
+	$(GOENV) $(GO) test -tags e2e -v ./pkg/provider/firecracker -run '^Test(FirecrackerReal|JailerReal).*E2E$$' -count=1 -timeout=10m
 
 test-docker-launch: ## Run Docker launch override lifecycle acceptance
 	bash tests/e2e/docker_launch_override.sh
@@ -357,7 +357,7 @@ api-deploy: api-build-api
 	@echo "API server: $(API_URL)/v1/health"
 	@echo "Seed examples with: make api seed"
 
-api-deploy-full: api-deploy .agent-register
+api-deploy-full: api-deploy
 	$(COMPOSE) $(COMPOSE_FULL) up -d sysbox-agent
 	@echo "Agent: $(AGENT_ID)"
 
@@ -367,9 +367,11 @@ api-status:
 	@printf "API health: "
 	@curl -sf "$(API_URL)/v1/health" 2>/dev/null || echo "unreachable"
 
-.agent-register:
-	$(COMPOSE) $(COMPOSE_FULL) run --rm --no-deps --entrypoint sysbox sysbox-agent \
-		agent register --api $(AGENT_API_URL) --token "$(SYSBOX_API_TOKEN)" --id $(AGENT_ID) --name $(AGENT_ID) $(if $(AGENT_SUBSTRATES),--substrates $(AGENT_SUBSTRATES),) --identity /var/lib/sysbox/agent/identity.json
+.agent-register: build
+	@mkdir -p .sysbox/enrollment
+	@test ! -e .sysbox/enrollment/identity.json || { echo "Enrollment already exists; inspect it before registering again"; exit 1; }
+	$(BINARY) agent register --api $(AGENT_API_URL) --token "$(SYSBOX_API_TOKEN)" --id $(AGENT_ID) --name $(AGENT_ID) --substrates $(AGENT_SUBSTRATES) --identity .sysbox/enrollment/identity.json
+	@echo "Install this identity using deploy/prepare-worker.sh; the worker never receives the enrollment token."
 
 api-down:
 	$(COMPOSE) $(COMPOSE_FULL) down

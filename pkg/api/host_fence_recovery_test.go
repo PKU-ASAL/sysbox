@@ -11,13 +11,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/agentexec"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
-	"github.com/stretchr/testify/require"
 )
 
 func fenceRecoveryRequest(s *Server, method, path, key string) *httptest.ResponseRecorder {
@@ -112,7 +114,7 @@ func checkFenceObservationContract(t *testing.T, s *Server, store apiStore, fenc
 	require.NoError(t, err)
 	require.Equal(t, digest, auth.FenceObservation.RequestSHA256)
 	require.Equal(t, 202, fenceRecoveryRequest(s, "POST", path+"/observe", "first").Code, "retry after lease must not replace command")
-	report := &controlplane.RunRecoveryReport{CommandID: claim.ID, RunID: run.ID, AgentID: "agent", QueuedAt: run.QueuedAt, Revision: run.Revision, RunAttempt: run.Attempt, RunLeaseOwner: run.LeaseOwner, Mode: controlplane.RunRecoveryObserve, TopologyUID: before.TopologyUID, StateSerial: before.Meta.Serial, ObservedAt: time.Now().UTC(), Resources: []controlplane.RecoveredResource{{ActionID: actions[0].ID, Resource: actions[0].Resource.String(), OwnerUID: actions[0].OwnerUID, ResourceUID: actions[0].ResourceUID, Generation: actions[0].Generation, Status: "absent", JournalStatus: string(actions[0].Status)}}}
+	report := &controlplane.RunRecoveryReport{CommandID: claim.ID, RunID: run.ID, AgentID: "agent", QueuedAt: run.QueuedAt, Revision: run.Revision, RunAttempt: run.Attempt, RunLeaseOwner: run.LeaseOwner, Mode: controlplane.RunRecoveryObserve, TopologyUID: before.TopologyUID, StateSerial: before.Meta.Serial, ObservedAt: time.Now().UTC(), Resources: []model.RecoveredResource{{ActionID: actions[0].ID, Resource: actions[0].Resource.String(), OwnerUID: actions[0].OwnerUID, ResourceUID: actions[0].ResourceUID, Generation: actions[0].Generation, Status: "absent", JournalStatus: string(actions[0].Status)}}}
 	_, err = store.ApplyAgentCommandEvent(ctx, controlplane.AgentCommandEvent{CommandID: claim.ID, AgentID: "agent", Type: claim.Type, ActionID: claim.ActionID, Status: "completed", LeaseOwner: claim.LeaseOwner, Attempt: claim.Attempt, Recovery: report})
 	require.NoError(t, err)
 	cold := stateDeleteTestServer(t, store)
@@ -155,7 +157,7 @@ func checkFenceObservationContract(t *testing.T, s *Server, store apiStore, fenc
 			require.True(t, ok)
 			altered := *report
 			altered.CommandID = lease.ID
-			altered.Resources = append([]controlplane.RecoveredResource(nil), report.Resources...)
+			altered.Resources = append([]model.RecoveredResource(nil), report.Resources...)
 			switch wrong {
 			case "identity":
 				altered.Resources[0].ResourceUID = "foreign"
@@ -201,7 +203,7 @@ func checkFenceObservationContract(t *testing.T, s *Server, store apiStore, fenc
 			current := *report
 			current.CommandID = lease.ID
 			current.ObservedAt = time.Now().UTC()
-			current.Resources = append([]controlplane.RecoveredResource(nil), report.Resources...)
+			current.Resources = append([]model.RecoveredResource(nil), report.Resources...)
 			binding := *auth.FenceObservation
 			owner, attempt := lease.LeaseOwner, lease.Attempt
 			key := hostKey

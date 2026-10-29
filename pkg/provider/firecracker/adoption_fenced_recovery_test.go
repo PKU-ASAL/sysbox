@@ -117,7 +117,7 @@ func TestFencedAdoptionReanchorsOnlyStoppedPreviousBoot(t *testing.T) {
 	}
 }
 
-func TestColdStartRecreatesOwnedTemporarySocketDirectoryAfterHostReboot(t *testing.T) {
+func TestColdStartRejectsDirectTemporarySocketDirectoryAfterHostReboot(t *testing.T) {
 	t.Setenv("TMPDIR", t.TempDir())
 	s, h, _, _ := manifestFixture(t, false)
 	hs := h.Provider.(*HandleState)
@@ -126,5 +126,5 @@ func TestColdStartRecreatesOwnedTemporarySocketDirectoryAfterHostReboot(t *testi
 	require.NoError(t, os.Remove(dir))
 	s.firecrackerBin = "/bin/false"
 	require.Error(t, s.StartNode(context.Background(), h), "stub exits after directory preparation")
-	require.DirExists(t, dir, "cold start must recreate its lost socket parent before launching")
+	require.NoDirExists(t, dir, "direct-mode socket layout must not be recreated for launch")
 }

@@ -9,9 +9,9 @@ import (
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/secret"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -28,7 +28,7 @@ func ResumeResetPlan(checkpoint *OperationCheckpoint, current *Plan) (*Plan, err
 			return nil, err
 		}
 		for _, action := range plan.Actions {
-			if action.Action != controlplane.PlanActionReset {
+			if action.Action != model.PlanActionReset {
 				return nil, fmt.Errorf("reset resume plan contains non-reset action %s", action.Action)
 			}
 		}
@@ -40,7 +40,7 @@ func ResumeResetPlan(checkpoint *OperationCheckpoint, current *Plan) (*Plan, err
 	if checkpoint.PlanSHA256 == "" || checkpoint.PlanSHA256 != fingerprint {
 		return nil, fmt.Errorf("checkpoint plan fingerprint mismatch")
 	}
-	currentByAddress := make(map[string]controlplane.PlannedChange, len(current.Actions))
+	currentByAddress := make(map[string]model.PlannedChange, len(current.Actions))
 	for _, action := range current.Actions {
 		currentByAddress[action.Address.String()] = action
 	}
@@ -52,7 +52,7 @@ func ResumeResetPlan(checkpoint *OperationCheckpoint, current *Plan) (*Plan, err
 	}
 	completed := make(map[string]struct{})
 	for _, step := range checkpoint.Steps {
-		if step.Kind == "resource" && step.Action == controlplane.PlanActionReset && step.Status == OperationDone {
+		if step.Kind == "resource" && step.Action == model.PlanActionReset && step.Status == OperationDone {
 			completed[step.Resource] = struct{}{}
 		}
 	}
@@ -114,9 +114,9 @@ func BuildResetPlan(topology *graph.Graph, current *state.State, target string) 
 		if err := baseline.Validate(); err != nil {
 			return nil, fmt.Errorf("reset node %s has no immutable baseline: %w", resourceAddress, err)
 		}
-		plan.Actions = append(plan.Actions, controlplane.PlannedChange{
-			Address: resourceAddress, Action: controlplane.PlanActionReset, Reason: resetReason,
-			Changes: []controlplane.FieldChange{{Path: "baseline_digest", After: baseline.Identity.Digest}},
+		plan.Actions = append(plan.Actions, model.PlannedChange{
+			Address: resourceAddress, Action: model.PlanActionReset, Reason: resetReason,
+			Changes: []model.FieldChange{{Path: "baseline_digest", After: baseline.Identity.Digest}},
 		})
 	}
 	if len(plan.Actions) == 0 {
@@ -126,7 +126,7 @@ func BuildResetPlan(topology *graph.Graph, current *state.State, target string) 
 }
 
 type resetNodeContext struct {
-	action      controlplane.PlannedChange
+	action      model.PlannedChange
 	node        *graph.Node
 	config      *config.NodeConfig
 	current     *state.Resource
@@ -181,7 +181,7 @@ func (e *Executor) destroyResetNode(ctx context.Context, item *resetNodeContext)
 	})
 }
 
-func (e *Executor) buildResetNodeContext(ctx context.Context, action controlplane.PlannedChange) (*resetNodeContext, error) {
+func (e *Executor) buildResetNodeContext(ctx context.Context, action model.PlannedChange) (*resetNodeContext, error) {
 	node := e.graph.Get(action.Address)
 	if node == nil || node.Address.Type != "sysbox_node" {
 		return nil, fmt.Errorf("reset node %s is not declared", action.Address)
@@ -194,19 +194,19 @@ func (e *Executor) buildResetNodeContext(ctx context.Context, action controlplan
 	if current == nil {
 		return nil, fmt.Errorf("reset node %s is not present in state", action.Address)
 	}
-	nodeDriver, err := driver.DefaultRegistry.RequireNode(current.Driver)
+	nodeDriver, err := e.providers.RequireNode(current.Driver)
 	if err != nil {
 		return nil, err
 	}
-	nicDriver, err := driver.DefaultRegistry.RequireNIC(current.Driver)
+	nicDriver, err := e.providers.RequireNIC(current.Driver)
 	if err != nil {
 		return nil, err
 	}
-	stateDriver, err := driver.DefaultRegistry.RequireNodeState(current.Driver)
+	stateDriver, err := e.providers.RequireNodeState(current.Driver)
 	if err != nil {
 		return nil, err
 	}
-	resetDriver, err := driver.DefaultRegistry.RequireReset(current.Driver)
+	resetDriver, err := e.providers.RequireReset(current.Driver)
 	if err != nil {
 		return nil, err
 	}
@@ -309,7 +309,7 @@ func (e *Executor) prepareResetNode(ctx context.Context, item *resetNodeContext)
 		if setErr := item.current.SetRuntimeValue("reset_handle", string(raw)); setErr != nil {
 			return setErr
 		}
-		if err := e.recordStepExternal(ctx, item.step, item.action.Address, controlplane.PlanActionReset); err != nil {
+		if err := e.recordStepExternal(ctx, item.step, item.action.Address, model.PlanActionReset); err != nil {
 			return err
 		}
 		item.current = e.state.FindResource(item.action.Address)
@@ -356,7 +356,7 @@ func (e *Executor) applyResetNode(ctx context.Context, item *resetNodeContext) e
 		if setErr := item.current.SetRuntimeValue("reset_handle", string(raw)); setErr != nil {
 			return setErr
 		}
-		if patchErr := e.recordStepExternal(ctx, item.step, item.action.Address, controlplane.PlanActionReset); patchErr != nil {
+		if patchErr := e.recordStepExternal(ctx, item.step, item.action.Address, model.PlanActionReset); patchErr != nil {
 			return patchErr
 		}
 		item.current = e.state.FindResource(item.action.Address)
@@ -384,7 +384,7 @@ func (e *Executor) applyResetNode(ctx context.Context, item *resetNodeContext) e
 	}
 	var guestInit driver.GuestNetworkInit
 	if len(caps.GuestNetworkInitModes) > 0 {
-		guestInit, err = driver.DefaultRegistry.RequireGuestNetworkInit(item.current.Driver)
+		guestInit, err = e.providers.RequireGuestNetworkInit(item.current.Driver)
 		if err != nil {
 			return err
 		}
@@ -492,10 +492,10 @@ func (e *Executor) applyResetNode(ctx context.Context, item *resetNodeContext) e
 			Context: RecoveryContextRefresh, ResourceType: item.node.Address.Type,
 			Provider: item.current.Driver, HasState: true, Observation: nodeObservation,
 		})
-		if decision.Decision != controlplane.RecoveryDecisionNoop {
+		if decision.Decision != model.RecoveryDecisionNoop {
 			return fmt.Errorf("final health did not converge: %s", decision.Reason)
 		}
-		status, reason, attachmentErr := observeAttachments(ctx, handle, &updated, e.state)
+		status, reason, attachmentErr := observeAttachments(ctx, handle, &updated, e.state, e.providers)
 		if attachmentErr != nil {
 			return attachmentErr
 		}
@@ -528,7 +528,7 @@ func (e *Executor) persistResetHandleCheckpoint(ctx context.Context, item *reset
 		if err := item.current.SetRuntimeValue("reset_handle", string(raw)); err != nil {
 			return err
 		}
-		if err := e.recordStepExternal(ctx, item.step, item.action.Address, controlplane.PlanActionReset); err != nil {
+		if err := e.recordStepExternal(ctx, item.step, item.action.Address, model.PlanActionReset); err != nil {
 			return err
 		}
 		item.current = e.state.FindResource(item.action.Address)

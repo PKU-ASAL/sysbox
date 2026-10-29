@@ -194,26 +194,6 @@ func TestRunDispatchAttachesCommandToExistingAssignedRun(t *testing.T) {
 		require.Equal(t, cmd.ID, commands[0].ID)
 	})
 }
-func TestLateRunCompletionCannotPublishRejectedState(t *testing.T) {
-	s := NewServer(t.TempDir(), t.TempDir())
-	ctx := context.Background()
-	run := s.jobs.startWithOptions("lab", "apply", runStartOptions{AgentID: "agent"})
-	s.jobs.assign(run, "agent")
-	claimed, err := s.jobs.claim(run.ID, "agent")
-	require.NoError(t, err)
-	_, ok, err := s.apiStore.ExpireRunLease(ctx, run.ID, claimed.LeaseUntil.Add(time.Second))
-	require.NoError(t, err)
-	require.True(t, ok)
-	late := *claimed
-	late.Status = controlplane.RunDone
-	late.EndedAt = time.Now().UTC()
-	_, err = s.agentService().CompleteRun("agent", run.ID, controlplane.RunCompletion{Run: late})
-	require.ErrorIs(t, err, persistence.ErrConflict)
-	got, exists := s.jobs.get(run.ID)
-	require.True(t, exists)
-	require.Equal(t, controlplane.RunFailed, got.Status)
-}
-
 func TestRunRepositoryRejectsMalformedIdentity(t *testing.T) {
 	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
 		for _, bad := range []controlplane.Run{{ID: "bad/key", Topology: "lab", Status: controlplane.RunQueued}, {ID: "alias", Topology: "lab", Status: controlplane.RunQueued, Operation: "apply", Op: "destroy"}} {
@@ -269,18 +249,6 @@ func TestRunClaimDoesNotAttachInputsFromPreviousRound(t *testing.T) {
 		require.NoError(t, err)
 		require.Empty(t, claimed.Inputs)
 	})
-}
-func TestOldCompletionCannotFinishUnclaimedNewRound(t *testing.T) {
-	s := NewServer(t.TempDir(), t.TempDir())
-	run := s.jobs.startWithOptions("lab", "apply", runStartOptions{AgentID: "agent"})
-	require.NoError(t, s.jobs.assign(run, "agent"))
-	report := controlplane.Run{ID: run.ID, AgentID: "agent", Status: controlplane.RunDone, LeaseOwner: "old-worker", Attempt: 1}
-	_, err := s.agentService().CompleteRun("agent", run.ID, controlplane.RunCompletion{Run: report})
-	require.Error(t, err)
-	report.LeaseOwner = ""
-	report.Attempt = 0
-	_, err = s.agentService().CompleteRun("agent", run.ID, controlplane.RunCompletion{Run: report})
-	require.Error(t, err, "omitting old proof cannot authorize a new round")
 }
 func TestRunClaimRejectsLostApplyInputs(t *testing.T) {
 	s := &localAPIStore{runsDir: t.TempDir()}
@@ -394,18 +362,4 @@ func TestSQLiteRunRejectsConflictingIndexedSnapshot(t *testing.T) {
 			require.ErrorIs(t, err, persistence.ErrCorruptRecord)
 		})
 	}
-}
-func TestRunCompletionCannotPublishForeignProjection(t *testing.T) {
-	s := NewServer(t.TempDir(), t.TempDir())
-	run := s.jobs.startWithOptions("lab", "apply", runStartOptions{AgentID: "agent"})
-	require.NoError(t, s.jobs.assign(run, "agent"))
-	claimed, err := s.jobs.claim(run.ID, "agent")
-	require.NoError(t, err)
-	finished := *claimed
-	finished.Status = controlplane.RunDone
-	_, err = s.agentService().CompleteRun("agent", run.ID, controlplane.RunCompletion{Run: finished, Projection: controlplane.Projection{AgentID: "other", Topology: "foreign"}})
-	require.Error(t, err)
-	stored, err := s.apiStore.GetRun(context.Background(), run.ID)
-	require.NoError(t, err)
-	require.Equal(t, controlplane.RunRunning, stored.Status)
 }

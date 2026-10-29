@@ -22,7 +22,7 @@ import (
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
-const DefaultIdentityPath = "/var/lib/sysbox/agent/identity.json"
+const DefaultIdentityPath = "/var/lib/sysbox-agent/identity.json"
 
 type Identity struct {
 	ID           string            `json:"id"`
@@ -74,6 +74,7 @@ func Register(ctx context.Context, opts RegisterOptions) (*Identity, error) {
 		caps, detection = DetectCapabilities()
 	}
 
+	caps = append(caps, controlplane.RunRecoveryCapability, controlplane.RunRecoveryInputsCapability)
 	ident := &Identity{
 		ID:           id,
 		Name:         opts.Name,
@@ -100,6 +101,8 @@ func Register(ctx context.Context, opts RegisterOptions) (*Identity, error) {
 	if err := RegisterRemote(ctx, ident); err != nil {
 		return nil, err
 	}
+	// Enrollment is the only operation that needs the administrator token.
+	ident.Token = ""
 	if err := SaveIdentity(opts.Path, ident); err != nil {
 		return nil, err
 	}

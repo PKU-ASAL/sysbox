@@ -1,0 +1,33 @@
+[Unit]
+Description=Sysbox unprivileged Agent
+Requires=sysbox-host.service
+After=network-online.target sysbox-host.service
+
+[Service]
+Type=simple
+User=sysbox-agent
+Group=sysbox-agent
+ExecStart=/usr/local/bin/sysbox agent start --identity /var/lib/sysbox-agent/identity.json --config /etc/sysbox-worker/agent.yaml
+Restart=on-failure
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=yes
+StateDirectory=sysbox-agent
+StateDirectoryMode=0700
+UMask=0077
+InaccessiblePaths=-/var/run/docker.sock -/run/libvirt -/etc/sysbox-host -/etc/sysbox-api -/var/lib/sysbox
+
+[Install]
+WantedBy=multi-user.target

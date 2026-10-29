@@ -19,6 +19,19 @@ import (
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	if err := commands.ExecuteContextWithProviders(ctx, initializeProviders); err != nil {
+		os.Exit(1)
+	}
+}
+
+func initializeProviders(configPath string) error {
+	// Provider constructors and preflight checks also read service defaults.
+	// Pin the process to the explicit CLI config before any of them run.
+	if configPath != "" {
+		if err := os.Setenv("SYSBOX_CONFIG", configPath); err != nil {
+			return err
+		}
+	}
 	mustRegisterDriver(driver.Descriptor{Name: "network", Version: "1", LinuxNetwork: networkprovider.Driver{}, Policy: networkprovider.Driver{}})
 
 	dockerSub, err := docker.New()
@@ -30,7 +43,10 @@ func main() {
 		}
 	}
 
-	cfg := config.MustLoadServiceConfig("")
+	cfg, err := config.LoadServiceConfig(configPath)
+	if err != nil {
+		return err
+	}
 	// Kernel/rootfs paths can be overridden per-node in HCL; these are defaults.
 	kernelPath := cfg.Providers.Firecracker.Kernel
 	if kernelPath == "" {
@@ -40,7 +56,7 @@ func main() {
 	fcSub := fc.New(kernelPath, rootfsDir)
 	mustRegisterDriver(driver.Descriptor{
 		Name: "firecracker", Version: "1", Node: fcSub, NIC: fcSub, Policy: fcSub,
-		Console: fcSub, GuestExec: fcSub, GuestFiles: fcSub, Artifact: fcSub,
+		GuestExec: fcSub, GuestFiles: fcSub, Artifact: fcSub,
 		NodeState:         fcSub,
 		Power:             fcSub,
 		GuestNetwork:      fcSub,
@@ -51,7 +67,7 @@ func main() {
 	libvirtSub := libvirt.New(cfg.Providers.Libvirt.Workdir)
 	mustRegisterDriver(driver.Descriptor{
 		Name: "libvirt", Version: "1", Node: libvirtSub, NIC: libvirtSub,
-		Console: libvirtSub, GuestExec: libvirtSub, GuestFiles: libvirtSub,
+		GuestExec: libvirtSub, GuestFiles: libvirtSub,
 		Artifact: libvirtSub, Import: libvirtSub,
 		NodeState:         libvirtSub,
 		Power:             libvirtSub,
@@ -61,9 +77,7 @@ func main() {
 		OwnershipAdoption: libvirtSub,
 	})
 
-	if err := commands.ExecuteContext(ctx); err != nil {
-		os.Exit(1)
-	}
+	return nil
 }
 
 func mustRegisterDriver(descriptor driver.Descriptor) {
@@ -75,7 +89,7 @@ func mustRegisterDriver(descriptor driver.Descriptor) {
 func registerDockerDriver(registry *driver.Registry, dockerSub *docker.Substrate) error {
 	return registry.Register(driver.Descriptor{
 		Name: "docker", Version: "1", Node: dockerSub, NIC: dockerSub,
-		Console: dockerSub, GuestExec: dockerSub, GuestFiles: dockerSub, Network: dockerSub,
+		GuestExec: dockerSub, GuestFiles: dockerSub, Network: dockerSub,
 		Artifact: dockerSub, Import: dockerSub,
 		OwnershipAdoption: dockerSub,
 		NodeState:         dockerSub,

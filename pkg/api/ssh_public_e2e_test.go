@@ -50,7 +50,11 @@ func TestPublicSSHAgentDockerE2E(t *testing.T) {
 	keyfile := filepath.Join(dir(), "issuer.pub")
 	require.NoError(t, os.WriteFile(keyfile, pub, 0600))
 	runs, data := dir(), dir()
-	api := NewServer(runs, data)
+	cfg := config.DefaultServiceConfig()
+	cfg.Paths.RunsDir, cfg.Paths.WorkspacesDir = runs, data
+	cfg.State.Backend = "sqlite://" + filepath.Join(dir(), "canonical.db")
+	api := NewServerWithConfig(cfg)
+	require.NoError(t, api.initErr)
 	require.NoError(t, api.ConfigureExecutionGrantSigner(issuer))
 	api.grantHostKeys = map[string]ed25519.PublicKey{"owner": hostPub}
 	secret := "ssh-public-test-secret"
@@ -106,6 +110,11 @@ func TestPublicSSHAgentDockerE2E(t *testing.T) {
 	sshBase := *tasks
 	sshBase.Root = filepath.Join(root, "guest-ssh")
 	host := &hostsupervisor.Server{Socket: filepath.Join(root, "host.sock"), GroupID: -1, Dispatcher: tasks, SSHGuest: &hostsupervisor.SSHGuestDispatcher{Dispatcher: &sshBase, Report: authority.ReportNodeOperation}}
+	observerConfig := cfg
+	observerConfig.Paths.RunsDir, observerConfig.Paths.WorkspacesDir = runs, data
+	hostPublicFile := wireTestHostObserver(t, host, observerConfig, "owner", []string{"docker"}, hostKey)
+	require.NoError(t, os.MkdirAll(filepath.Join(data, "lab"), 0700))
+	require.NoError(t, api.apiStore.(durablePlacementStore).SaveTopologyPlacement(ctx, topologyPlacement{Topology: "lab", AgentID: "owner", Protocol: controlplane.AgentProtocolVersion, BoundAt: time.Now()}))
 	hostCtx, stopHost := context.WithCancel(ctx)
 	hostDone := make(chan error, 1)
 	go func() { hostDone <- host.Serve(hostCtx) }()
@@ -119,10 +128,10 @@ func TestPublicSSHAgentDockerE2E(t *testing.T) {
 		return true
 	}, time.Second, 10*time.Millisecond)
 	opts := agentexec.Options{ID: "owner", Secret: secret, APIURL: endpoint.URL, Capabilities: []string{"docker"}, HostSupervisorSocket: host.Socket, ExecutionGrantPublicKeyFile: keyfile, ExecutionSessionFile: filepath.Join(dir(), "session.json"), PollInterval: 50 * time.Millisecond, Policy: config.DefaultServiceConfig().Agent.Policy}
-	bridge := agentexec.NewLocalBridge(agentexec.LocalOptions{Topology: "lab", RunsDir: runs, StatePath: filepath.Join(runs, "lab", "state.json")})
+	opts.HostPublicKeyFile = hostPublicFile
 	agentCtx, stopAgent := context.WithCancel(ctx)
 	agentDone := make(chan error, 1)
-	go func() { agentDone <- agentexec.Run(agentCtx, opts, bridge) }()
+	go func() { agentDone <- agentexec.Run(agentCtx, opts) }()
 	defer func() {
 		stopAgent()
 		select {

@@ -32,7 +32,7 @@ func sshDesired(n *graph.Node, user, action string) (string, substrate.SSHAccess
 	req := substrate.SSHAccessMutation{ID: action, Config: substrate.SSHAccessConfig{User: user, AccessID: n.Address.Name, AuthorizedKeys: append([]string(nil), cfg.AuthorizedKeys...), BindIP: cfg.BindIP, Port: cfg.Port}}
 	return ref.String(), req, req.Validate()
 }
-func sshNodeConnection(ctx context.Context, st *state.State, node, accessID string) (context.Context, substrate.ConnectionSSHAccess, substrate.SSHAccessQuery, error) {
+func sshNodeConnection(ctx context.Context, st *state.State, node, accessID string, providers *driver.Registry) (context.Context, substrate.ConnectionSSHAccess, substrate.SSHAccessQuery, error) {
 	var query substrate.SSHAccessQuery
 	ref, err := address.Parse(node)
 	if err != nil || ref.Type != "sysbox_node" || st == nil || st.TopologyUID == "" {
@@ -46,11 +46,11 @@ func sshNodeConnection(ctx context.Context, st *state.State, node, accessID stri
 	if err != nil || user == "" {
 		return ctx, nil, query, fmt.Errorf("canonical SSH user unavailable")
 	}
-	nd, err := driver.DefaultRegistry.RequireNode(resource.Driver)
+	nd, err := providers.RequireNode(resource.Driver)
 	if err != nil {
 		return ctx, nil, query, err
 	}
-	codec, err := driver.DefaultRegistry.RequireNodeState(resource.Driver)
+	codec, err := providers.RequireNodeState(resource.Driver)
 	if err != nil {
 		return ctx, nil, query, err
 	}

@@ -3,11 +3,15 @@ services:
     image: ${SYSBOX_IMAGE:-sysbox:latest}
     container_name: sysbox-agent
     restart: unless-stopped
-    pid: host
-    cap_add:
-      - NET_ADMIN
-      - SYS_ADMIN
-      - SYS_PTRACE
+    user: "${SYSBOX_AGENT_UID:-32000}:${SYSBOX_AGENT_GID:-32000}"
+    # The identity URL must be reachable by both this worker and the host service.
+    network_mode: host
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
     depends_on:
       sysbox-api:
         condition: service_started
@@ -17,18 +21,26 @@ services:
       - agent
       - start
       - --identity
-      - /var/lib/sysbox/agent/identity.json
+      - /var/lib/sysbox-agent/identity.json
       - --config
-      - /etc/sysbox/sysbox.yaml
+      - /etc/sysbox-worker/agent.yaml
     volumes:
-      - ${SYSBOX_HOST_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
-      # Includes policy evidence and process-shared policy locks. All agents
-      # managing one host must mount the same directory here.
-      - ${SYSBOX_HOST_HOME_DIR:-.sysbox/api}:/var/lib/sysbox
-      - ${SYSBOX_HOST_CACHE_DIR:-~/.cache/sysbox}:/var/cache/sysbox
-      - ./deploy/docker/sysbox.yaml:/etc/sysbox/sysbox.yaml:ro
+      - type: bind
+        source: ${SYSBOX_AGENT_DATA_DIR:-/var/lib/sysbox-agent}
+        target: /var/lib/sysbox-agent
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${SYSBOX_HOST_SOCKET_DIR:-/run/sysbox-host}
+        target: /run/sysbox-host
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${SYSBOX_WORKER_CONFIG_DIR:-/etc/sysbox-worker}
+        target: /etc/sysbox-worker
+        read_only: true
+        bind:
+          create_host_path: false
     environment:
-      SYSBOX_CONFIG: ${SYSBOX_CONFIG:-/etc/sysbox/sysbox.yaml}
-      SYSBOX_API_TOKEN: ${SYSBOX_API_TOKEN:-}
-      SYSBOX_STATE_BACKEND: ${SYSBOX_STATE_BACKEND:-postgres://${SYSBOX_POSTGRES_USERNAME:-sysbox}:${SYSBOX_POSTGRES_PASSWORD:-change-me}@sysbox-postgres:5432/${SYSBOX_POSTGRES_DATABASE:-sysbox}?sslmode=disable&topology={topology}}
-      PATH: /opt/sysbox/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      SYSBOX_CONFIG: /etc/sysbox-worker/agent.yaml

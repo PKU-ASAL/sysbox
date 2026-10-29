@@ -6,11 +6,12 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/oslab/sysbox/pkg/address"
-	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
-	"github.com/stretchr/testify/require"
 )
 
 func TestSnapshotRestoreRequestColdReplayDoesNotRewindSuccessor(t *testing.T) {
@@ -97,7 +98,7 @@ func TestSnapshotRestorePlanRejectsIncompatibleStateWithoutMutation(t *testing.T
 			case "inventory":
 				current.Resources = []state.Resource{{Address: address.Resource("sysbox_node", "web"), OwnerUID: current.TopologyUID, ResourceUID: "node", Generation: 1}}
 			case "pending":
-				require.NoError(t, repo.CommitActionIntent(ctx, runtime.ActionRecord{ID: "pending", Topology: "lab", RunID: "run", Resource: address.Resource("sysbox_node", "web"), Action: controlplane.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: current.TopologyUID, ResourceUID: "node", Generation: 1}))
+				require.NoError(t, repo.CommitActionIntent(ctx, runtime.ActionRecord{ID: "pending", Topology: "lab", RunID: "run", Resource: address.Resource("sysbox_node", "web"), Action: model.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: current.TopologyUID, ResourceUID: "node", Generation: 1}))
 			}
 			if scenario == "lineage" || scenario == "inventory" {
 				require.NoError(t, manager.Save(current))

@@ -20,8 +20,6 @@ func TestAdoptionHostCompletionDoesNotBorrowWorkerLease(t *testing.T) {
 	require.Equal(t, controlplane.NodeOperationStatusDone, done.Status)
 	require.Empty(t, done.LeaseOwner)
 	require.Zero(t, done.Attempt)
-	_, err = CompleteNodeOperation(op, cmd, "agent", "adopt", done, time.Now())
-	require.ErrorIs(t, err, ErrConflict, "ordinary worker completion cannot claim a host result")
 	_, err = CompleteAdoptionFromHost(done, cmd, "agent", "adopt", r)
 	require.NoError(t, err)
 	r.Grant.Digest = "different"

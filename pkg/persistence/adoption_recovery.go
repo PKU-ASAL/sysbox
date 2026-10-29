@@ -4,13 +4,14 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
-	"github.com/oslab/sysbox/pkg/runtime"
 	"reflect"
 	"strings"
 	"time"
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
+	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 )
 
@@ -69,7 +70,7 @@ func ApplyFencedAdoption(raw, authorityRaw []byte, p controlplane.AdoptionDispos
 		if action.RunID != req.ID {
 			continue
 		}
-		if action.DispositionID != "" || action.Status == runtime.ActionSucceeded || action.Action != controlplane.PlanActionAdopt || action.Topology != req.Topology || !action.Resource.Equal(addr) || action.OwnerUID != req.TopologyUID || action.ResourceUID != req.ResourceUID || action.Generation != req.Generation || action.StateSerial != req.ExpectedSerial || action.Candidate == nil || action.Candidate.ExternalID != req.ExternalID || action.Candidate.Driver != req.Provider {
+		if action.DispositionID != "" || action.Status == runtime.ActionSucceeded || action.Action != model.PlanActionAdopt || action.Topology != req.Topology || !action.Resource.Equal(addr) || action.OwnerUID != req.TopologyUID || action.ResourceUID != req.ResourceUID || action.Generation != req.Generation || action.StateSerial != req.ExpectedSerial || action.Candidate == nil || action.Candidate.ExternalID != req.ExternalID || action.Candidate.Driver != req.Provider {
 			return nil, ErrConflict
 		}
 		archived[id] = action
@@ -138,7 +139,7 @@ func validateAdoptionRecoveries(a *aggregate) error {
 		for actionID, old := range r.Actions {
 			req := r.Proof.Adoption
 			addr, err := address.Parse(req.Address)
-			if err != nil || validateAction(old) != nil || old.Revision == 0 || old.ID != actionID || old.DispositionID != "" || old.Action != controlplane.PlanActionAdopt || (old.Status != runtime.ActionIntentCommitted && old.Status != runtime.ActionUncertain && old.Status != runtime.ActionBlocked) || old.RunID != req.ID || old.Topology != req.Topology || !old.Resource.Equal(addr) || old.OwnerUID != req.TopologyUID || old.ResourceUID != req.ResourceUID || old.Generation != req.Generation || old.StateSerial != req.ExpectedSerial || old.Candidate == nil || old.Candidate.ExternalID != req.ExternalID || old.Candidate.Driver != req.Provider {
+			if err != nil || validateAction(old) != nil || old.Revision == 0 || old.ID != actionID || old.DispositionID != "" || old.Action != model.PlanActionAdopt || (old.Status != runtime.ActionIntentCommitted && old.Status != runtime.ActionUncertain && old.Status != runtime.ActionBlocked) || old.RunID != req.ID || old.Topology != req.Topology || !old.Resource.Equal(addr) || old.OwnerUID != req.TopologyUID || old.ResourceUID != req.ResourceUID || old.Generation != req.Generation || old.StateSerial != req.ExpectedSerial || old.Candidate == nil || old.Candidate.ExternalID != req.ExternalID || old.Candidate.Driver != req.Provider {
 				return ErrCorruptRecord
 			}
 			if current, ok := a.Actions[actionID]; ok {

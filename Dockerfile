@@ -65,7 +65,7 @@ LABEL org.opencontainers.image.title="Sysbox" \
       org.opencontainers.image.created="${CREATED}" \
       org.opencontainers.image.licenses="MulanPSL-2.0" \
       io.github.pku-asal.sysbox.release-fingerprint="${RELEASE_FINGERPRINT}" \
-      org.opencontainers.image.documentation="${SOURCE_URL}/blob/main/docs/index.md"
+      org.opencontainers.image.documentation="${SOURCE_URL}/blob/main/README.md"
 
 # Reuse the build stage CA bundle to bootstrap runtime HTTPS package installs.
 COPY --from=binaries /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt

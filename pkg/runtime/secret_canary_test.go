@@ -10,8 +10,8 @@ import (
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/secret"
 	"github.com/oslab/sysbox/pkg/state"
 )
@@ -30,7 +30,7 @@ func TestSecretCanaryDoesNotEnterDurableArtifacts(t *testing.T) {
 	st := &state.State{Version: state.SchemaVersion, Resources: []state.Resource{{Address: addr, Attributes: state.MustAttributes(attributes)}}}
 	stateJSON, err := st.Marshal()
 	require.NoError(t, err)
-	planJSON, err := json.Marshal(Plan{Actions: []controlplane.PlannedChange{{Address: addr, Action: controlplane.PlanActionCreate}}})
+	planJSON, err := json.Marshal(Plan{Actions: []model.PlannedChange{{Address: addr, Action: model.PlanActionCreate}}})
 	require.NoError(t, err)
 	checkpointJSON, err := json.Marshal(OperationCheckpoint{Topology: "lab", Operation: "apply"})
 	require.NoError(t, err)

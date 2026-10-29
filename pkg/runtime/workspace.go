@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 
@@ -9,8 +10,8 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/oslab/sysbox/pkg/address"
-
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
 )
@@ -18,35 +19,44 @@ import (
 // LoadWorkspace parses hclFile and loads stateFile, returning all objects
 // needed to run plan/apply/destroy. It is the canonical entry point for both
 // the CLI commands package and the HTTP API.
-func LoadWorkspace(hclFile, stateFile string) (
+func LoadWorkspace(hclFile, stateFile string, providers *driver.Registry) (
 	*graph.Graph, *state.Manager, *state.State, *config.Root, *hcl.EvalContext, error,
 ) {
-	return LoadWorkspaceWithManager(hclFile, state.NewManager(stateFile))
+	return LoadWorkspaceWithManager(hclFile, state.NewManager(stateFile), providers)
 }
 
-func LoadWorkspaceWithManager(hclFile string, mgr *state.Manager) (
+func LoadWorkspaceWithManager(hclFile string, mgr *state.Manager, providers *driver.Registry) (
 	*graph.Graph, *state.Manager, *state.State, *config.Root, *hcl.EvalContext, error,
 ) {
+	return LoadWorkspaceWithManagerContext(context.Background(), hclFile, mgr, providers)
+}
+
+func LoadWorkspaceWithManagerContext(ctx context.Context, hclFile string, mgr *state.Manager, providers *driver.Registry) (
+	*graph.Graph, *state.Manager, *state.State, *config.Root, *hcl.EvalContext, error,
+) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, nil, nil, nil, err
+	}
 	root, err := config.ParseFile(hclFile)
 	if err != nil {
 		return nil, nil, nil, nil, nil, fmt.Errorf("parse config: %w", err)
 	}
-	s, err := mgr.Load()
+	s, err := mgr.LoadWithContext(ctx)
 	if err != nil {
 		return nil, nil, nil, nil, nil, fmt.Errorf("load state: %w", err)
 	}
 	// Reuse only the non-sensitive variable projection recorded by the last
 	// apply. This keeps status/outputs aligned with the deployed topology after
 	// a restart without persisting secret input values.
-	ctx, err := config.BuildEvalContextWithPersistedInputs(root, filepath.Dir(hclFile), s.AppliedVariables)
+	evalCtx, err := config.BuildEvalContextWithPersistedInputs(root, filepath.Dir(hclFile), s.AppliedVariables)
 	if err != nil {
 		return nil, nil, nil, nil, nil, fmt.Errorf("evaluate config: %w", err)
 	}
-	g, err := BuildGraph(root, ctx, hclFile)
+	g, err := BuildGraph(root, evalCtx, providers, hclFile)
 	if err != nil {
 		return nil, nil, nil, nil, nil, fmt.Errorf("build graph: %w", err)
 	}
-	return g, mgr, s, root, ctx, nil
+	return g, mgr, s, root, evalCtx, nil
 }
 
 // LoadWorkspaceWithInputs is the apply-path counterpart of
@@ -54,51 +64,60 @@ func LoadWorkspaceWithManager(hclFile string, mgr *state.Manager) (
 // apply-time inputs bound as var.<name> BEFORE building the graph, then builds
 // the graph and loads state. This ordering lets count/for_each and resource
 // attribute expressions reference var.<name>.
-func LoadWorkspaceWithInputs(hclFile string, mgr *state.Manager, inputs map[string]string) (
+func LoadWorkspaceWithInputs(hclFile string, mgr *state.Manager, inputs map[string]string, providers *driver.Registry) (
 	*graph.Graph, *state.Manager, *state.State, *config.Root, *hcl.EvalContext, error,
 ) {
+	return LoadWorkspaceWithInputsContext(context.Background(), hclFile, mgr, inputs, providers)
+}
+
+func LoadWorkspaceWithInputsContext(ctx context.Context, hclFile string, mgr *state.Manager, inputs map[string]string, providers *driver.Registry) (
+	*graph.Graph, *state.Manager, *state.State, *config.Root, *hcl.EvalContext, error,
+) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, nil, nil, nil, err
+	}
 	root, err := config.ParseFile(hclFile)
 	if err != nil {
 		return nil, nil, nil, nil, nil, fmt.Errorf("parse config: %w", err)
 	}
-	ctx, err := config.BuildEvalContextWithInputs(root, filepath.Dir(hclFile), inputs)
+	evalCtx, err := config.BuildEvalContextWithInputs(root, filepath.Dir(hclFile), inputs)
 	if err != nil {
 		return nil, nil, nil, nil, nil, fmt.Errorf("evaluate config: %w", err)
 	}
-	g, err := BuildGraph(root, ctx, hclFile)
+	g, err := BuildGraph(root, evalCtx, providers, hclFile)
 	if err != nil {
 		return nil, nil, nil, nil, nil, fmt.Errorf("build graph: %w", err)
 	}
-	s, err := mgr.Load()
+	s, err := mgr.LoadWithContext(ctx)
 	if err != nil {
 		return nil, nil, nil, nil, nil, fmt.Errorf("load state: %w", err)
 	}
-	return g, mgr, s, root, ctx, nil
+	return g, mgr, s, root, evalCtx, nil
 }
 
 // BuildGraph builds a dependency graph from a parsed config root.
 // hclFile is the source file path; it is used to resolve module source paths.
 // Pass "" when the caller path is not known (module blocks are skipped).
-func BuildGraph(root *config.Root, ctx *hcl.EvalContext, hclFile ...string) (*graph.Graph, error) {
+func BuildGraph(root *config.Root, ctx *hcl.EvalContext, providers *driver.Registry, hclFile ...string) (*graph.Graph, error) {
 	callerFile := ""
 	if len(hclFile) > 0 {
 		callerFile = hclFile[0]
 	}
 	g := graph.New()
 	for i := range root.Resources {
-		if err := expandResource(root.Resources[i], g, ctx); err != nil {
+		if err := expandResource(root.Resources[i], g, ctx, providers); err != nil {
 			return nil, err
 		}
 	}
 	for i := range root.Modules {
-		if err := expandModule(root.Modules[i], g, ctx, callerFile); err != nil {
+		if err := expandModule(root.Modules[i], g, ctx, callerFile, providers); err != nil {
 			return nil, err
 		}
 	}
 	// Data blocks: add them to the graph as read-only nodes. They are
 	// executed during apply but never create/destroy infrastructure.
 	for i := range root.Data {
-		if err := expandDataBlock(root.Data[i], g, ctx); err != nil {
+		if err := expandDataBlock(root.Data[i], g, ctx, providers); err != nil {
 			return nil, err
 		}
 	}
@@ -106,14 +125,14 @@ func BuildGraph(root *config.Root, ctx *hcl.EvalContext, hclFile ...string) (*gr
 }
 
 // expandResource handles a single resource block, expanding count or for_each if present.
-func expandResource(r config.ResourceBlock, g *graph.Graph, ctx *hcl.EvalContext) error {
-	return expandResourceAt(r, g, ctx, nil)
+func expandResource(r config.ResourceBlock, g *graph.Graph, ctx *hcl.EvalContext, providers *driver.Registry) error {
+	return expandResourceAt(r, g, ctx, nil, providers)
 }
 
-func expandResourceAt(r config.ResourceBlock, g *graph.Graph, ctx *hcl.EvalContext, modules []address.ModuleInstance) error {
+func expandResourceAt(r config.ResourceBlock, g *graph.Graph, ctx *hcl.EvalContext, modules []address.ModuleInstance, providers *driver.Registry) error {
 	synBody, isSyn := r.Remain.(*hclsyntax.Body)
 	if !isSyn {
-		return addResourceToGraph(r, withModulePath(address.Resource(r.Type, r.Name), modules), ctx, g)
+		return addResourceToGraph(r, withModulePath(address.Resource(r.Type, r.Name), modules), ctx, g, providers)
 	}
 
 	// ── count expansion ────────────────────────────────────────────────────
@@ -141,7 +160,7 @@ func expandResourceAt(r config.ResourceBlock, g *graph.Graph, ctx *hcl.EvalConte
 		for i := 0; i < int(n); i++ {
 			rCopy := config.ResourceBlock{Type: r.Type, Name: r.Name, Remain: remainBody}
 			addr := withModulePath(address.IntInstance(r.Type, r.Name, i), modules)
-			if err := addResourceToGraph(rCopy, addr, config.CountEvalContext(ctx, i), g); err != nil {
+			if err := addResourceToGraph(rCopy, addr, config.CountEvalContext(ctx, i), g, providers); err != nil {
 				return fmt.Errorf("count[%d]: %w", i, err)
 			}
 		}
@@ -151,7 +170,7 @@ func expandResourceAt(r config.ResourceBlock, g *graph.Graph, ctx *hcl.EvalConte
 	// ── for_each expansion ─────────────────────────────────────────────────
 	synAttr, hasForEach := synBody.Attributes["for_each"]
 	if !hasForEach {
-		return addResourceToGraph(r, withModulePath(address.Resource(r.Type, r.Name), modules), ctx, g)
+		return addResourceToGraph(r, withModulePath(address.Resource(r.Type, r.Name), modules), ctx, g, providers)
 	}
 
 	val, diag := synAttr.Expr.Value(ctx)
@@ -191,7 +210,7 @@ func expandResourceAt(r config.ResourceBlock, g *graph.Graph, ctx *hcl.EvalConte
 			key := elemVal.AsString()
 			rCopy := config.ResourceBlock{Type: r.Type, Name: r.Name, Remain: remainBody}
 			addr := withModulePath(address.StringInstance(r.Type, r.Name, key), modules)
-			if err := addResourceToGraph(rCopy, addr, config.EachEvalContext(ctx, key, elemVal), g); err != nil {
+			if err := addResourceToGraph(rCopy, addr, config.EachEvalContext(ctx, key, elemVal), g, providers); err != nil {
 				return fmt.Errorf("for_each[%s]: %w", key, err)
 			}
 		}
@@ -201,7 +220,7 @@ func expandResourceAt(r config.ResourceBlock, g *graph.Graph, ctx *hcl.EvalConte
 	for key, elemVal := range val.AsValueMap() {
 		rCopy := config.ResourceBlock{Type: r.Type, Name: r.Name, Remain: remainBody}
 		addr := withModulePath(address.StringInstance(r.Type, r.Name, key), modules)
-		if err := addResourceToGraph(rCopy, addr, config.EachEvalContext(ctx, key, elemVal), g); err != nil {
+		if err := addResourceToGraph(rCopy, addr, config.EachEvalContext(ctx, key, elemVal), g, providers); err != nil {
 			return fmt.Errorf("for_each[%s]: %w", key, err)
 		}
 	}
@@ -210,7 +229,7 @@ func expandResourceAt(r config.ResourceBlock, g *graph.Graph, ctx *hcl.EvalConte
 
 // expandModule loads a module file and expands its resources with a structured
 // module path. Module nesting is not supported.
-func expandModule(mod config.ModuleBlock, g *graph.Graph, parentCtx *hcl.EvalContext, callerFile string) error {
+func expandModule(mod config.ModuleBlock, g *graph.Graph, parentCtx *hcl.EvalContext, callerFile string, providers *driver.Registry) error {
 	if callerFile == "" {
 		return fmt.Errorf("module %q: cannot resolve source without a caller file path", mod.Name)
 	}
@@ -235,7 +254,7 @@ func expandModule(mod config.ModuleBlock, g *graph.Graph, parentCtx *hcl.EvalCon
 
 	for i := range modRoot.Resources {
 		r := modRoot.Resources[i]
-		if err := expandResourceAt(r, g, modCtx, modulePath); err != nil {
+		if err := expandResourceAt(r, g, modCtx, modulePath, providers); err != nil {
 			return fmt.Errorf("module %q resource %s.%s: %w", mod.Name, r.Type, r.Name, err)
 		}
 	}
@@ -243,7 +262,7 @@ func expandModule(mod config.ModuleBlock, g *graph.Graph, parentCtx *hcl.EvalCon
 }
 
 // addResourceToGraph decodes one resource block and adds it (with deps) to g.
-func addResourceToGraph(r config.ResourceBlock, addr address.Address, ctx *hcl.EvalContext, g *graph.Graph) error {
+func addResourceToGraph(r config.ResourceBlock, addr address.Address, ctx *hcl.EvalContext, g *graph.Graph, providers *driver.Registry) error {
 	provider, ok := GetResourceHandler(r.Type)
 	if !ok {
 		return fmt.Errorf("unsupported resource type %q", r.Type)
@@ -252,7 +271,7 @@ func addResourceToGraph(r config.ResourceBlock, addr address.Address, ctx *hcl.E
 	if !ok {
 		return fmt.Errorf("resource type %q does not support graph decoding", r.Type)
 	}
-	data, deps, err := decoder.DecodeResource(r, addr.Name, ctx)
+	data, deps, err := decoder.DecodeResource(r, addr.Name, ctx, providers)
 	if err != nil {
 		return err
 	}
@@ -283,7 +302,7 @@ func withModulePath(addr address.Address, modules []address.ModuleInstance) addr
 // expandDataBlock decodes a data block and adds it to the graph as a
 // read-only node. Data nodes carry their decoded config in Data so that
 // the executor can call substrate.ReadNode during apply.
-func expandDataBlock(d config.DataBlock, g *graph.Graph, ctx *hcl.EvalContext) error {
+func expandDataBlock(d config.DataBlock, g *graph.Graph, ctx *hcl.EvalContext, providers *driver.Registry) error {
 	typ := "data_" + d.Type
 	provider, ok := GetResourceHandler(typ)
 	if !ok {
@@ -293,7 +312,7 @@ func expandDataBlock(d config.DataBlock, g *graph.Graph, ctx *hcl.EvalContext) e
 	if !ok {
 		return fmt.Errorf("data block type %q does not support graph decoding", d.Type)
 	}
-	data, deps, err := decoder.DecodeData(d, ctx)
+	data, deps, err := decoder.DecodeData(d, ctx, providers)
 	if err != nil {
 		return err
 	}

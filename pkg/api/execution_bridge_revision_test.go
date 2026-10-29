@@ -13,7 +13,9 @@ func TestExecutionBridgeMaterializesOnlyCanonicalRevision(t *testing.T) {
 	cfg.Paths.RunsDir = t.TempDir()
 	cfg.Paths.WorkspacesDir = t.TempDir()
 	server := NewServerWithConfig(cfg)
-	bridge := NewExecutionBridge(cfg)
+	bridge, err := NewExecutionBridge(cfg)
+	requireNoError(t, err)
+	t.Cleanup(func() { _ = bridge.Close() })
 	files := map[string][]byte{"field.sysbox.hcl": []byte("# immutable host revision\n")}
 	revision := controlplane.GlobalRevision{Revision: controlplane.ComputeRevisionDigest(files), Files: files}
 	requireNoError(t, server.apiStore.SaveGlobalRevision(context.Background(), revision))

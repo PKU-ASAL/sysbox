@@ -12,12 +12,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
-	"github.com/stretchr/testify/require"
 )
 
 type coldContinuationBridge struct {
@@ -68,7 +70,7 @@ func TestColdInterruptedResetContinuationChecksEveryPredecessor(t *testing.T) {
 			require.NoError(t, mgr.Save(st))
 			repo, err := b.ActionRepository("lab")
 			require.NoError(t, err)
-			action := runtime.ActionRecord{ID: "original-action", Topology: "lab", RunID: "root", RunQueuedAt: now, RunRevision: "revision", Resource: node.Address, OwnerUID: st.TopologyUID, ResourceUID: "node", Generation: 2, Candidate: &node, StateSerial: st.Meta.Serial, ExpectedSerial: st.Meta.Serial, Action: controlplane.PlanActionReset, Status: runtime.ActionIntentCommitted, Phase: "accepted"}
+			action := runtime.ActionRecord{ID: "original-action", Topology: "lab", RunID: "root", RunQueuedAt: now, RunRevision: "revision", Resource: node.Address, OwnerUID: st.TopologyUID, ResourceUID: "node", Generation: 2, Candidate: &node, StateSerial: st.Meta.Serial, ExpectedSerial: st.Meta.Serial, Action: model.PlanActionReset, Status: runtime.ActionIntentCommitted, Phase: "accepted"}
 			require.NoError(t, repo.CommitActionIntent(ctx, action))
 			pub, _, err := ed25519.GenerateKey(rand.Reader)
 			require.NoError(t, err)

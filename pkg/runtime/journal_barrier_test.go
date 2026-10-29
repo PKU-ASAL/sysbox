@@ -7,11 +7,13 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/oslab/sysbox/pkg/address"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/graph"
-	"github.com/oslab/sysbox/pkg/state"
 	"github.com/stretchr/testify/require"
+
+	"github.com/oslab/sysbox/pkg/address"
+	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/model"
+	"github.com/oslab/sysbox/pkg/state"
 )
 
 type journalResource struct {
@@ -23,7 +25,7 @@ func (*journalResource) Type() string { return "journal_fixture" }
 func (*journalResource) Schema() ResourceSchema {
 	return ResourceSchema{Type: "journal_fixture", Version: 1}
 }
-func (p *journalResource) Read(_ context.Context, current state.Resource) (ResourceReadResult, error) {
+func (p *journalResource) Read(_ context.Context, current state.Resource, providers *driver.Registry) (ResourceReadResult, error) {
 	if p.removed[current.Address.String()] {
 		return ResourceReadResult{Status: state.ResourceAbsent}, nil
 	}
@@ -32,8 +34,8 @@ func (p *journalResource) Read(_ context.Context, current state.Resource) (Resou
 func (*journalResource) Discover(context.Context, *ProviderContext, *graph.Node) (ResourceReadResult, error) {
 	return ResourceReadResult{Status: state.ResourceAbsent}, nil
 }
-func (*journalResource) PlanDiff(n *graph.Node, _ *state.Resource) (controlplane.PlannedChange, error) {
-	return controlplane.PlannedChange{Address: n.Address, Action: controlplane.PlanActionCreate}, nil
+func (*journalResource) PlanDiff(n *graph.Node, _ *state.Resource) (model.PlannedChange, error) {
+	return model.PlannedChange{Address: n.Address, Action: model.PlanActionCreate}, nil
 }
 func (p *journalResource) Create(_ context.Context, _ *ProviderContext, n *graph.Node) (state.Resource, error) {
 	p.creates++
@@ -70,7 +72,7 @@ func TestApplyNeverCreatesWhenIntentPersistenceFails(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "checkpoint.json")
 			recorder := NewStoreRecorder(NewFileRecorder(path, "run", "lab"), &stubCheckpointStore{err: want, failAfter: failAfter}, "lab", "run", path)
 			executor.SetRecorder(recorder)
-			err := executor.Apply(context.Background(), &Plan{Actions: []controlplane.PlannedChange{{Address: addr, Action: controlplane.PlanActionCreate}}})
+			err := executor.Apply(context.Background(), &Plan{Actions: []model.PlannedChange{{Address: addr, Action: model.PlanActionCreate}}})
 			require.ErrorIs(t, err, want)
 			require.Zero(t, handler.creates, "provider must not run before durable intent")
 		})
@@ -83,7 +85,7 @@ func TestDestroyNeverDeletesWhenIntentPersistenceFails(t *testing.T) {
 	want := errors.New("intent storage unavailable")
 	path := filepath.Join(t.TempDir(), "checkpoint.json")
 	executor.SetRecorder(NewStoreRecorder(NewFileRecorder(path, "run", "lab"), &stubCheckpointStore{err: want, failAfter: 1}, "lab", "run", path))
-	err := executor.Destroy(context.Background(), &Plan{Actions: []controlplane.PlannedChange{{Address: addr, Action: controlplane.PlanActionDelete}}})
+	err := executor.Destroy(context.Background(), &Plan{Actions: []model.PlannedChange{{Address: addr, Action: model.PlanActionDelete}}})
 	require.ErrorIs(t, err, want)
 	require.Zero(t, handler.deletes)
 }
@@ -110,7 +112,7 @@ func TestJournalFailureDoesNotRollbackAlreadyCreatedResource(t *testing.T) {
 	want := errors.New("journal failed before second resource")
 	path := filepath.Join(t.TempDir(), "checkpoint.json")
 	executor.SetRecorder(NewStoreRecorder(NewFileRecorder(path, "run", "lab"), &failNextResourceJournal{err: want}, "lab", "run", path))
-	err := executor.Apply(context.Background(), &Plan{Actions: []controlplane.PlannedChange{{Address: first, Action: controlplane.PlanActionCreate}, {Address: second, Action: controlplane.PlanActionCreate}}})
+	err := executor.Apply(context.Background(), &Plan{Actions: []model.PlannedChange{{Address: first, Action: model.PlanActionCreate}, {Address: second, Action: model.PlanActionCreate}}})
 	require.ErrorIs(t, err, want)
 	require.Equal(t, 1, handler.creates)
 	require.Zero(t, handler.deletes, "journal failure must not trigger unrecorded rollback")
@@ -123,7 +125,7 @@ func TestSubstepDoesNotMutateAfterLocalJournalFailure(t *testing.T) {
 	require.NoError(t, local.Begin("apply", nil))
 	// Keep the last checkpoint readable, but make the next atomic rename fail.
 	require.NoError(t, os.Mkdir(path+".tmp", 0700))
-	executor := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
+	executor := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion}, driver.DefaultRegistry)
 	executor.SetRecorder(NewStoreRecorder(local, nil, "lab", "run", path))
 	mutated := false
 	err := executor.recordSubstep(-1, "create_node", nil, func() error { mutated = true; return nil })
@@ -143,7 +145,7 @@ func TestDestroyStopsAfterStateCommitFails(t *testing.T) {
 	want := errors.New("state commit failed")
 	executor = testActionExecutor(t, executor.graph, executor.state)
 	executor.actions.(*memoryActions).patchErr = want
-	err := executor.Destroy(context.Background(), &Plan{Actions: []controlplane.PlannedChange{{Address: first, Action: controlplane.PlanActionDelete}, {Address: second, Action: controlplane.PlanActionDelete}}})
+	err := executor.Destroy(context.Background(), &Plan{Actions: []model.PlannedChange{{Address: first, Action: model.PlanActionDelete}, {Address: second, Action: model.PlanActionDelete}}})
 	require.ErrorIs(t, err, want)
 	require.Equal(t, 1, handler.deletes)
 }
@@ -185,10 +187,10 @@ func TestFinishJournalCannotPersistSuccessAfterTransientStepFailure(t *testing.T
 	want := errors.New("last step commit rejected")
 	store := &failOneCompletionJournal{err: want}
 	recorder := NewStoreRecorder(NewFileRecorder(path, "run", "lab"), store, "lab", "run", path)
-	executor := NewExecutor(graph.New(), &state.State{})
+	executor := NewExecutor(graph.New(), &state.State{}, driver.DefaultRegistry)
 	executor.SetRecorder(recorder)
 	require.NoError(t, recorder.Begin("reset", &Plan{}))
-	recorder.StepDone(recorder.StepStart("sysbox_node.web", controlplane.PlanActionReset))
+	recorder.StepDone(recorder.StepStart("sysbox_node.web", model.PlanActionReset))
 	require.ErrorIs(t, executor.finishJournal(nil), want)
 	require.Equal(t, OperationFailed, store.last.Status, "sticky failure must be incorporated before Finish")
 }

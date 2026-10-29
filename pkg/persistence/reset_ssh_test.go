@@ -7,12 +7,13 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/oslab/sysbox/pkg/address"
-	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
-	"github.com/stretchr/testify/require"
 )
 
 func TestResetSSHAtomicPublicationAndMonotonicEvidence(t *testing.T) {
@@ -41,7 +42,7 @@ func TestResetSSHAtomicPublicationAndMonotonicEvidence(t *testing.T) {
 			old = *st.FindResource(old.Address)
 			node = *st.FindResource(node.Address)
 			sum := sha256.Sum256([]byte("reset-ssh\x00reset\x00" + old.Address.String()))
-			a := runtime.ActionRecord{ID: "reset", RunID: "run", Topology: "lab", Resource: node.Address, OwnerUID: st.TopologyUID, ResourceUID: "node", Generation: 2, StateSerial: st.Meta.Serial, ExpectedSerial: st.Meta.Serial, Candidate: &node, Action: controlplane.PlanActionReset, Status: runtime.ActionIntentCommitted, Phase: "accepted", ResetSSH: []runtime.ResetSSHDependency{{Previous: old, ActionID: hex.EncodeToString(sum[:]), DesiredDigest: "config"}}}
+			a := runtime.ActionRecord{ID: "reset", RunID: "run", Topology: "lab", Resource: node.Address, OwnerUID: st.TopologyUID, ResourceUID: "node", Generation: 2, StateSerial: st.Meta.Serial, ExpectedSerial: st.Meta.Serial, Candidate: &node, Action: model.PlanActionReset, Status: runtime.ActionIntentCommitted, Phase: "accepted", ResetSSH: []runtime.ResetSSHDependency{{Previous: old, ActionID: hex.EncodeToString(sum[:]), DesiredDigest: "config"}}}
 			var saved struct {
 				Config substrate.SSHAccessConfig `json:"config"`
 			}

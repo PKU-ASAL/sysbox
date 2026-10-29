@@ -204,12 +204,8 @@ func applyAgentReport(current, report controlplane.Agent, now time.Time) control
 	if report.Name != "" {
 		current.Name = report.Name
 	}
-	if len(report.Capabilities) > 0 {
-		current.Capabilities = report.Capabilities
-	}
-	if len(report.Labels) > 0 {
-		current.Labels = report.Labels
-	}
+	// Scheduling authority is fixed by administrator enrollment. A worker
+	// heartbeat or reconnect cannot enlarge its capabilities or placement labels.
 	if report.Version != "" {
 		current.Version = report.Version
 	}

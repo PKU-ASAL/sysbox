@@ -44,6 +44,11 @@ func (h *HostRunExecutor) Execute(ctx context.Context, req hostsupervisor.RunReq
 	if run == nil || run.Topology != req.Topology || run.Revision != req.Revision || run.Op != req.Action || run.Target != req.Target || run.AgentID != h.Tasks.AgentID || run.Status != controlplane.RunRunning || run.LeaseOwner == "" || !run.LeaseUntil.After(time.Now()) {
 		return nil, fmt.Errorf("host run canonical claim changed")
 	}
+	inputs := hostsupervisor.RunInputs(ctx)
+	if err := controlplane.ValidateRunInputs(*run, inputs); err != nil {
+		return nil, err
+	}
+	run.Inputs = inputs
 	if err := waitForCanonicalRunStart(ctx, run.StartedAt); err != nil {
 		return nil, err
 	}
@@ -76,6 +81,7 @@ func (h *HostRunExecutor) Execute(ctx context.Context, req hostsupervisor.RunReq
 		return h.Resolver.ResolveRunTask(taskCtx, ref, req.RunID)
 	}
 	children := &hostsupervisor.RunChildren{Dispatcher: &childDispatcher, RenewGrant: h.Authority.RenewDerivedGuestGrant}
+	defer children.Close()
 	runCtx := transport.WithTaskStartHandler(ctx, func(taskCtx context.Context, taskID string, taskReq substrate.ExecRequest, identity substrate.OperationIdentity) (substrate.ExecutionHandle, error) {
 		parent, ok := transport.ParentExecutionGrantFromContext(taskCtx)
 		if !ok {
@@ -183,7 +189,7 @@ func (h *HostRunExecutor) withRunSSH(ctx context.Context, run hostsupervisor.Run
 		if err != nil {
 			return empty, err
 		}
-		if err := run.ValidateChildTarget(ref); err != nil {
+		if err := h.validateRunSSHTarget(taskCtx, run, ref, request); err != nil {
 			return empty, err
 		}
 		target, err := h.Resolver.ResolveRunTask(taskCtx, ref, run.RunID)
@@ -222,4 +228,34 @@ func (h *HostRunExecutor) withRunSSH(ctx context.Context, run hostsupervisor.Run
 		}
 		return result, err
 	})
+}
+
+func (h *HostRunExecutor) validateRunSSHTarget(ctx context.Context, run hostsupervisor.RunRequest, ref hostsupervisor.TargetRef, request substrate.SSHAccessMutation) error {
+	target, err := address.Parse(run.Target)
+	if err != nil || target.Type != "sysbox_ssh_access" {
+		return run.ValidateChildTarget(ref)
+	}
+	if run.Action != "apply" || request.Config.AccessID != target.Name || ref.Topology != run.Topology || ref.Scope.TopologyUID != run.TopologyUID {
+		return fmt.Errorf("SSH mutation outside selected resource")
+	}
+	provider, ok := h.Bridge.(ActionRepositoryProvider)
+	if !ok {
+		return fmt.Errorf("SSH target requires the action repository")
+	}
+	repo, err := provider.ActionRepository(run.Topology)
+	if err != nil {
+		return err
+	}
+	actions, err := repo.LoadActions(ctx, run.Topology)
+	if err != nil {
+		return err
+	}
+	for _, action := range actions {
+		if action.ID == request.ID && action.RunID == run.RunID && action.Resource.String() == target.String() && action.OwnerUID == run.TopologyUID {
+			// The resource engine holds execution exclusion and resolves this
+			// action's node from canonical state; workers cannot supply a callback.
+			return nil
+		}
+	}
+	return fmt.Errorf("SSH mutation has no matching selected action")
 }

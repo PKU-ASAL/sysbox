@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/oslab/sysbox/pkg/address"
-
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 )
@@ -32,8 +34,14 @@ func (s *Server) handleListResources(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) authoritativeTopologyHealth(ctx context.Context, topology string, st *state.State) controlplane.TopologyHealth {
+func (s *Server) authoritativeTopologyHealth(ctx context.Context, topology string, st *state.State) model.TopologyHealth {
 	projection, projectionErr := s.apiStore.LoadResourceProjection(ctx, topology)
+	if projectionErr == nil && projection != nil && !controlplane.FreshHostObservation(projection.ObservedAt, time.Now()) {
+		if st == nil {
+			return model.TopologyHealth{Status: model.ResourceHealthUnknown}
+		}
+		return topologyHealthFromResources(pendingStateResources(st))
+	}
 	usesVM := stateHasVM(st) || (projectionErr == nil && projectionHasVM(projection))
 	if usesVM {
 		// VM agent observations can outlive a guest/agent restart. Trust only a snapshot
@@ -51,7 +59,7 @@ func (s *Server) authoritativeTopologyHealth(ctx context.Context, topology strin
 			}
 			return topologyHealthFromResources(pendingStateResources(st))
 		}
-		return runtime.EvaluateTopologyHealth(ctx, st)
+		return runtime.EvaluateTopologyHealth(ctx, st, driver.DefaultRegistry)
 	}
 
 	// Keep the original Docker health projection semantics unchanged.
@@ -64,9 +72,9 @@ func (s *Server) authoritativeTopologyHealth(ctx context.Context, topology strin
 		}
 	}
 	if st == nil {
-		return controlplane.TopologyHealth{Status: controlplane.ResourceHealthUnknown}
+		return model.TopologyHealth{Status: model.ResourceHealthUnknown}
 	}
-	return runtime.EvaluateTopologyHealth(ctx, st)
+	return runtime.EvaluateTopologyHealth(ctx, st, driver.DefaultRegistry)
 }
 
 func stateHasVM(st *state.State) bool {
@@ -85,7 +93,7 @@ func projectionHasVM(projection *controlplane.ResourceProjection) bool {
 	if projection == nil {
 		return false
 	}
-	for _, resource := range append(append([]controlplane.ResourceHealth{}, projection.Resources...), projection.Health.Resources...) {
+	for _, resource := range append(append([]model.ResourceHealth{}, projection.Resources...), projection.Health.Resources...) {
 		if resource.Provider == "firecracker" || resource.Provider == "libvirt" {
 			return true
 		}
@@ -93,11 +101,11 @@ func projectionHasVM(projection *controlplane.ResourceProjection) bool {
 	return false
 }
 
-func resourceProjectionMatchesState(proj *controlplane.ResourceProjection, resources []controlplane.ResourceHealth, st *state.State) bool {
+func resourceProjectionMatchesState(proj *controlplane.ResourceProjection, resources []model.ResourceHealth, st *state.State) bool {
 	if proj.Serial != st.Meta.Serial || len(resources) != len(st.Resources) {
 		return false
 	}
-	byID := make(map[string]controlplane.ResourceHealth, len(resources))
+	byID := make(map[string]model.ResourceHealth, len(resources))
 	for _, resource := range resources {
 		if _, duplicate := byID[resource.Resource]; duplicate {
 			return false
@@ -135,39 +143,39 @@ func stateResourceExternalID(resource state.Resource) string {
 	return ""
 }
 
-func pendingStateResources(st *state.State) []controlplane.ResourceHealth {
-	out := make([]controlplane.ResourceHealth, 0, len(st.Resources))
+func pendingStateResources(st *state.State) []model.ResourceHealth {
+	out := make([]model.ResourceHealth, 0, len(st.Resources))
 	for _, resource := range st.Resources {
-		out = append(out, controlplane.ResourceHealth{
+		out = append(out, model.ResourceHealth{
 			Resource: resource.Address.String(), Type: resource.Address.Type,
 			Name: resource.Address.Name, Provider: resource.Driver,
-			Status:   controlplane.ResourceHealthUnknown,
+			Status:   model.ResourceHealthUnknown,
 			Reason:   "waiting for an agent observation matching current state",
-			Decision: controlplane.RecoveryDecisionUnknown,
+			Decision: model.RecoveryDecisionUnknown,
 		})
 	}
 	return out
 }
 
-func topologyHealthFromResources(resources []controlplane.ResourceHealth) controlplane.TopologyHealth {
-	out := controlplane.TopologyHealth{
-		Status:    controlplane.ResourceHealthHealthy,
-		Resources: append([]controlplane.ResourceHealth{}, resources...),
+func topologyHealthFromResources(resources []model.ResourceHealth) model.TopologyHealth {
+	out := model.TopologyHealth{
+		Status:    model.ResourceHealthHealthy,
+		Resources: append([]model.ResourceHealth{}, resources...),
 	}
 	for _, resource := range resources {
 		switch resource.Status {
-		case controlplane.ResourceHealthHealthy:
+		case model.ResourceHealthHealthy:
 			out.Healthy++
-		case controlplane.ResourceHealthDrifted:
+		case model.ResourceHealthDrifted:
 			out.Drifted++
 		default:
 			out.Unknown++
 		}
 	}
 	if out.Drifted > 0 {
-		out.Status = controlplane.ResourceHealthDrifted
+		out.Status = model.ResourceHealthDrifted
 	} else if out.Unknown > 0 {
-		out.Status = controlplane.ResourceHealthUnknown
+		out.Status = model.ResourceHealthUnknown
 	}
 	return out
 }
@@ -209,7 +217,7 @@ func (s *Server) handleGetResourceHealth(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, runtime.EvaluateResourceHealth(r.Context(), res))
+	writeJSON(w, http.StatusOK, runtime.EvaluateResourceHealth(r.Context(), res, driver.DefaultRegistry))
 }
 
 func validateResourceSegment(resource string) error {

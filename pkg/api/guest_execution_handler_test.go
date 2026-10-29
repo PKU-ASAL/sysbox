@@ -82,6 +82,8 @@ func TestGuestExecutionHTTPRejectsInvalidDeniedAndUnknown(t *testing.T) {
 
 func TestLocalExecutionBridgeDiscoversStateTopology(t *testing.T) {
 	s := guestExecutionTestServer(t)
-	bridge := NewExecutionBridge(s.cfg)
+	bridge, err := NewExecutionBridge(s.cfg)
+	requireNoError(t, err)
+	t.Cleanup(func() { _ = bridge.Close() })
 	require.Contains(t, bridge.Topologies(context.Background()), "lab")
 }

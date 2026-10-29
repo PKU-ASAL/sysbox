@@ -8,11 +8,10 @@ import (
 	"github.com/hashicorp/hcl/v2"
 
 	"github.com/oslab/sysbox/pkg/address"
-
 	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
@@ -29,10 +28,10 @@ func (NetworkResourceHandler) Schema() ResourceSchema {
 	return ResourceSchemaFor("sysbox_network")
 }
 
-func (NetworkResourceHandler) Read(ctx context.Context, current state.Resource) (ResourceReadResult, error) {
+func (NetworkResourceHandler) Read(ctx context.Context, current state.Resource, providers *driver.Registry) (ResourceReadResult, error) {
 	result := resourceReadOK(current)
 	if current.IsNAT() {
-		networkDriver, err := driver.DefaultRegistry.RequireNetwork(current.Driver)
+		networkDriver, err := providers.RequireNetwork(current.Driver)
 		if err != nil {
 			return ResourceReadResult{Status: state.ResourceUnknown}, err
 		}
@@ -53,10 +52,10 @@ func (NetworkResourceHandler) Read(ctx context.Context, current state.Resource) 
 			result.Status = state.ResourceUnknown
 			return result, fmt.Errorf("managed network identity conflict")
 		}
-		result.Checks = map[string]controlplane.ResourceCheckHealth{"docker_network": {OK: true}}
+		result.Checks = map[string]model.ResourceCheckHealth{"docker_network": {OK: true}}
 		return result, nil
 	}
-	linuxNetwork, err := driver.DefaultRegistry.RequireLinuxNetwork("network")
+	linuxNetwork, err := providers.RequireLinuxNetwork("network")
 	if err != nil {
 		result.Status = state.ResourceUnknown
 		return result, err
@@ -73,7 +72,7 @@ func (NetworkResourceHandler) Read(ctx context.Context, current state.Resource) 
 		return ResourceReadResult{Status: state.ResourceUnknown, Resource: current}, err
 	}
 	result.Reason = observation.Reason
-	result.Checks = map[string]controlplane.ResourceCheckHealth{"network": {OK: observation.Healthy, Reason: observation.Reason}}
+	result.Checks = map[string]model.ResourceCheckHealth{"network": {OK: observation.Healthy, Reason: observation.Reason}}
 	if !observation.Exists {
 		result.Status = state.ResourceAbsent
 	} else if !observation.Healthy {
@@ -82,7 +81,7 @@ func (NetworkResourceHandler) Read(ctx context.Context, current state.Resource) 
 	return result, nil
 }
 
-func (NetworkResourceHandler) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
+func (NetworkResourceHandler) PlanDiff(desired *graph.Node, current *state.Resource) (model.PlannedChange, error) {
 	return planDiffByDesiredHash(desired, current)
 }
 
@@ -109,7 +108,7 @@ func (NetworkResourceHandler) Create(ctx context.Context, pc *ProviderContext, n
 	if err != nil {
 		return state.Resource{}, err
 	}
-	linuxNetwork, err := driver.DefaultRegistry.RequireLinuxNetwork("network")
+	linuxNetwork, err := pc.exec.providers.RequireLinuxNetwork("network")
 	if err != nil {
 		return state.Resource{}, err
 	}
@@ -164,7 +163,7 @@ func (NetworkResourceHandler) Create(ctx context.Context, pc *ProviderContext, n
 // Currently Docker is the only substrate that supports managed networks.
 func createNATNetwork(ctx context.Context, pc *ProviderContext, n *graph.Node, cfg *config.NetworkConfig) (state.Resource, error) {
 	cfg.ExposeBridge = cfg.ExposeBridge || requiresManagedBridge(pc.exec.graph, n.Address)
-	networkDriver, err := driver.DefaultRegistry.RequireNetwork("docker")
+	networkDriver, err := pc.exec.providers.RequireNetwork("docker")
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("nat network requires docker substrate: %w", err)
 	}
@@ -212,7 +211,7 @@ func createNATNetwork(ctx context.Context, pc *ProviderContext, n *graph.Node, c
 
 func (NetworkResourceHandler) Delete(ctx context.Context, pc *ProviderContext, r state.Resource) error {
 	if r.IsNAT() {
-		networkDriver, err := driver.DefaultRegistry.RequireNetwork("docker")
+		networkDriver, err := pc.exec.providers.RequireNetwork("docker")
 		if err != nil {
 			return err
 		}
@@ -236,7 +235,7 @@ func (NetworkResourceHandler) Delete(ctx context.Context, pc *ProviderContext, r
 	}
 
 	nsName := r.Str("netns")
-	linuxNetwork, err := driver.DefaultRegistry.RequireLinuxNetwork("network")
+	linuxNetwork, err := pc.exec.providers.RequireLinuxNetwork("network")
 	if err != nil {
 		return err
 	}
@@ -281,7 +280,7 @@ func isolatedNetworkSpec(resource state.Resource) driver.IsolatedNetworkSpec {
 		RootRoutes:   rootRoutes,
 	}
 }
-func (NetworkResourceHandler) RequiredCapabilities(node *graph.Node) ([]CapabilityRequirement, error) {
+func (NetworkResourceHandler) RequiredCapabilities(node *graph.Node, providers *driver.Registry) ([]CapabilityRequirement, error) {
 	cfg, ok := node.Data.(*config.NetworkConfig)
 	if !ok {
 		return nil, nil
@@ -303,7 +302,7 @@ func gatewayCIDR(cidr string) (string, error) {
 	return fmt.Sprintf("%s/%d", address.String(), ones), nil
 }
 
-func (NetworkResourceHandler) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext) (any, []address.Address, error) {
+func (NetworkResourceHandler) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext, providers *driver.Registry) (any, []address.Address, error) {
 	cfg := &config.NetworkConfig{}
 	if err := config.DecodeResource(&r, cfg, ctx); err != nil {
 		return nil, nil, err

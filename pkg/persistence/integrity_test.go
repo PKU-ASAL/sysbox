@@ -10,11 +10,12 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/oslab/sysbox/pkg/address"
-	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
-	"github.com/stretchr/testify/require"
 )
 
 func TestDecodeRejectsCorruptAggregateContents(t *testing.T) {
@@ -42,7 +43,7 @@ func TestDecodeRejectsCorruptAggregateContents(t *testing.T) {
 			a.Serial = 1
 			res := state.Resource{Address: address.Resource("sysbox_node", "web"), OwnerUID: a.State.TopologyUID, ResourceUID: "web-uid", Generation: 1}
 			a.State.Resources = []state.Resource{res}
-			a.Actions["a"] = runtime.ActionRecord{ID: "a", Revision: 2, Topology: "lab", RunID: "run", OwnerUID: a.State.TopologyUID, ResourceUID: res.ResourceUID, Resource: res.Address, Generation: 1, Action: controlplane.PlanActionCreate, Status: runtime.ActionSucceeded, Candidate: &res, EffectComplete: true}
+			a.Actions["a"] = runtime.ActionRecord{ID: "a", Revision: 2, Topology: "lab", RunID: "run", OwnerUID: a.State.TopologyUID, ResourceUID: res.ResourceUID, Resource: res.Address, Generation: 1, Action: model.PlanActionCreate, Status: runtime.ActionSucceeded, Candidate: &res, EffectComplete: true}
 			raw, err := json.Marshal(a)
 			require.NoError(t, err)
 			_, err = decodeAggregate(raw)
@@ -144,7 +145,7 @@ func TestOutcomeCannotDeleteAnotherGeneration(t *testing.T) {
 	res := state.Resource{Address: address.Resource("sysbox_node", "web"), OwnerUID: st.TopologyUID, ResourceUID: "web-uid", Generation: 1, ExternalID: "old"}
 	st.Resources = []state.Resource{res}
 	require.NoError(t, state.NewManagerWithBackend(repo.StateBackend("lab")).Save(st))
-	a := runtime.ActionRecord{ID: "delete", Topology: "lab", RunID: "run", Resource: res.Address, OwnerUID: res.OwnerUID, ResourceUID: res.ResourceUID, Generation: 1, StateSerial: 1, ExpectedSerial: 1, Candidate: &res, Action: controlplane.PlanActionDelete, Status: runtime.ActionIntentCommitted}
+	a := runtime.ActionRecord{ID: "delete", Topology: "lab", RunID: "run", Resource: res.Address, OwnerUID: res.OwnerUID, ResourceUID: res.ResourceUID, Generation: 1, StateSerial: 1, ExpectedSerial: 1, Candidate: &res, Action: model.PlanActionDelete, Status: runtime.ActionIntentCommitted}
 	require.NoError(t, repo.CommitActionIntent(ctx, a))
 	// Simulate an externally restored aggregate. Serial alone cannot establish
 	// that the resource is still the one this deletion was authorized for.
@@ -156,7 +157,7 @@ func TestOutcomeCannotDeleteAnotherGeneration(t *testing.T) {
 	a.Revision = 1
 	a.Status = runtime.ActionSucceeded
 	a.EffectComplete = true
-	err = repo.CommitActionOutcome(ctx, a, &runtime.StatePatch{Resource: res.Address.String(), Action: controlplane.PlanActionDelete, Op: runtime.StatePatchDelete})
+	err = repo.CommitActionOutcome(ctx, a, &runtime.StatePatch{Resource: res.Address.String(), Action: model.PlanActionDelete, Op: runtime.StatePatchDelete})
 	require.ErrorIs(t, err, ErrConflict)
 	after, err := repo.LoadState(ctx, "lab")
 	require.NoError(t, err)

@@ -2,8 +2,9 @@ package runtime
 
 import (
 	"fmt"
-	"github.com/oslab/sysbox/pkg/controlplane"
+
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/state"
 )
 
@@ -15,7 +16,7 @@ type planBinding struct {
 
 func (p *Plan) clone() *Plan {
 	copy := *p
-	copy.Actions = append([]controlplane.PlannedChange(nil), p.Actions...)
+	copy.Actions = append([]model.PlannedChange(nil), p.Actions...)
 	return &copy
 }
 func (p *Plan) bind(g *graph.Graph, st *state.State) error {

@@ -26,32 +26,51 @@ func observationKey(agent, kind string) string {
 }
 
 func (r *ExecutionGrantRepository) PublishObservation(ctx context.Context, agent, session, kind string, sequence uint64, data json.RawMessage) error {
-	if agent == "" || session == "" || kind == "" || sequence == 0 || !json.Valid(data) || len(data) > 8<<20 {
+	return r.PublishObservations(ctx, []ExecutionObservation{{AgentID: agent, SessionID: session, Kind: kind, Sequence: sequence, Data: data}})
+}
+
+// PublishObservations commits one host snapshot atomically, including inventory
+// and every topology projection. A partial response can safely replay it.
+func (r *ExecutionGrantRepository) PublishObservations(ctx context.Context, records []ExecutionObservation) error {
+	if len(records) == 0 {
 		return ErrInvalidRecord
 	}
 	return r.update(ctx, func(a *executionAuthority) error {
-		if a.Sessions[agent].ID != session {
-			return ErrConflict
-		}
 		if a.Observations == nil {
 			a.Observations = map[string]ExecutionObservation{}
 		}
-		key := observationKey(agent, kind)
-		if current, exists := a.Observations[key]; exists && current.SessionID == session {
-			if sequence < current.Sequence {
+		seen := map[string]bool{}
+		for _, record := range records {
+			if record.AgentID == "" || record.SessionID == "" || record.Kind == "" || record.Sequence == 0 || !json.Valid(record.Data) || len(record.Data) > 8<<20 {
+				return ErrInvalidRecord
+			}
+			if a.Sessions[record.AgentID].ID != record.SessionID {
 				return ErrConflict
 			}
-			if sequence == current.Sequence {
-				if string(current.Data) == string(data) {
-					return nil
+			key := observationKey(record.AgentID, record.Kind)
+			if seen[key] {
+				return ErrInvalidRecord
+			}
+			seen[key] = true
+			if current, exists := a.Observations[key]; exists && current.SessionID == record.SessionID {
+				if record.Sequence < current.Sequence {
+					return ErrConflict
 				}
-				return ErrConflict
+				if record.Sequence == current.Sequence {
+					if string(current.Data) != string(record.Data) {
+						return ErrConflict
+					}
+					continue
+				}
 			}
+			record.RecordedAt = a.ObservedAt
+			record.Data = append(json.RawMessage(nil), record.Data...)
+			a.Observations[key] = record
 		}
-		a.Observations[key] = ExecutionObservation{AgentID: agent, SessionID: session, Kind: kind, Sequence: sequence, RecordedAt: a.ObservedAt, Data: append(json.RawMessage(nil), data...)}
 		return nil
 	})
 }
+
 func (r *ExecutionGrantRepository) ReadObservation(ctx context.Context, agent, kind string) (*ExecutionObservation, error) {
 	var result ExecutionObservation
 	err := r.read(ctx, func(a *executionAuthority) error {

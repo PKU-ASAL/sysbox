@@ -4,16 +4,18 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/json"
 	"testing"
 	"time"
 
-	"encoding/json"
+	"github.com/stretchr/testify/require"
+
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
-	"github.com/stretchr/testify/require"
 )
 
 func TestAdoptionDispositionAuthorityPreservesUnknownAndRequiresDecision(t *testing.T) {
@@ -31,7 +33,7 @@ func testAdoptionDispositionWithAction(t *testing.T, mode string) {
 	refs, err := repo.LoadGCReferences(ctx, "lab")
 	require.NoError(t, err)
 	adopt := controlplane.AdoptionRequest{ID: "adopt", Topology: "lab", TopologyUID: refs.TopologyUID, Address: "sysbox_node.test", Provider: "libvirt", AgentID: "agent", ExternalID: "external", ResourceUID: "resource", Generation: 1, Evidence: substrate.AdoptionEvidence{Provider: "libvirt", ExternalID: "external", Fingerprint: "before"}}
-	action := runtime.ActionRecord{ID: "old-action", RunID: adopt.ID, Topology: "lab", Resource: address.Resource("sysbox_node", "test"), Action: controlplane.PlanActionAdopt, Status: runtime.ActionIntentCommitted, OwnerUID: adopt.TopologyUID, ResourceUID: adopt.ResourceUID, Generation: 1, DesiredDigest: "original", Candidate: &state.Resource{Address: address.Resource("sysbox_node", "test"), Driver: "libvirt", ExternalID: adopt.ExternalID, OwnerUID: adopt.TopologyUID, ResourceUID: adopt.ResourceUID, Generation: 1}}
+	action := runtime.ActionRecord{ID: "old-action", RunID: adopt.ID, Topology: "lab", Resource: address.Resource("sysbox_node", "test"), Action: model.PlanActionAdopt, Status: runtime.ActionIntentCommitted, OwnerUID: adopt.TopologyUID, ResourceUID: adopt.ResourceUID, Generation: 1, DesiredDigest: "original", Candidate: &state.Resource{Address: address.Resource("sysbox_node", "test"), Driver: "libvirt", ExternalID: adopt.ExternalID, OwnerUID: adopt.TopologyUID, ResourceUID: adopt.ResourceUID, Generation: 1}}
 	require.NoError(t, repo.CommitActionIntent(ctx, action))
 	original, err := repo.LoadActions(ctx, "lab")
 	require.NoError(t, err)

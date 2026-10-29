@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/runtime"
 )
 
@@ -45,7 +46,7 @@ func ResetFailureEvidence(execution, original *controlplane.Run, actions []runti
 			}
 			continue
 		}
-		if action.Topology != original.Topology || action.Action != controlplane.PlanActionReset || !action.RunQueuedAt.Equal(original.QueuedAt) || action.RunRevision != original.Revision || !action.ResetContinuationSafe() {
+		if action.Topology != original.Topology || action.Action != model.PlanActionReset || !action.RunQueuedAt.Equal(original.QueuedAt) || action.RunRevision != original.Revision || !action.ResetContinuationSafe() {
 			return nil, fmt.Errorf("reset effect outcome remains uncertain")
 		}
 		found = true

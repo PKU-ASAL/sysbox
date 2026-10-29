@@ -2,8 +2,10 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/persistence"
 	"net/http"
 
 	"github.com/oslab/sysbox/pkg/address"
@@ -104,7 +106,7 @@ func (s *Server) handleNodeLifecycle(r *http.Request, operation string, w http.R
 		return
 	}
 
-	op, err := s.nodeOperations().Lifecycle(r.Context(), topology, name, operation, s.requestSubject(r))
+	op, err := s.nodeOperations().Lifecycle(r.Context(), topology, name, operation, r.Header.Get("Idempotency-Key"), s.requestSubject(r))
 	if err != nil {
 		writeError(w, nodeOperationStatus(err), err)
 		return
@@ -194,28 +196,10 @@ func (s *Server) handleSSHAccess(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, op)
 }
 
-func (s *Server) handleAdoptionConfirm(w http.ResponseWriter, r *http.Request) {
-	agentID := r.PathValue("agent")
-	if err := s.verifyAgentRequest(r, agentID); err != nil {
-		writeError(w, http.StatusUnauthorized, err)
-		return
-	}
-	var req controlplane.AdoptionRequest
-	limitBody(w, r)
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	req.AgentID = agentID
-	op, err := s.nodeOperations().AdoptionConfirm(r.Context(), req, s.requestSubject(r))
-	if err != nil {
-		writeError(w, nodeOperationStatus(err), err)
-		return
-	}
-	writeJSON(w, http.StatusAccepted, op)
-}
-
 func nodeOperationStatus(err error) int {
+	if errors.Is(err, persistence.ErrConflict) {
+		return http.StatusConflict
+	}
 	msg := err.Error()
 	switch {
 	case containsAny(msg, "not found"):

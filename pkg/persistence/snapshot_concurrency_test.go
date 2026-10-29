@@ -6,11 +6,12 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/oslab/sysbox/pkg/address"
-	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
-	"github.com/stretchr/testify/require"
 )
 
 func TestConcurrentSnapshotNeverSplitsStateAndJournalAcrossBackends(t *testing.T) {
@@ -31,7 +32,7 @@ func TestConcurrentSnapshotNeverSplitsStateAndJournalAcrossBackends(t *testing.T
 						resource := state.Resource{Address: addr, Driver: "docker", ExternalID: fmt.Sprint(i), OwnerUID: a.State.TopologyUID, ResourceUID: fmt.Sprint(i), Generation: 1}
 						a.State.AddResource(resource)
 						a.Serial++
-						action := runtime.ActionRecord{ID: fmt.Sprintf("action%d", i), Topology: "lab", RunID: "run", Resource: addr, Action: controlplane.PlanActionCreate, Status: runtime.ActionSucceeded, OwnerUID: a.State.TopologyUID, ResourceUID: resource.ResourceUID, Generation: 1, Revision: 1, StateSerial: a.Serial - 1, ExpectedSerial: a.Serial - 1, Candidate: &resource, EffectComplete: true}
+						action := runtime.ActionRecord{ID: fmt.Sprintf("action%d", i), Topology: "lab", RunID: "run", Resource: addr, Action: model.PlanActionCreate, Status: runtime.ActionSucceeded, OwnerUID: a.State.TopologyUID, ResourceUID: resource.ResourceUID, Generation: 1, Revision: 1, StateSerial: a.Serial - 1, ExpectedSerial: a.Serial - 1, Candidate: &resource, EffectComplete: true}
 						a.Actions[action.ID] = action
 						return nil
 					})

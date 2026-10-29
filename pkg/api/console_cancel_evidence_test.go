@@ -171,7 +171,7 @@ func TestConsoleTransportLossCannotManufactureCompletion(t *testing.T) {
 	}
 }
 
-func TestConsoleCompletionCanFollowCancellationRequest(t *testing.T) {
+func TestConsoleDeliveryCannotConfirmCancellationRequest(t *testing.T) {
 	store := &localAPIStore{runsDir: t.TempDir()}
 	hub := newConsoleSessionHub(store)
 	sess := createConsoleForTest(t, hub)
@@ -185,8 +185,9 @@ func TestConsoleCompletionCanFollowCancellationRequest(t *testing.T) {
 	svc.updateConsoleSessionFromCommandEvent(command, controlplane.AgentCommandEvent{Status: "cancelled", CreatedAt: time.Now().UTC()})
 	current, err = hub.Snapshot(sess.ID)
 	require.NoError(t, err)
-	require.Equal(t, controlplane.ConsoleSessionStatusCancelled, current.Status)
-	require.False(t, current.EndedAt.IsZero())
+	require.Equal(t, controlplane.ConsoleSessionStatusCancelling, current.Status)
+	require.True(t, current.EndedAt.IsZero())
+	require.False(t, current.TerminationConfirmed)
 }
 
 func TestConsoleCancelWakeFailureRetainsCommittedOutbox(t *testing.T) {

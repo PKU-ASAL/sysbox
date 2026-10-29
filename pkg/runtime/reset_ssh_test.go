@@ -4,14 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/driver"
-	"github.com/oslab/sysbox/pkg/substrate"
 	"testing"
 
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/state"
 	"github.com/stretchr/testify/require"
+
+	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/model"
+	"github.com/oslab/sysbox/pkg/state"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 func resetSSHFixture(t *testing.T) (*Executor, ActionRecord, *runtimeSSHConnection) {
@@ -29,7 +30,7 @@ func resetSSHFixture(t *testing.T) (*Executor, ActionRecord, *runtimeSSHConnecti
 			node = r
 		}
 	}
-	record := ActionRecord{ID: "reset", RunID: "run", Topology: pc.exec.topology, Resource: node.Address, Action: controlplane.PlanActionReset, OwnerUID: node.OwnerUID, ResourceUID: node.ResourceUID, Generation: node.Generation + 1, Candidate: &node, Status: ActionUncertain, Phase: "verifying", EffectComplete: true, Revision: 1}
+	record := ActionRecord{ID: "reset", RunID: "run", Topology: pc.exec.topology, Resource: node.Address, Action: model.PlanActionReset, OwnerUID: node.OwnerUID, ResourceUID: node.ResourceUID, Generation: node.Generation + 1, Candidate: &node, Status: ActionUncertain, Phase: "verifying", EffectComplete: true, Revision: 1}
 	require.Equal(t, node.Address.String(), saved.Node)
 	require.NoError(t, pc.exec.pinResetSSH(&record))
 	replacement := cloneResetStateResource(node)
@@ -66,7 +67,7 @@ func TestResetSSHColdRecoveryObservesLostReplyWithoutReplay(t *testing.T) {
 	require.Len(t, conn.calls, 1)
 	require.True(t, record.ResetSSH[0].Started)
 	require.Nil(t, record.ResetSSH[0].Result)
-	cold := NewExecutor(e.graph, e.state)
+	cold := NewExecutor(e.graph, e.state, driver.DefaultRegistry)
 	cold.SetRunContext(e.topology, "continuation")
 	cold.actions = e.actions
 	require.NoError(t, cold.reconcileResetSSH(context.Background(), &record))
@@ -95,7 +96,7 @@ func TestResetSSHDeleteUsesCurrentGenerationAfterAtomicReset(t *testing.T) {
 	e.state.RemoveResource(result.Address)
 	e.state.AddResource(result)
 	e.actions.(*memoryActions).actions = append(e.actions.(*memoryActions).actions, ActionRecord{ID: "original-ssh-create", Resource: result.Address, ResourceUID: result.ResourceUID, Generation: result.Generation - 1, Status: ActionSucceeded})
-	deletion, err := e.newAction(context.Background(), controlplane.PlannedChange{Address: result.Address, Action: controlplane.PlanActionDelete})
+	deletion, err := e.newAction(context.Background(), model.PlannedChange{Address: result.Address, Action: model.PlanActionDelete})
 	require.NoError(t, err)
 	require.Equal(t, result.Generation, deletion.Generation)
 }
@@ -133,13 +134,13 @@ func TestResetSSHDispositionRequiresObservedCommittedDependencies(t *testing.T) 
 	require.NoError(t, err)
 	saved.Handle.NodeID = source.ExternalID
 	previous.Attributes = state.MustAttributes(map[string]any{"ssh_access": saved})
-	old := controlplane.RecoveredResource{ActionID: a.ID, Resource: a.Resource.String(), OwnerUID: a.OwnerUID, ResourceUID: a.ResourceUID, Generation: source.Generation, ExternalID: source.ExternalID, Status: "absent", JournalStatus: string(a.Status), ProviderScope: "local-only", DeleteResidueAbsent: true}
-	o := controlplane.RecoveredResource{ActionID: a.ID, Resource: a.Resource.String(), OwnerUID: a.OwnerUID, ResourceUID: a.ResourceUID, Generation: a.Generation, ExternalID: a.Candidate.ExternalID, Status: "present", JournalStatus: string(a.Status), ProviderScope: "local-only", ResetSource: &old}
+	old := model.RecoveredResource{ActionID: a.ID, Resource: a.Resource.String(), OwnerUID: a.OwnerUID, ResourceUID: a.ResourceUID, Generation: source.Generation, ExternalID: source.ExternalID, Status: "absent", JournalStatus: string(a.Status), ProviderScope: "local-only", DeleteResidueAbsent: true}
+	o := model.RecoveredResource{ActionID: a.ID, Resource: a.Resource.String(), OwnerUID: a.OwnerUID, ResourceUID: a.ResourceUID, Generation: a.Generation, ExternalID: a.Candidate.ExternalID, Status: "present", JournalStatus: string(a.Status), ProviderScope: "local-only", ResetSource: &old}
 	dep := a.ResetSSH[0]
 	r := dep.Result
-	child := controlplane.RecoveredResource{ActionID: dep.ActionID, Resource: r.Address.String(), OwnerUID: r.OwnerUID, ResourceUID: r.ResourceUID, Generation: r.Generation, ExternalID: r.ExternalID, Status: "present", JournalStatus: string(a.Status)}
-	o.ResetSSH = []controlplane.RecoveredResource{child}
-	p := PlanIntentDisposition(a, []controlplane.RecoveredResource{o})
+	child := model.RecoveredResource{ActionID: dep.ActionID, Resource: r.Address.String(), OwnerUID: r.OwnerUID, ResourceUID: r.ResourceUID, Generation: r.Generation, ExternalID: r.ExternalID, Status: "present", JournalStatus: string(a.Status)}
+	o.ResetSSH = []model.RecoveredResource{child}
+	p := PlanIntentDisposition(a, []model.RecoveredResource{o})
 	require.Equal(t, "retain-managed", p.ResourceDecision)
 	require.Equal(t, []string{"effect_stop_proof_required"}, p.Blockers)
 	for _, variant := range []string{"missing", "unknown", "old-source", "foreign", "duplicate", "no-result", "previous-attachment", "previous-obligation", "result-obligation"} {
@@ -147,7 +148,7 @@ func TestResetSSHDispositionRequiresObservedCommittedDependencies(t *testing.T) 
 			aa := a
 			aa.ResetSSH = append([]ResetSSHDependency(nil), a.ResetSSH...)
 			obs := o
-			obs.ResetSSH = append([]controlplane.RecoveredResource(nil), o.ResetSSH...)
+			obs.ResetSSH = append([]model.RecoveredResource(nil), o.ResetSSH...)
 			oldCopy := old
 			obs.ResetSource = &oldCopy
 			switch variant {
@@ -173,7 +174,7 @@ func TestResetSSHDispositionRequiresObservedCommittedDependencies(t *testing.T) 
 				require.NoError(t, r.RequireRecovery("older", r.ResourceUID, r.Generation))
 				aa.ResetSSH[0].Result = &r
 			}
-			require.NotEqual(t, "retain-managed", PlanIntentDisposition(aa, []controlplane.RecoveredResource{obs}).ResourceDecision)
+			require.NotEqual(t, "retain-managed", PlanIntentDisposition(aa, []model.RecoveredResource{obs}).ResourceDecision)
 		})
 	}
 }
@@ -218,7 +219,7 @@ func TestResetSSHDispositionObserverUsesReplacementForChildReads(t *testing.T) {
 	require.NoError(t, a.Candidate.SetProviderState(json.RawMessage(`{}`)))
 	repo := &memoryActions{state: e.state, actions: []ActionRecord{a}}
 	before, _ := json.Marshal(e.state)
-	_, items, err := ObserveRunActions(context.Background(), repo, "lab", a.RunID)
+	_, items, err := ObserveRunActions(context.Background(), repo, "lab", a.RunID, driver.DefaultRegistry)
 	require.NoError(t, err)
 	require.Len(t, items, 1)
 	require.NotNil(t, items[0].ResetSource)
@@ -242,14 +243,14 @@ func TestResetSSHDispositionRecoversLostResultWithoutChangingJournal(t *testing.
 	committed := substrate.SSHAccessResult{Handle: saved.Handle, Present: true}
 	dep.Result = nil
 	before, _ := json.Marshal(a)
-	child := controlplane.RecoveredResource{ActionID: dep.ActionID, Resource: dep.Previous.Address.String(), OwnerUID: a.OwnerUID, ResourceUID: dep.Previous.ResourceUID, Generation: dep.Previous.Generation + 1, ExternalID: dep.Config.AccessID, Status: "present", JournalStatus: string(a.Status), SSHCommitted: &committed}
-	observation := controlplane.RecoveredResource{ActionID: a.ID, ResetSSH: []controlplane.RecoveredResource{child}}
+	child := model.RecoveredResource{ActionID: dep.ActionID, Resource: dep.Previous.Address.String(), OwnerUID: a.OwnerUID, ResourceUID: dep.Previous.ResourceUID, Generation: dep.Previous.Generation + 1, ExternalID: dep.Config.AccessID, Status: "present", JournalStatus: string(a.Status), SSHCommitted: &committed}
+	observation := model.RecoveredResource{ActionID: a.ID, ResetSSH: []model.RecoveredResource{child}}
 	for _, variant := range []string{"exact", "missing", "foreign-action", "foreign-node", "digest", "not-present", "duplicate", "not-started", "changed-config"} {
 		t.Run(variant, func(t *testing.T) {
 			aa := a
 			aa.ResetSSH = append([]ResetSSHDependency(nil), a.ResetSSH...)
 			o := observation
-			o.ResetSSH = append([]controlplane.RecoveredResource(nil), observation.ResetSSH...)
+			o.ResetSSH = append([]model.RecoveredResource(nil), observation.ResetSSH...)
 			r := committed
 			o.ResetSSH[0].SSHCommitted = &r
 			switch variant {
@@ -270,7 +271,7 @@ func TestResetSSHDispositionRecoversLostResultWithoutChangingJournal(t *testing.
 			case "changed-config":
 				aa.ResetSSH[0].Config.Port++
 			}
-			resolved, err := ResetSSHWithObservedResults(aa, []controlplane.RecoveredResource{o})
+			resolved, err := ResetSSHWithObservedResults(aa, []model.RecoveredResource{o})
 			if variant != "exact" {
 				require.Error(t, err)
 				return
@@ -310,7 +311,7 @@ func TestResetSSHDispositionObserverDiscoversLostCommittedResult(t *testing.T) {
 	a.ResetSSH[0].Result = nil
 	repo := &memoryActions{state: e.state, actions: []ActionRecord{a}}
 	before, _ := json.Marshal(e.state)
-	_, items, err := ObserveRunActions(context.Background(), repo, "lab", a.RunID)
+	_, items, err := ObserveRunActions(context.Background(), repo, "lab", a.RunID, driver.DefaultRegistry)
 	require.NoError(t, err)
 	require.Len(t, items, 1)
 	require.NotNil(t, items[0].ResetSource)
@@ -337,10 +338,10 @@ func TestResetSSHUnknownDispositionRetainsRebuildObligation(t *testing.T) {
 	require.NoError(t, err)
 	saved.Handle.NodeID = source.ExternalID
 	dep.Previous.Attributes = state.MustAttributes(map[string]any{"ssh_access": saved})
-	old := controlplane.RecoveredResource{ActionID: a.ID, Resource: a.Resource.String(), OwnerUID: a.OwnerUID, ResourceUID: a.ResourceUID, Generation: a.Generation - 1, ExternalID: source.ExternalID, Status: "absent", JournalStatus: string(a.Status), ProviderScope: "local-only", DeleteResidueAbsent: true}
-	child := controlplane.RecoveredResource{ActionID: dep.ActionID, Resource: dep.Previous.Address.String(), OwnerUID: a.OwnerUID, ResourceUID: dep.Previous.ResourceUID, Generation: dep.Previous.Generation + 1, ExternalID: dep.Config.AccessID, Status: "unknown", JournalStatus: string(a.Status)}
-	o := controlplane.RecoveredResource{ActionID: a.ID, Resource: a.Resource.String(), OwnerUID: a.OwnerUID, ResourceUID: a.ResourceUID, Generation: a.Generation, ExternalID: a.Candidate.ExternalID, Status: "present", JournalStatus: string(a.Status), ProviderScope: "local-only", ResetSource: &old, ResetSSH: []controlplane.RecoveredResource{child}}
-	p := PlanIntentDisposition(a, []controlplane.RecoveredResource{o})
+	old := model.RecoveredResource{ActionID: a.ID, Resource: a.Resource.String(), OwnerUID: a.OwnerUID, ResourceUID: a.ResourceUID, Generation: a.Generation - 1, ExternalID: source.ExternalID, Status: "absent", JournalStatus: string(a.Status), ProviderScope: "local-only", DeleteResidueAbsent: true}
+	child := model.RecoveredResource{ActionID: dep.ActionID, Resource: dep.Previous.Address.String(), OwnerUID: a.OwnerUID, ResourceUID: dep.Previous.ResourceUID, Generation: dep.Previous.Generation + 1, ExternalID: dep.Config.AccessID, Status: "unknown", JournalStatus: string(a.Status)}
+	o := model.RecoveredResource{ActionID: a.ID, Resource: a.Resource.String(), OwnerUID: a.OwnerUID, ResourceUID: a.ResourceUID, Generation: a.Generation, ExternalID: a.Candidate.ExternalID, Status: "present", JournalStatus: string(a.Status), ProviderScope: "local-only", ResetSource: &old, ResetSSH: []model.RecoveredResource{child}}
+	p := PlanIntentDisposition(a, []model.RecoveredResource{o})
 	require.Equal(t, "retain-incomplete-reset", p.ResourceDecision)
 	require.Equal(t, []string{"effect_stop_proof_required"}, p.Blockers)
 	for _, variant := range []string{"missing-child", "foreign-child", "source-present", "residue"} {
@@ -349,7 +350,7 @@ func TestResetSSHUnknownDispositionRetainsRebuildObligation(t *testing.T) {
 			oo := o
 			src := old
 			oo.ResetSource = &src
-			oo.ResetSSH = append([]controlplane.RecoveredResource(nil), o.ResetSSH...)
+			oo.ResetSSH = append([]model.RecoveredResource(nil), o.ResetSSH...)
 			switch variant {
 			case "missing-child":
 				oo.ResetSSH = nil
@@ -364,7 +365,7 @@ func TestResetSSHUnknownDispositionRetainsRebuildObligation(t *testing.T) {
 				c.Attachments = []state.Attachment{{}}
 				aa.Candidate = &c
 			}
-			require.NotEqual(t, "retain-incomplete-reset", PlanIntentDisposition(aa, []controlplane.RecoveredResource{oo}).ResourceDecision)
+			require.NotEqual(t, "retain-incomplete-reset", PlanIntentDisposition(aa, []model.RecoveredResource{oo}).ResourceDecision)
 		})
 	}
 }
@@ -383,8 +384,8 @@ func TestResetSSHChangedConfigurationLostResultUsesAdmittedDesiredDigest(t *test
 	committed := substrate.SSHAccessResult{Handle: saved.Handle, Present: true}
 	dep := &a.ResetSSH[0]
 	dep.Result = nil
-	child := controlplane.RecoveredResource{ActionID: dep.ActionID, Resource: dep.Previous.Address.String(), OwnerUID: a.OwnerUID, ResourceUID: dep.Previous.ResourceUID, Generation: dep.Previous.Generation + 1, ExternalID: dep.Config.AccessID, Status: "present", JournalStatus: string(a.Status), SSHCommitted: &committed}
-	resolved, err := ResetSSHWithObservedResults(a, []controlplane.RecoveredResource{{ActionID: a.ID, ResetSSH: []controlplane.RecoveredResource{child}}})
+	child := model.RecoveredResource{ActionID: dep.ActionID, Resource: dep.Previous.Address.String(), OwnerUID: a.OwnerUID, ResourceUID: dep.Previous.ResourceUID, Generation: dep.Previous.Generation + 1, ExternalID: dep.Config.AccessID, Status: "present", JournalStatus: string(a.Status), SSHCommitted: &committed}
+	resolved, err := ResetSSHWithObservedResults(a, []model.RecoveredResource{{ActionID: a.ID, ResetSSH: []model.RecoveredResource{child}}})
 	require.NoError(t, err)
 	require.Equal(t, dep.DesiredDigest, resolved.ResetSSH[0].Result.Str("desired_hash"))
 	require.EqualValues(t, 2222, resolved.ResetSSH[0].Result.Attributes["desired"].(map[string]any)["port"])
@@ -392,6 +393,6 @@ func TestResetSSHChangedConfigurationLostResultUsesAdmittedDesiredDigest(t *test
 	require.Len(t, conn.calls, 1)
 	// A mismatched immutable digest cannot be replaced by the observed config.
 	a.ResetSSH[0].DesiredDigest = "foreign"
-	_, err = ResetSSHWithObservedResults(a, []controlplane.RecoveredResource{{ActionID: a.ID, ResetSSH: []controlplane.RecoveredResource{child}}})
+	_, err = ResetSSHWithObservedResults(a, []model.RecoveredResource{{ActionID: a.ID, ResetSSH: []model.RecoveredResource{child}}})
 	require.Error(t, err)
 }

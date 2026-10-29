@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
@@ -36,9 +36,9 @@ func TestRefreshRecoveryTreatsUnknownAsUnknownNotDrift(t *testing.T) {
 		},
 	})
 
-	require.Equal(t, controlplane.RecoveryDecisionUnknown, plan.Decision,
+	require.Equal(t, model.RecoveryDecisionUnknown, plan.Decision,
 		"an unobservable node must not be marked as drift; drift authorises replacement")
-	require.NotEqual(t, controlplane.RecoveryDecisionMarkDrift, plan.Decision)
+	require.NotEqual(t, model.RecoveryDecisionMarkDrift, plan.Decision)
 	require.Equal(t, "docker daemon unreachable", plan.Reason)
 }
 
@@ -58,7 +58,7 @@ func TestRefreshRecoveryPrefersUnknownOverMissing(t *testing.T) {
 		},
 	})
 
-	require.Equal(t, controlplane.RecoveryDecisionUnknown, plan.Decision,
+	require.Equal(t, model.RecoveryDecisionUnknown, plan.Decision,
 		"a failed probe reports Exists=false as a zero value, not as evidence of absence")
 }
 
@@ -69,13 +69,13 @@ func TestUnknownObservationDoesNotBecomeAReplaceAction(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		status     state.ResourceStatus
-		want       controlplane.PlanActionType
+		want       model.PlanActionType
 		dictates   bool
 		wantReason string
 	}{
-		{name: "unknown refuses", status: state.ResourceUnknown, want: controlplane.PlanActionUnknown, dictates: true},
-		{name: "absent replaces", status: state.ResourceAbsent, want: controlplane.PlanActionReplace, dictates: true},
-		{name: "drifted replaces", status: state.ResourceDrifted, want: controlplane.PlanActionReplace, dictates: true},
+		{name: "unknown refuses", status: state.ResourceUnknown, want: model.PlanActionUnknown, dictates: true},
+		{name: "absent replaces", status: state.ResourceAbsent, want: model.PlanActionReplace, dictates: true},
+		{name: "drifted replaces", status: state.ResourceDrifted, want: model.PlanActionReplace, dictates: true},
 		// A degraded resource stays present; health surfaces the degradation
 		// rather than planning a replacement.
 		{name: "degraded keeps its action", status: state.ResourceDegraded, dictates: false},
@@ -87,7 +87,7 @@ func TestUnknownObservationDoesNotBecomeAReplaceAction(t *testing.T) {
 			if tc.dictates {
 				require.Equal(t, tc.want, action,
 					"observed status %q must map to %q", tc.status, tc.want)
-				require.NotEqual(t, controlplane.PlanActionReplace, controlplane.PlanActionUnknown,
+				require.NotEqual(t, model.PlanActionReplace, model.PlanActionUnknown,
 					"guard against the two verdicts collapsing into one constant")
 			}
 		})

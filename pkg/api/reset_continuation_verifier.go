@@ -18,7 +18,7 @@ func (b *ExecutionBridge) VerifyResetContinuation(ctx context.Context, run, pare
 	if run == nil || parent == nil || run.ParentID != parent.ID || run.Topology != parent.Topology || run.Op != "reset" || parent.Op != "reset" {
 		return persistence.ErrConflict
 	}
-	original, err := b.server.apiStore.GetRun(ctx, parent.ID)
+	original, err := b.store.GetRun(ctx, parent.ID)
 	if err != nil {
 		return err
 	}
@@ -26,7 +26,7 @@ func (b *ExecutionBridge) VerifyResetContinuation(ctx context.Context, run, pare
 		return fmt.Errorf("reset continuation requires committed host completion evidence")
 	}
 	proof := original.HostCompletion
-	if err := controlplane.VerifyRunStopReceipt(b.server.grantHostKeys[original.AgentID], proof.Receipt, proof.Evidence); err != nil {
+	if err := controlplane.VerifyRunStopReceipt(b.hostKey(original.AgentID), proof.Receipt, proof.Evidence); err != nil {
 		return err
 	}
 	var observed controlplane.Run
@@ -37,7 +37,7 @@ func (b *ExecutionBridge) VerifyResetContinuation(ctx context.Context, run, pare
 	if grant.Operation != "run_reset" || grant.AgentID != original.AgentID || grant.ParentEpoch != 0 {
 		return persistence.ErrConflict
 	}
-	repo, err := b.server.actionRepository(run.Topology)
+	repo, err := b.actionRepository(run.Topology)
 	if err != nil {
 		return err
 	}
@@ -53,6 +53,6 @@ func (b *ExecutionBridge) VerifyResetContinuation(ctx context.Context, run, pare
 		return err
 	}
 	hash := sha256.Sum256(raw)
-	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: b.server.apiStore})
+	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: b.store})
 	return authority.RequireHostStopped(ctx, grant, hex.EncodeToString(hash[:]))
 }

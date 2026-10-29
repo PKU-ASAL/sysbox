@@ -76,8 +76,8 @@ func TestClaimBodyBoundedBeforeSignature(t *testing.T) {
 	require.NotEqual(t, 200, rec.Code)
 }
 
-func TestDispatchCannotInjectCompletionProjection(t *testing.T) {
-	proof := &controlplane.Projection{Serial: 999}
-	require.Error(t, validateRunDispatchPayload(RunDispatchRequest{Run: controlplane.Run{CompletionProjection: proof}}))
-	require.Error(t, validateRunDispatchPayload(RunDispatchRequest{Command: controlplane.AgentCommand{Run: &controlplane.Run{CompletionProjection: proof}}}))
+func TestDispatchCannotInjectHostCompletionProof(t *testing.T) {
+	proof := &controlplane.RunHostCompletionProof{}
+	require.Error(t, validateRunDispatchPayload(RunDispatchRequest{Run: controlplane.Run{HostCompletion: proof}}))
+	require.Error(t, validateRunDispatchPayload(RunDispatchRequest{Command: controlplane.AgentCommand{Run: &controlplane.Run{HostCompletion: proof}}}))
 }

@@ -55,7 +55,12 @@ func (s *Substrate) HostFenceDeletionAbsent(ctx context.Context, h substrate.Nod
 		return fmt.Errorf("Firecracker generation directory identity conflict")
 	}
 	expectedSocket := ownedUnixSocketPath(dir, h.ID, "firecracker.sock", "fc")
-	if hs.Socket != expectedSocket || hs.VsockUDS != "" && hs.VsockUDS != ownedUnixSocketPath(dir, h.ID, "vsock.sock", "vs") {
+	expectedVsock := ownedUnixSocketPath(dir, h.ID, "vsock.sock", "vs")
+	if hs.JailRoot != "" {
+		expectedSocket = filepath.Join(hs.JailRoot, "run/firecracker.sock")
+		expectedVsock = filepath.Join(hs.JailRoot, "run/vsock.sock")
+	}
+	if hs.Socket != expectedSocket || hs.VsockUDS != "" && hs.VsockUDS != expectedVsock {
 		return fmt.Errorf("Firecracker endpoint identity conflict")
 	}
 	observed, err := s.ObserveNode(ctx, h)
@@ -65,7 +70,7 @@ func (s *Substrate) HostFenceDeletionAbsent(ctx context.Context, h substrate.Nod
 	if observed.Status != substrate.NodeStatusMissing {
 		return fmt.Errorf("Firecracker generation residue remains")
 	}
-	for _, path := range []string{dir, hs.Socket, hs.VsockUDS} {
+	for _, path := range []string{dir, hs.Socket, hs.VsockUDS, hs.JailRoot} {
 		if path == "" {
 			continue
 		}

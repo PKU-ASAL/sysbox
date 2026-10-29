@@ -14,12 +14,14 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+	"github.com/stretchr/testify/require"
+
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
-	"github.com/stretchr/testify/require"
 )
 
 type returnedResetBridge struct {
@@ -58,7 +60,7 @@ func TestHostResetFailureUsesReturnedExecutorAndDurablePhases(t *testing.T) {
 			require.NoError(t, mgr.Save(st))
 			repo, err := b.ActionRepository("lab")
 			require.NoError(t, err)
-			a := runtime.ActionRecord{ID: "node-action", Topology: "lab", RunID: run.ID, RunQueuedAt: now, RunRevision: run.Revision, Resource: res.Address, OwnerUID: st.TopologyUID, ResourceUID: res.ResourceUID, Generation: 2, Candidate: &res, StateSerial: st.Meta.Serial, ExpectedSerial: st.Meta.Serial, Action: controlplane.PlanActionReset, Status: runtime.ActionIntentCommitted, Phase: "accepted"}
+			a := runtime.ActionRecord{ID: "node-action", Topology: "lab", RunID: run.ID, RunQueuedAt: now, RunRevision: run.Revision, Resource: res.Address, OwnerUID: st.TopologyUID, ResourceUID: res.ResourceUID, Generation: 2, Candidate: &res, StateSerial: st.Meta.Serial, ExpectedSerial: st.Meta.Serial, Action: model.PlanActionReset, Status: runtime.ActionIntentCommitted, Phase: "accepted"}
 			if phase != "no-action" {
 				require.NoError(t, repo.CommitActionIntent(ctx, a))
 			}

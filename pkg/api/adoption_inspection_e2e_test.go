@@ -8,8 +8,16 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
+	"github.com/stretchr/testify/require"
+
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/agentexec"
 	"github.com/oslab/sysbox/pkg/config"
@@ -18,12 +26,6 @@ import (
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
 	dockerprovider "github.com/oslab/sysbox/pkg/provider/docker"
 	"github.com/oslab/sysbox/pkg/substrate"
-	"github.com/stretchr/testify/require"
-	"net/http/httptest"
-	"os"
-	"path/filepath"
-	"testing"
-	"time"
 )
 
 func TestRemoteDockerAdoptionInspectionE2E(t *testing.T) {
@@ -69,6 +71,7 @@ func TestRemoteDockerAdoptionInspectionE2E(t *testing.T) {
 	host := &hostsupervisor.Server{Socket: socket, GroupID: -1, Adoption: &hostsupervisor.AdoptionCoordinator{Root: private(), IssuerKey: pub, HostKey: hostKey, AgentID: "inspect-agent", HostBootID: "boot", Authorize: authority.Authorize, Report: authority.ReportNodeOperation}, AdoptionInspect: func(ctx context.Context, req controlplane.AdoptionInspectionRequest) (substrate.AdoptionEvidence, error) {
 		return provider.InspectAdoption(ctx, req.ExternalID, substrate.NodeSpec{})
 	}}
+	hostPublicFile := wireTestHostObserver(t, host, cfg, "inspect-agent", []string{"docker"}, hostKey)
 	hostCtx, stopHost := context.WithCancel(ctx)
 	hostDone := make(chan error, 1)
 	go func() { hostDone <- host.Serve(hostCtx) }()
@@ -76,14 +79,11 @@ func TestRemoteDockerAdoptionInspectionE2E(t *testing.T) {
 	require.Eventually(t, func() bool { _, err := os.Stat(socket); return err == nil }, time.Second, 10*time.Millisecond)
 	keyFile := filepath.Join(private(), "issuer.pub")
 	require.NoError(t, os.WriteFile(keyFile, pub, 0600))
-	workerCfg := cfg
-	workerCfg.Paths.RunsDir = private()
-	workerCfg.Paths.WorkspacesDir = private()
-	workerCfg.State.Backend = "sqlite://" + filepath.Join(private(), "worker.db")
 	workerCtx, stopWorker := context.WithCancel(ctx)
 	workerDone := make(chan error, 1)
-	opts := agentexec.Options{ID: "inspect-agent", Secret: "inspect-secret", APIURL: api.URL, Capabilities: []string{"docker"}, PollInterval: 20 * time.Millisecond, ExecutionSessionFile: filepath.Join(private(), "session.json"), ExecutionGrantPublicKeyFile: keyFile, HostSupervisorSocket: socket, RequireHostSupervisor: true}
-	go func() { workerDone <- agentexec.Run(workerCtx, opts, NewExecutionBridge(workerCfg)) }()
+	opts := agentexec.Options{ID: "inspect-agent", Secret: "inspect-secret", APIURL: api.URL, Capabilities: []string{"docker"}, PollInterval: 20 * time.Millisecond, ExecutionSessionFile: filepath.Join(private(), "session.json"), ExecutionGrantPublicKeyFile: keyFile, HostSupervisorSocket: socket}
+	opts.HostPublicKeyFile = hostPublicFile
+	go func() { workerDone <- agentexec.Run(workerCtx, opts) }()
 	defer stopWorker()
 	require.Eventually(t, func() bool {
 		a, err := s.apiStore.GetAgent(ctx, "inspect-agent")
