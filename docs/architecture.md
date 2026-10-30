@@ -357,7 +357,14 @@ Plan 仍是 revision 与 canonical state 的预览，不声称执行 live provid
 Destroy 后 domain 和磁盘目录不存在。错误 namespace 身份删除被拒绝；辅助程序退出时
 子进程停止、锁保持至子进程退出的中断测试通过。该结果属于工作区版本，尚未生成新发布制品。
 
-Firecracker 的正式服务测试因缺少配套 jailer、下载连接失败尚未运行。
+Firecracker/jailer 1.15.1 已取得。正式 systemd 启动发现：测试机 Ubuntu systemd
+255.4-1ubuntu8.18 中，显式 `User=root` 配合 NoNewPrivileges 与 syscall 防护会使
+实际 permitted/effective 集合缺少 CAP_SETUID，尽管 bounding set 包含它。
+普通 shell 的对照测试也能复现，Sysbox 启动前权限就已缺失。
+宿主单元改用系统服务默认 root 身份，保留全部原有防护、空 ambient 集合和 capability 上限。
+修改后实际 CAP_SETUID 恢复；同样 systemd 防护下的真实 KVM 测试通过非 root jailer
+启动、namespace/seccomp/cgroup 隔离、暂停恢复、停止启动及冷清理（39 秒）。
+API Apply 复测受到授权续期和数据库访问超时影响，未知状态记录保留，完整 API 闭环尚未通过。
 前两次失败拓扑及其未知效果记录保留在独立测试环境中，不计作成功回收。
 
 ## 怎样判断这轮重构完成

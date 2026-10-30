@@ -4,8 +4,9 @@ After=network-online.target
 
 [Service]
 Type=simple
-User=root
-Group=root
+# Use the system manager's default root identity. On Ubuntu systemd 255,
+# explicit User=root combined with syscall hardening and NoNewPrivileges
+# can remove effective CAP_SETUID, preventing jailer from dropping privileges.
 ExecStart=/usr/local/bin/sysbox host-supervisor --config /etc/sysbox-host/sysbox.yaml --identity /etc/sysbox-host/identity.json
 Restart=on-failure
 RuntimeDirectory=sysbox-host
