@@ -24,3 +24,6 @@ providers:
     enabled: false
   libvirt:
     enabled: false
+    # Before enabling, create this root-owned directory with mode 0755.
+    # QEMU needs traversal; keep disks outside the private host journal root.
+    workdir: /var/lib/sysbox-libvirt

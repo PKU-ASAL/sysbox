@@ -324,11 +324,41 @@ Agent 已去掉对宿主执行包的直接依赖，但仍通过共享包间接�
 | 普通用户与 Docker | 隔离 Docker 中 UID 32000 的部署、暂停、恢复、回收、重启和回执丢失恢复；实际文件安装 | 最终发布候选仍需核对制品来源 |
 | Firecracker | 真实 KVM 下的 jailer 隔离、named netns/TAP、重启恢复和冷清理；相同 systemd capability 上限及 NoNewPrivileges 下复测通过 | 完整 systemd 单元、arm64 宿主及最终发布 helper 的实机验收 |
 | Libvirt | 隔离 daemon 下的资源归属变更、丢失返回后的恢复和冷读取；真实无盘 VM 的网络身份检查、旧 generation 拒绝、暂停、恢复和回收 | 完整 guest 初始化、重置及部署隔离验收；测试容器关闭了 libvirt 私有 mount namespace，不证明该隔离配置可用 |
-| Windows | amd64 helper 与安装脚本纳入统一发布；PE、哈希、嵌入版本与来源检查 | 当前缺可用 Windows guest，真实任务矩阵未验收 |
+| Windows | Server 2025 基础镜像安装及 QGA 验证通过；使用提交 `63db456` 的发布 helper，通过 5 项原生测试及真实 libvirt/QGA 任务矩阵，覆盖回执丢失、取消、guest 整机重启、旧 boot 拒绝和宿主签名的未知结果停止回执 | 本轮未重启整个 Linux 执行宿主；未覆盖 Windows 10、域环境或完整 systemd/libvirt 部署隔离 |
 | 发布 | Linux amd64/arm64 与 Windows amd64 归档校验；重复构建一致；GitHub Release 模拟审计通过 | 未创建正式 tag，未推送或发布；源码变化后需重新构建 |
 
 发布测试的 Git 替身已修正：转发使用事先保存的真实 Git 绝对路径，避免清洁工作区检查递归调用自身。
 本轮只操作独立验收容器，没有更新 CyberField 服务或接管其现有资源。
+
+2026-10-30 在独立 Linux 虚拟机中补测正式 systemd 单元：libvirt 的 Apply、Reset、
+Destroy 闭环通过；首次启动和 Reset 后均确认 cloud-init 完成、普通用户 SSH 可登录，
+Reset 保持资源 UID 并递增 generation，回收后新拓扑的 domain 和磁盘目录均不存在。
+测试发现并修复了 `UMask=0077` 下 Reset 目录缺少 QEMU 遍历权限的问题；
+provider 磁盘使用单独的 `/var/lib/sysbox-libvirt`（root 所有、0755），不放宽宿主私有目录。
+0077 环境下的 libvirt 包回归测试和 vet 通过。该实机复测使用工作区修复版本，尚非重新发布的制品。
+
+netns 入口改由现有 `sysbox-netns` 的 root 专用辅助入口管理：它仅在 PID 1 的
+mount/net namespace 中创建、删除 `/run/netns` 下的命名入口，不执行资源规划。
+辅助程序没有 setuid，不接受任意宿主路径；删除要求 namespace 类型及 device/inode 匹配。
+Provider 的资源身份、链路归属校验和宿主锁仍是操作前提；创建后服务不可见时直接报错，
+没有进程内创建的备用路径。正式 systemd 防护设置保持启用。
+创建和删除在宿主固定入口锁下串行化；实际执行 `ip` 的子进程继承锁 FD。
+执行器、辅助程序和子进程之间设置父进程死亡终止信号，避免服务退出后旧操作继续执行。
+
+服务重启保留入口并重新观察原对象；宿主内核重启不保留 netns，必须按真实资源状态处理，
+不能用同名新 namespace 冒充恢复。PID 1 必须属于管理这些资源的执行宿主，
+辅助程序须在该宿主同一路径安装；容器内的 PID 1 不能自动代表外部宿主。
+Plan 仍是 revision 与 canonical state 的预览，不声称执行 live provider refresh；
+重启验收另外核对内核 namespace 身份和 guest 连通性。
+
+独立虚拟机中的正式 systemd 验收已通过：网络资源 Apply → Plan 无差异 →
+重启服务 → 原 namespace device/inode 不变 → Plan 无差异 → Destroy 无入口残留；
+带 libvirt guest 的同一路径也通过，并验证重启服务后仍能访问原 guest、Reset 后旧文件标记消失、
+Destroy 后 domain 和磁盘目录不存在。错误 namespace 身份删除被拒绝；辅助程序退出时
+子进程停止、锁保持至子进程退出的中断测试通过。该结果属于工作区版本，尚未生成新发布制品。
+
+Firecracker 的正式服务测试因缺少配套 jailer、下载连接失败尚未运行。
+前两次失败拓扑及其未知效果记录保留在独立测试环境中，不计作成功回收。
 
 ## 怎样判断这轮重构完成
 
