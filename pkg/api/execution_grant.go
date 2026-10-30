@@ -290,16 +290,23 @@ func (s *Server) handleHostAuthorizeExecutionGrant(w http.ResponseWriter, r *htt
 		return
 	}
 	base := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
-	if err := base.ObserveTime(r.Context()); err != nil {
-		writeError(w, agentRepositoryErrorStatus(err), err)
-		return
-	}
 	if err := controlplane.VerifyExecutionGrant(s.grantSigner.Public().(ed25519.PublicKey), signed, signed.BootID, time.Now()); err != nil {
+		// Rejections before the compound transaction must still advance the
+		// durable clock floor so wall-clock rollback cannot revive a proof.
+		if clockErr := base.ObserveTime(r.Context()); clockErr != nil {
+			writeError(w, agentRepositoryErrorStatus(clockErr), clockErr)
+			return
+		}
 		writeError(w, 409, err)
 		return
 	}
 	g := signed.Grant
 	if g.ParentEpoch != 0 {
+		// Derived authorization has early parent/source rejection paths.
+		if err := base.ObserveTime(r.Context()); err != nil {
+			writeError(w, agentRepositoryErrorStatus(err), err)
+			return
+		}
 		s.authorizeDerivedGuestGrant(w, r, g)
 		return
 	}
@@ -317,11 +324,26 @@ func (s *Server) handleHostAuthorizeExecutionGrant(w http.ResponseWriter, r *htt
 		}
 		return nil
 	})
+	// Authorize commits its clock observation with source and grant checks.
 	if err := persistence.NewExecutionGrantRepository(storage).Authorize(r.Context(), g); err != nil {
+		// A missing command or storage failure may precede the transaction's
+		// clock update. Preserve the previous rejection-time guarantee.
+		if clockErr := observeRejectedAuthorization(r.Context(), base); clockErr != nil {
+			writeError(w, agentRepositoryErrorStatus(clockErr), clockErr)
+			return
+		}
 		writeError(w, agentRepositoryErrorStatus(err), err)
 		return
 	}
 	writeJSON(w, 200, map[string]bool{"authorized": true})
+}
+
+// A canceled validation may have rolled back its clock observation. This
+// bounded cleanup only advances the clock; it never grants execution rights.
+func observeRejectedAuthorization(ctx context.Context, repo *persistence.ExecutionGrantRepository) error {
+	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancel()
+	return repo.ObserveTime(cleanup)
 }
 
 func (s *Server) handleInspectExecutionGrant(w http.ResponseWriter, r *http.Request) {
