@@ -302,11 +302,6 @@ func (s *Server) handleHostAuthorizeExecutionGrant(w http.ResponseWriter, r *htt
 	}
 	g := signed.Grant
 	if g.ParentEpoch != 0 {
-		// Derived authorization has early parent/source rejection paths.
-		if err := base.ObserveTime(r.Context()); err != nil {
-			writeError(w, agentRepositoryErrorStatus(err), err)
-			return
-		}
 		s.authorizeDerivedGuestGrant(w, r, g)
 		return
 	}
@@ -638,15 +633,9 @@ func (s *Server) handleAuthorizeExecutionGrant(w http.ResponseWriter, r *http.Re
 		writeError(w, 400, err)
 		return
 	}
-	// A temporal rejection is itself an observation of the authority clock.
-	// Persist it before Verify can return, otherwise a later wall-clock step
-	// could make the same previously expired signed envelope appear live.
-	if err := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore}).ObserveTime(r.Context()); err != nil {
-		writeError(w, agentRepositoryErrorStatus(err), err)
-		return
-	}
+	reject := s.rejectAuthorization(w, r)
 	if err := controlplane.VerifyExecutionGrant(s.grantSigner.Public().(ed25519.PublicKey), request.Grant, request.Grant.BootID, time.Now()); err != nil {
-		writeError(w, 409, err)
+		reject(409, err)
 		return
 	}
 	g := request.Grant.Grant
@@ -710,22 +699,35 @@ func (s *Server) handleAuthorizeExecutionGrant(w http.ResponseWriter, r *http.Re
 			err = transitionErr
 		}
 		if err != nil {
-			writeError(w, agentRepositoryErrorStatus(err), err)
+			reject(agentRepositoryErrorStatus(err), err)
 			return
 		}
 		signed, err := controlplane.SignExecutionGrant(s.grantSigner, *granted, request.Grant.BootID, time.Now().UTC())
 		if err != nil {
-			writeError(w, 409, err)
+			reject(409, err)
 			return
 		}
 		writeJSON(w, 200, signed)
 		return
 	}
 	if err := persistence.NewExecutionGrantRepository(storage).Authorize(r.Context(), g); err != nil {
-		writeError(w, agentRepositoryErrorStatus(err), err)
+		reject(agentRepositoryErrorStatus(err), err)
 		return
 	}
 	writeJSON(w, 200, map[string]bool{"authorized": true})
+}
+
+// rejectAuthorization preserves the clock even when validation ended before
+// its authority transaction, or that transaction was rolled back.
+func (s *Server) rejectAuthorization(w http.ResponseWriter, r *http.Request) func(int, error) {
+	return func(status int, cause error) {
+		repo := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
+		if err := observeRejectedAuthorization(r.Context(), repo); err != nil {
+			writeError(w, agentRepositoryErrorStatus(err), err)
+			return
+		}
+		writeError(w, status, cause)
+	}
 }
 
 // sourceGrant derives scope and payload exclusively from durable dispatch data.

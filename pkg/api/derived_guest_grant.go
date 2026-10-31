@@ -52,39 +52,37 @@ func (s *Server) handleRenewDerivedGuestExecutionGrant(w http.ResponseWriter, r 
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if err := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore}).ObserveTime(r.Context()); err != nil {
-		writeError(w, agentRepositoryErrorStatus(err), err)
-		return
-	}
+	reject := s.rejectAuthorization(w, r)
 	key, now := s.grantSigner.Public().(ed25519.PublicKey), time.Now().UTC()
 	for _, signed := range []controlplane.SignedExecutionGrant{request.Parent, request.Child} {
 		if signed.Grant.AgentID != r.PathValue("agent") || controlplane.VerifyExecutionGrant(key, signed, signed.BootID, now) != nil {
-			writeError(w, http.StatusConflict, controlplane.ErrInvalidExecutionGrant)
+			reject(http.StatusConflict, controlplane.ErrInvalidExecutionGrant)
 			return
 		}
 	}
 	renewed, err := persistence.NewExecutionGrantRepository(s.derivedGuestStorage(r.Context(), request.Parent)).RenewDerivedGuestTask(r.Context(), request.Parent.Grant, request.Child.Grant, time.Until(request.Parent.Grant.ExpiresAt))
 	if err != nil {
-		writeError(w, agentRepositoryErrorStatus(err), err)
+		reject(agentRepositoryErrorStatus(err), err)
 		return
 	}
 	signed, err := controlplane.SignExecutionGrant(s.grantSigner, *renewed, request.Child.BootID, time.Now().UTC())
 	if err != nil {
-		writeError(w, http.StatusConflict, err)
+		reject(http.StatusConflict, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, signed)
 }
 
 func (s *Server) authorizeDerivedGuestGrant(w http.ResponseWriter, r *http.Request, child controlplane.ExecutionGrant) {
+	reject := s.rejectAuthorization(w, r)
 	if child.AgentID != r.PathValue("agent") {
-		writeError(w, http.StatusConflict, persistence.ErrConflict)
+		reject(http.StatusConflict, persistence.ErrConflict)
 		return
 	}
 	base := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
 	parent, err := base.InspectGrant(r.Context(), child.AgentID, controlplane.ExecutionScope{TopologyUID: child.Scope.TopologyUID})
 	if err != nil || parent == nil || parent.Epoch != child.ParentEpoch {
-		writeError(w, http.StatusConflict, persistence.ErrConflict)
+		reject(http.StatusConflict, persistence.ErrConflict)
 		return
 	}
 	// This snapshot supplies immutable parent identity to the command validator.
@@ -92,7 +90,7 @@ func (s *Server) authorizeDerivedGuestGrant(w http.ResponseWriter, r *http.Reque
 	// retirement, revocation or replacement between the reads cannot authorize it.
 	storage := s.derivedGuestStorage(r.Context(), controlplane.SignedExecutionGrant{Grant: *parent, BootID: parent.TargetBootID})
 	if err := persistence.NewExecutionGrantRepository(storage).Authorize(r.Context(), child); err != nil {
-		writeError(w, agentRepositoryErrorStatus(err), err)
+		reject(agentRepositoryErrorStatus(err), err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"authorized": true})

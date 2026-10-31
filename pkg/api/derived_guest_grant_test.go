@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -19,7 +20,20 @@ import (
 )
 
 func TestDerivedGuestRenewalAuthority(t *testing.T) {
-	s := NewServer(t.TempDir(), t.TempDir())
+	store := &controlstore.SQLite{DbPath: filepath.Join(t.TempDir(), "api.db"), RunsDir: t.TempDir()}
+	db, err := store.OpenDB()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	s := stateDeleteTestServer(t, store)
+	s.agentSvc = newAgentService(s)
+	_, err = db.Exec(`CREATE TABLE authority_writes(n INTEGER); INSERT INTO authority_writes VALUES(0); CREATE TRIGGER count_authority_write AFTER UPDATE ON sysbox_execution_authority BEGIN UPDATE authority_writes SET n=n+1; END`)
+	require.NoError(t, err)
+	resetWrites := func() { _, err := db.Exec("UPDATE authority_writes SET n=0"); require.NoError(t, err) }
+	assertOneWrite := func() {
+		var n int
+		require.NoError(t, db.QueryRow("SELECT n FROM authority_writes").Scan(&n))
+		require.Equal(t, 1, n)
+	}
 	pub, key, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
 	require.NoError(t, s.ConfigureExecutionGrantSigner(key))
@@ -97,8 +111,10 @@ func TestDerivedGuestRenewalAuthority(t *testing.T) {
 		s.ServeHTTP(w, r)
 		return w
 	}
+	resetWrites()
 	w = authorize()
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assertOneWrite()
 	w = post("derive-guest", proof, true)
 	require.Equal(t, 200, w.Code, w.Body.String())
 	var retry controlplane.SignedExecutionGrant
@@ -111,8 +127,10 @@ func TestDerivedGuestRenewalAuthority(t *testing.T) {
 	body := map[string]any{"parent": parent, "child": child}
 	w = post("renew-guest", body, false)
 	require.Equal(t, 401, w.Code)
+	resetWrites()
 	w = post("renew-guest", body, true)
 	require.Equal(t, 200, w.Code, w.Body.String())
+	assertOneWrite()
 	var renewed controlplane.SignedExecutionGrant
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &renewed))
 	require.NoError(t, controlplane.VerifyExecutionGrant(pub, renewed, "guest", time.Now()))
