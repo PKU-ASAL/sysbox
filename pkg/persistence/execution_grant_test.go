@@ -191,3 +191,27 @@ func TestStoppedPowerActionCannotMintAnotherEpoch(t *testing.T) {
 	_, err = NewFilesystemExecutionGrantRepository(root).Issue(ctx, request, time.Minute)
 	require.ErrorIs(t, err, ErrConflict)
 }
+
+// The current global ledger gives unrelated topologies a shared durable clock
+// floor. A scoped store must explicitly preserve or replace this guarantee;
+// merely moving ObservedAt into topology rows changes rejection semantics.
+func TestGrantClockObservationInOtherTopologySurvivesRollback(t *testing.T) {
+	root := t.TempDir()
+	repo := NewFilesystemExecutionGrantRepository(root)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	repo.now = func() time.Time { return now }
+	sessionA, err := repo.OpenSession(ctx, "host-a", "process-a", "")
+	require.NoError(t, err)
+	sessionB, err := repo.OpenSession(ctx, "host-b", "process-b", "")
+	require.NoError(t, err)
+	grantA, err := repo.Issue(ctx, controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: "topology-a"}, AgentID: "host-a", SessionID: sessionA.ID, ActionID: "a", CommandID: "a", Attempt: 1, Operation: "run_apply", Digest: "a", TargetBootID: "boot-a"}, time.Minute)
+	require.NoError(t, err)
+	now = now.Add(2 * time.Minute)
+	_, err = repo.Issue(ctx, controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: "topology-b"}, AgentID: "host-b", SessionID: sessionB.ID, ActionID: "b", CommandID: "b", Attempt: 1, Operation: "run_apply", Digest: "b", TargetBootID: "boot-b"}, time.Minute)
+	require.NoError(t, err)
+	now = now.Add(-2 * time.Minute)
+	cold := NewFilesystemExecutionGrantRepository(root)
+	cold.now = func() time.Time { return now }
+	require.ErrorIs(t, cold.Authorize(ctx, *grantA), ErrConflict, "time already observed elsewhere must not revive an expired grant after restart")
+}

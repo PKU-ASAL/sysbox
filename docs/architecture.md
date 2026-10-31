@@ -409,6 +409,52 @@ PostgreSQL 的授权更新、Run 准入、console、guest execution、GC 预留�
 也不能抢占。旧效果分别取得停止证据后，才可签发更大的 epoch。文件、SQLite、独立 PostgreSQL
 重点 race 测试通过。该测试约束后续存储拆分，当前并未改变存储格式。
 
+### 授权分区切换设计：边界与待决项
+
+本节是 1/2/3 的实施设计，尚未切换存储格式。不能把下列目标描述为已经上线。
+授权仍只有现有 grant 协议；分区只改变持久化组织和事务访问范围。
+
+| 数据 | 拟定归属 | 必须一起校验的事实 |
+| --- | --- | --- |
+| session、宿主 fencing、宿主观察快照 | Agent ID | 当前 incarnation、未释放 fencing、观察序列 |
+| 父/子 grant、维护屏障、停止回执 | topology UID | session、父子 epoch、资源 generation、原始命令、生命周期身份 |
+| epoch 分配 | topology UID 内单调 | 同 topology 的父、子、维护屏障共享序列，不能按单个资源分别计数 |
+| grant 的宿主索引 | Agent ID 与 topology UID | 必须与授权签发、停止原子发布，fencing 不允许遗漏并发准入 |
+| 时间水位 | 待完成替代设计 | 不允许因进程重启、时钟回拨或换分区使已过期授权复活 |
+
+停止回执的键需由全局 epoch 改为 `(topology UID, epoch)`；所有回放与校验仍须绑定完整 grant。
+同一 topology 的 epoch 不因资源删除、session 替换或普通服务重启而重置。
+不同 topology 的 epoch 数字可以相同，但不能据此比较先后或接受别的 topology 的回执。
+宿主 effectgate 和 guest scope 已按 topology/资源绑定；仍需逐一审查消费者，不能仅改生产者。
+
+事务锁顺序拟统一为：按 ID 排序的宿主协调锁 → 按 UID 排序的 topology 锁 →
+命令/操作/lifecycle 记录。普通授权检查持宿主共享锁和所属 topology 独占锁；
+session 替换和宿主 fencing 持宿主独占锁，阻止并发准入漏出。
+需要跨多个 topology 的操作先取得宿主独占锁，再枚举并锁定其 topology，
+不允许持 topology 锁反向申请宿主锁。枚举结果必须从事务内索引读取并复核，
+无法确定范围时拒绝提交，不回退全局扫描写入。
+
+这里有两个已验证的约束，必须在格式切换前解决：
+
+- SQLite 单库即使 WAL 模式也只有一个写者。不同 topology 写不同的行仍会阻塞。
+  相同安全语义不等于相同并发能力；若保留单库轻量后端，应明确仅 PostgreSQL/具备相应
+  事务实现的文件后端承担独立写入进展保证。不能把 SQLite 超时当作并发测试通过。
+- 现有全局 ObservedAt 具有跨 topology 的时钟回拨保护。已新增测试：B 在 A 过期之后
+  写入，随后时钟回拨并重建 repository，A 仍必须被拒绝。只拆成局部时钟会削弱这个语义；
+  继续让每次检查更新全局时钟又会留下写热点。该取舍尚未解决，不能先删旧水位再补保护。
+
+文件后端多记录提交需要可恢复的原子发布：同一操作的 session/索引/topology 不能各自
+rename 后就宣称成功。现有 fence-delete 专用恢复协议不足以自动覆盖所有多记录授权事务；
+应明确复用范围与新增恢复记录，不允许悄悄引入第二套业务授权状态机。
+
+完成上述决策后，再一次性修改存储接口与格式版本，替换全部授权、准入、维护、回执、
+快照和回收调用方。新版本发现旧 authority 表/文件须明确拒绝且不改动原数据；不自动迁移、
+清空或双写。验收采用新建隔离存储，旧实验环境与未知效果证据单独保留。
+
+切换的退出条件：支持独立写入的后端中 A topology 被持锁时 B 仍可完成操作；同宿主
+session CAS 与 fencing 仍正确互斥；同 topology 父子授权和维护不得交叉通过；提交失败、
+断电恢复、旧格式拒绝与跨 topology 时间回拨测试全部通过。SQLite 的并发标准需单独确认。
+
 
 
 - 看一个 Apply，只需沿宿主操作服务 → runtime → SPI 理解执行，不再绕回 API Server。
