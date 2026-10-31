@@ -98,8 +98,10 @@ func TestDerivedGuestRenewalAuthority(t *testing.T) {
 			require.Equal(t, http.StatusUnauthorized, w.Code, w.Body.String())
 		})
 	}
+	resetWrites()
 	w = post("derive-guest", proof, true)
 	require.Equal(t, 200, w.Code, w.Body.String())
+	assertOneWrite()
 	var child controlplane.SignedExecutionGrant
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &child))
 	authorize := func() *httptest.ResponseRecorder {
@@ -115,8 +117,10 @@ func TestDerivedGuestRenewalAuthority(t *testing.T) {
 	w = authorize()
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	assertOneWrite()
+	resetWrites()
 	w = post("derive-guest", proof, true)
 	require.Equal(t, 200, w.Code, w.Body.String())
+	assertOneWrite()
 	var retry controlplane.SignedExecutionGrant
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &retry))
 	require.Equal(t, child.Grant, retry.Grant)

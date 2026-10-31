@@ -161,29 +161,26 @@ func (s *Server) handleDeriveGuestExecutionGrant(w http.ResponseWriter, r *http.
 		return
 	}
 	parent := request.Parent
-	if err := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore}).ObserveTime(r.Context()); err != nil {
-		writeError(w, agentRepositoryErrorStatus(err), err)
-		return
-	}
+	reject := s.rejectAuthorization(w, r)
 	if controlplane.VerifyGuestGrantDerivation(s.grantHostKeys[r.PathValue("agent")], request) != nil {
-		writeError(w, http.StatusUnauthorized, controlplane.ErrInvalidExecutionGrant)
+		reject(http.StatusUnauthorized, controlplane.ErrInvalidExecutionGrant)
 		return
 	}
 	if parent.Grant.AgentID != r.PathValue("agent") || controlplane.VerifyExecutionGrant(s.grantSigner.Public().(ed25519.PublicKey), parent, parent.BootID, time.Now()) != nil {
-		writeError(w, http.StatusConflict, controlplane.ErrInvalidExecutionGrant)
+		reject(http.StatusConflict, controlplane.ErrInvalidExecutionGrant)
 		return
 	}
 	child := controlplane.ExecutionGrant{TargetBootID: request.GuestBootID, Scope: controlplane.ExecutionScope{TopologyUID: parent.Grant.Scope.TopologyUID, ResourceUID: request.ResourceUID, Generation: request.Generation}, AgentID: parent.Grant.AgentID, SessionID: parent.Grant.SessionID, ActionID: request.TaskID, CommandID: parent.Grant.CommandID, Attempt: parent.Grant.Attempt, Operation: "guest_task", Digest: request.TaskDigest, ExpiresAt: parent.Grant.ExpiresAt}
 	ttl := time.Until(parent.Grant.ExpiresAt)
 	derived, err := mustDeriveGuestGrant(r.Context(), s.derivedGuestStorage(r.Context(), parent), parent.Grant, child, ttl)
 	if err != nil {
-		writeError(w, agentRepositoryErrorStatus(err), err)
+		reject(agentRepositoryErrorStatus(err), err)
 		return
 	}
 	child = *derived
 	signed, err := controlplane.SignExecutionGrant(s.grantSigner, child, request.GuestBootID, time.Now().UTC())
 	if err != nil {
-		writeError(w, http.StatusConflict, err)
+		reject(http.StatusConflict, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, signed)

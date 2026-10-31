@@ -42,12 +42,9 @@ func (s *Server) handleDeriveSSHExecutionGrant(w http.ResponseWriter, r *http.Re
 		return
 	}
 	parent := request.Parent
-	if err := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore}).ObserveTime(r.Context()); err != nil {
-		writeError(w, agentRepositoryErrorStatus(err), err)
-		return
-	}
+	reject := s.rejectAuthorization(w, r)
 	if parent.Grant.AgentID != r.PathValue("agent") || controlplane.VerifyExecutionGrant(s.grantSigner.Public().(ed25519.PublicKey), parent, parent.BootID, time.Now()) != nil {
-		writeError(w, http.StatusConflict, controlplane.ErrInvalidExecutionGrant)
+		reject(http.StatusConflict, controlplane.ErrInvalidExecutionGrant)
 		return
 	}
 	operation := "guest_ssh_access_apply"
@@ -57,12 +54,12 @@ func (s *Server) handleDeriveSSHExecutionGrant(w http.ResponseWriter, r *http.Re
 	child := controlplane.ExecutionGrant{TargetBootID: request.GuestBootID, Scope: controlplane.ExecutionScope{TopologyUID: parent.Grant.Scope.TopologyUID, ResourceUID: request.ResourceUID, Generation: request.Generation}, AgentID: parent.Grant.AgentID, SessionID: parent.Grant.SessionID, ActionID: request.Request.ID, CommandID: parent.Grant.CommandID, Attempt: parent.Grant.Attempt, Operation: operation, Digest: digest, ExpiresAt: parent.Grant.ExpiresAt}
 	derived, err := mustDeriveGuestGrant(r.Context(), s.derivedGuestStorage(r.Context(), parent), parent.Grant, child, time.Until(parent.Grant.ExpiresAt))
 	if err != nil {
-		writeError(w, agentRepositoryErrorStatus(err), err)
+		reject(agentRepositoryErrorStatus(err), err)
 		return
 	}
 	signed, err := controlplane.SignExecutionGrant(s.grantSigner, *derived, request.GuestBootID, time.Now().UTC())
 	if err != nil {
-		writeError(w, http.StatusConflict, err)
+		reject(http.StatusConflict, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, signed)

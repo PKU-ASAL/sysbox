@@ -67,12 +67,55 @@ func testDerivedSSHReceipt(t *testing.T, unknown bool) {
 		changed.Request.Config.User = "root"
 		w = post("/v1/agents/agent/execution-grant/derive-ssh", changed, true)
 		require.Equal(t, http.StatusUnauthorized, w.Code, "worker cannot substitute the canonical host-selected account")
+		if sqlite, ok := store.(*controlstore.SQLite); ok {
+			db, err := sqlite.OpenDB()
+			require.NoError(t, err)
+			_, err = db.Exec(`CREATE TABLE derivation_writes(n INTEGER); INSERT INTO derivation_writes VALUES(0); CREATE TRIGGER count_derivation_write AFTER UPDATE ON sysbox_execution_authority BEGIN UPDATE derivation_writes SET n=n+1; END`)
+			require.NoError(t, err)
+		}
 		w = post("/v1/agents/agent/execution-grant/derive-ssh", proof, true)
 		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		if sqlite, ok := store.(*controlstore.SQLite); ok {
+			db, err := sqlite.OpenDB()
+			require.NoError(t, err)
+			var n int
+			require.NoError(t, db.QueryRow("SELECT n FROM derivation_writes").Scan(&n))
+			require.Equal(t, 1, n, "derived issuance must commit once")
+		}
 		var child controlplane.SignedExecutionGrant
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &child))
 		require.Equal(t, "guest_ssh_access_delete", child.Grant.Operation)
 		require.Equal(t, parent.Epoch, child.Grant.ParentEpoch)
+		retry := post("/v1/agents/agent/execution-grant/derive-ssh", proof, true)
+		require.Equal(t, http.StatusOK, retry.Code, retry.Body.String())
+		var retried controlplane.SignedExecutionGrant
+		require.NoError(t, json.Unmarshal(retry.Body.Bytes(), &retried))
+		require.Equal(t, child.Grant, retried.Grant)
+		if sqlite, ok := store.(*controlstore.SQLite); ok {
+			db, err := sqlite.OpenDB()
+			require.NoError(t, err)
+			var n int
+			require.NoError(t, db.QueryRow("SELECT n FROM derivation_writes").Scan(&n))
+			require.Equal(t, 2, n, "initial issuance and retry each commit once")
+		}
+		expired := *parent
+		expired.ExpiresAt = time.Now().Add(-time.Second)
+		expiredSigned, err := controlplane.SignExecutionGrant(issuer, expired, "host", time.Now().Add(-time.Minute))
+		require.NoError(t, err)
+		expiredProof := proof
+		expiredProof.Parent = expiredSigned
+		expiredProof, err = controlplane.SignSSHGrantDerivation(host, expiredProof)
+		require.NoError(t, err)
+		beforeReject := time.Now().UTC()
+		rejected := post("/v1/agents/agent/execution-grant/derive-ssh", expiredProof, true)
+		require.Equal(t, http.StatusConflict, rejected.Code, rejected.Body.String())
+		rawClock, err := (controlstore.AuthorityStorage{Store: store}).ReadExecutionAuthority(ctx)
+		require.NoError(t, err)
+		var clock struct {
+			ObservedAt time.Time `json:"observed_at"`
+		}
+		require.NoError(t, json.Unmarshal(rawClock, &clock))
+		require.False(t, clock.ObservedAt.Before(beforeReject))
 		result := substrate.SSHAccessResult{Handle: substrate.SSHAccessHandle{ID: "ssh", Digest: child.Grant.Digest, NodeID: "web", User: "ubuntu", AccessID: "admin", Revision: 2, BootID: "guest", Epoch: child.Grant.Epoch, TopologyUID: cmd.TopologyUID, ResourceUID: "node", Generation: 1}}
 		receipt, err := controlplane.SignGuestSSHAccessStopReceipt(host, child.Grant, "host", mutation, result, "receipt", time.Now())
 		require.NoError(t, err)
