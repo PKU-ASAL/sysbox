@@ -364,7 +364,12 @@ Firecracker/jailer 1.15.1 已取得。正式 systemd 启动发现：测试机 Ub
 宿主单元改用系统服务默认 root 身份，保留全部原有防护、空 ambient 集合和 capability 上限。
 修改后实际 CAP_SETUID 恢复；同样 systemd 防护下的真实 KVM 测试通过非 root jailer
 启动、namespace/seccomp/cgroup 隔离、暂停恢复、停止启动及冷清理（39 秒）。
-API Apply 复测受到授权续期和数据库访问超时影响，未知状态记录保留，完整 API 闭环尚未通过。
+早期 API 复测受到授权续期和数据库访问超时影响，未知状态记录保留。
+2026-10-31 将提交 `b56aa42` 的程序部署到独立控制/执行虚拟机后，正式 systemd 下
+Firecracker API Apply → Plan 无差异 → Reset → Plan 无差异 → Destroy 全部通过。
+独立检查确认两代 VM 的目录、manifest、jail、cgroup 和该拓扑 netns 均已清理，
+canonical 资源清单为空、没有运行中的 Firecracker。测试未放宽授权超时、关闭持久化或启用 I/O 限速。
+此结果属于单 topology、amd64 实机验收，不代表多 topology 并发、慢磁盘或最终发布制品全部通过。
 前两次失败拓扑及其未知效果记录保留在独立测试环境中，不计作成功回收。
 
 ## 怎样判断这轮重构完成
@@ -380,7 +385,7 @@ API Apply 复测受到授权续期和数据库访问超时影响，未知状态�
 guest task 和 SSH 子授权的初次签发及同请求重试也已合为一次提交。
 续期写入失败时命令 lease 和 grant 一起回滚，
 错误签名、过期、缺失源命令以及父授权撤销仍被拒绝。全局 authority 写热点尚未消除，
-这些测试结果也不代表 API 全闭环已通过。
+单拓扑 Firecracker API 闭环另有上述实机通过记录，不把单元测试作为实机证据。
 
 下一步先用慢提交、撤销与并发测试固定原子性要求，再拆分独立执行范围的存储。
 同一 topology 的父子授权排斥、宿主 session CAS、epoch 单调性、维护屏障及停止证据
@@ -398,6 +403,11 @@ PostgreSQL 的授权更新、Run 准入、console、guest execution、GC 预留�
 不再先 INSERT ON CONFLICT；缺失时才初始化，并在竞争结束后重新读取获胜事务的结果。
 真实 PostgreSQL 测试直接观察 pg_blocking_pids，验证并发首次创建会等待且不覆盖 session。
 此步骤减少重复 SQL 和分散实现，仍保留全局行锁；宿主级与 topology 级拆分尚待实现。
+
+宿主 session 的跨范围契约已补齐：两个新 incarnation 同时替换旧 session 只能有一个 CAS
+成功；替换后多个 topology 的旧 grant 都不能继续授权，但旧效果未确认停止时，新 session
+也不能抢占。旧效果分别取得停止证据后，才可签发更大的 epoch。文件、SQLite、独立 PostgreSQL
+重点 race 测试通过。该测试约束后续存储拆分，当前并未改变存储格式。
 
 
 

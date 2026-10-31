@@ -62,3 +62,61 @@ func TestHostFenceAndOtherTopologyAdmissionCannotBothCommit(t *testing.T) {
 		}
 	})
 }
+
+// Replacing one host session invalidates its grants across all topologies,
+// without interpreting invalidation as proof that old effects have stopped.
+func TestSessionReplacementFencesAllTopologiesWithoutReleasingEffects(t *testing.T) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
+		ctx := context.Background()
+		repo := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
+		session, err := repo.OpenSession(ctx, "host", "old-process", "")
+		require.NoError(t, err)
+		var issued []controlplane.ExecutionGrant
+		for _, topology := range []string{"one", "two"} {
+			grant, err := repo.Issue(ctx, controlplane.ExecutionGrant{AgentID: "host", SessionID: session.ID, Scope: controlplane.ExecutionScope{TopologyUID: topology}, ActionID: topology, CommandID: topology, Attempt: 1, Operation: "run_apply", Digest: "digest", TargetBootID: "boot"}, time.Minute)
+			require.NoError(t, err)
+			issued = append(issued, *grant)
+		}
+		type sessionResult struct {
+			session *controlplane.AgentSession
+			err     error
+		}
+		start := make(chan struct{})
+		results := make(chan sessionResult, 2)
+		for _, incarnation := range []string{"new-a", "new-b"} {
+			go func(incarnation string) {
+				<-start
+				s, e := repo.OpenSession(ctx, "host", incarnation, session.ID)
+				results <- sessionResult{s, e}
+			}(incarnation)
+		}
+		close(start)
+		a, b := <-results, <-results
+		require.NotEqual(t, a.err == nil, b.err == nil, "session CAS must have one winner")
+		winner := a
+		if winner.err != nil {
+			winner = b
+		}
+		loser := b
+		if a.err != nil {
+			loser = a
+		}
+		require.ErrorIs(t, loser.err, persistence.ErrConflict)
+		cold := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
+		for _, old := range issued {
+			require.ErrorIs(t, cold.Authorize(ctx, old), persistence.ErrConflict)
+			next := old
+			next.SessionID = winner.session.ID
+			next.ActionID += "-new"
+			next.CommandID += "-new"
+			next.Epoch = 0
+			_, err = cold.Issue(ctx, next, time.Minute)
+			require.ErrorIs(t, err, persistence.ErrConflict, "new session must not overlap unresolved old effects")
+			require.NoError(t, cold.AcceptHostStop(ctx, old, "verified-"+old.ActionID))
+			grant, err := cold.Issue(ctx, next, time.Minute)
+			require.NoError(t, err)
+			require.Greater(t, grant.Epoch, old.Epoch)
+			require.NoError(t, cold.Authorize(ctx, *grant))
+		}
+	})
+}
