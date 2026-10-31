@@ -38,8 +38,17 @@ func checkPostgresMaintenanceAdmission(ctx context.Context, tx pgx.Tx, uid strin
 }
 
 func lockPostgresExecutionAuthority(ctx context.Context, tx pgx.Tx) ([]byte, error) {
-	// Materialize an empty row before locking it; FOR UPDATE on an absent row
-	// cannot serialize with the first concurrent BeginMaintenance.
+	var raw []byte
+	err := tx.QueryRow(ctx, "SELECT data::text FROM sysbox_execution_authority WHERE id='authority' FOR UPDATE").Scan(&raw)
+	if err == nil {
+		return raw, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
+	}
+	// Only first initialization needs an insert. An absent-row SELECT does
+	// not lock: ON CONFLICT serializes competing initializers, and the second
+	// SELECT observes the winner's committed ledger rather than our seed.
 	initial := &GrantTransaction{}
 	if err := persistence.NewExecutionGrantRepository(initial).ObserveTime(ctx); err != nil {
 		return nil, err
@@ -47,7 +56,6 @@ func lockPostgresExecutionAuthority(ctx context.Context, tx pgx.Tx) ([]byte, err
 	if _, err := tx.Exec(ctx, "INSERT INTO sysbox_execution_authority(id,data) VALUES ('authority',$1::jsonb) ON CONFLICT(id) DO NOTHING", string(initial.Raw)); err != nil {
 		return nil, err
 	}
-	var raw []byte
 	if err := tx.QueryRow(ctx, "SELECT data::text FROM sysbox_execution_authority WHERE id='authority' FOR UPDATE").Scan(&raw); err != nil {
 		return nil, err
 	}

@@ -267,15 +267,9 @@ func (b AuthorityStorage) updateExecutionAuthority(ctx context.Context, fn func(
 			defer cancel()
 			_ = tx.Rollback(cleanup)
 		}()
-		tag, err := tx.Exec(ctx, "INSERT INTO sysbox_execution_authority(id,data) VALUES ('authority','{}'::jsonb) ON CONFLICT(id) DO NOTHING")
+		raw, err := lockPostgresExecutionAuthority(ctx, tx)
 		if err != nil {
 			return err
-		}
-		var raw []byte
-		if tag.RowsAffected() == 0 {
-			if err = tx.QueryRow(ctx, "SELECT data::text FROM sysbox_execution_authority WHERE id='authority' FOR UPDATE").Scan(&raw); err != nil {
-				return err
-			}
 		}
 		if b.Validate != nil {
 			record, err := ScanPostgresCommand(tx.QueryRow(ctx, "SELECT "+PostgresCommandColumns+" FROM sysbox_agent_commands WHERE id=$1 FOR UPDATE", b.CommandID))

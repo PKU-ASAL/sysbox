@@ -282,15 +282,8 @@ func (b PostgresRunStorage) updateRunWithCommand(ctx context.Context, id, comman
 		return nil, err
 	}
 	// Use the same order as recovery/dispatch: authority before Run or command.
-	initial := &GrantTransaction{}
-	if err := persistence.NewExecutionGrantRepository(initial).ObserveTime(ctx); err != nil {
-		return nil, err
-	}
-	if _, err := tx.Exec(ctx, "INSERT INTO sysbox_execution_authority(id,data) VALUES ('authority',$1::jsonb) ON CONFLICT(id) DO NOTHING", string(initial.Raw)); err != nil {
-		return nil, err
-	}
-	var authority []byte
-	if err := tx.QueryRow(ctx, "SELECT data::text FROM sysbox_execution_authority WHERE id='authority' FOR UPDATE").Scan(&authority); err != nil {
+	authority, err := lockPostgresExecutionAuthority(ctx, tx)
+	if err != nil {
 		return nil, err
 	}
 	err = tx.QueryRow(ctx, `SELECT data::text FROM sysbox_runs WHERE id=$1 FOR UPDATE`, id).Scan(&raw)

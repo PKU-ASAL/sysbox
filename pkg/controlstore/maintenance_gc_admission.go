@@ -125,17 +125,11 @@ func reservePostgresGCWithAuthority(ctx context.Context, store *Postgres, topolo
 	// SELECT FOR UPDATE cannot lock an absent row. Initialize a valid empty
 	// ledger inside this transaction so concurrent first issuance uses the same
 	// exclusion row, even when this topology has never had an execution grant.
-	initial := &GrantTransaction{}
-	if err = persistence.NewExecutionGrantRepository(initial).ObserveTime(ctx); err != nil {
+	authority, err := lockPostgresExecutionAuthority(ctx, tx)
+	if err != nil {
 		return err
 	}
-	if _, err = tx.Exec(ctx, "INSERT INTO sysbox_execution_authority(id,data) VALUES ('authority',$1::jsonb) ON CONFLICT(id) DO NOTHING", string(initial.Raw)); err != nil {
-		return err
-	}
-	var authority, raw []byte
-	if err = tx.QueryRow(ctx, "SELECT data::text FROM sysbox_execution_authority WHERE id='authority' FOR UPDATE").Scan(&authority); err != nil {
-		return err
-	}
+	var raw []byte
 	if err = tx.QueryRow(ctx, "SELECT data::text FROM sysbox_lifecycle_aggregates WHERE topology=$1 FOR UPDATE", topology).Scan(&raw); err != nil {
 		return err
 	}

@@ -146,17 +146,11 @@ func (s *Postgres) updateGuestExecution(ctx context.Context, id string, prepare 
 		_ = tx.Rollback(cleanup)
 	}()
 	// Serialize authority first, then guest and command rows, matching completion.
-	initial := &GrantTransaction{}
-	if err = persistence.NewExecutionGrantRepository(initial).ObserveTime(ctx); err != nil {
+	authority, err := lockPostgresExecutionAuthority(ctx, tx)
+	if err != nil {
 		return nil, err
 	}
-	if _, err = tx.Exec(ctx, "INSERT INTO sysbox_execution_authority(id,data) VALUES('authority',$1::jsonb) ON CONFLICT(id) DO NOTHING", string(initial.Raw)); err != nil {
-		return nil, err
-	}
-	var raw, authority []byte
-	if err = tx.QueryRow(ctx, "SELECT data::text FROM sysbox_execution_authority WHERE id='authority' FOR UPDATE").Scan(&authority); err != nil {
-		return nil, err
-	}
+	var raw []byte
 	if err = tx.QueryRow(ctx, "SELECT data::text FROM sysbox_guest_executions WHERE id=$1 FOR UPDATE", id).Scan(&raw); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, persistence.ErrNotFound

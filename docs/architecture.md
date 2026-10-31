@@ -393,6 +393,13 @@ guest task 和 SSH 子授权的初次签发及同请求重试也已合为一次�
 维护屏障和生命周期检查需要 topology 级原子边界；停止回执目前按全局 epoch 索引。
 这些依赖尚未迁移，当前仍使用全局 ledger，不能将减少重复提交描述为完成了存储分片。
 
+PostgreSQL 的授权更新、Run 准入、console、guest execution、GC 预留和状态删除
+已统一使用同一个 authority 初始化/加锁入口。已有行直接 SELECT FOR UPDATE，
+不再先 INSERT ON CONFLICT；缺失时才初始化，并在竞争结束后重新读取获胜事务的结果。
+真实 PostgreSQL 测试直接观察 pg_blocking_pids，验证并发首次创建会等待且不覆盖 session。
+此步骤减少重复 SQL 和分散实现，仍保留全局行锁；宿主级与 topology 级拆分尚待实现。
+
+
 
 - 看一个 Apply，只需沿宿主操作服务 → runtime → SPI 理解执行，不再绕回 API Server。
 - 新增 provider 主要增加 SPI 实现与注册；新增接入方式不修改资源执行规则。

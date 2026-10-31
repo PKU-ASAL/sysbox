@@ -205,15 +205,8 @@ func (b postgresConsoleStorage) UpdateConsoleSession(ctx context.Context, id str
 	}()
 	// Materialize and lock authority before reading the session, including for
 	// the first admission. A SELECT FOR UPDATE on an absent row is not a lock.
-	initial := &GrantTransaction{}
-	if err := persistence.NewExecutionGrantRepository(initial).ObserveTime(ctx); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(ctx, "INSERT INTO sysbox_execution_authority(id,data) VALUES ('authority',$1::jsonb) ON CONFLICT(id) DO NOTHING", string(initial.Raw)); err != nil {
-		return err
-	}
-	var authority []byte
-	if err := tx.QueryRow(ctx, "SELECT data::text FROM sysbox_execution_authority WHERE id='authority' FOR UPDATE").Scan(&authority); err != nil {
+	authority, err := lockPostgresExecutionAuthority(ctx, tx)
+	if err != nil {
 		return err
 	}
 	var raw []byte
