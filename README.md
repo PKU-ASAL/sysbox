@@ -55,7 +55,8 @@ curl --fail http://127.0.0.1:18080/
 ./bin/sysbox plan --topology quickstart -f examples/docker-service/field.sysbox.hcl
 ```
 
-curl 地址应指向实际执行宿主。Plan 比较配置和服务中的 state；实际资源核对由宿主执行。
+curl 地址应指向实际执行宿主。Plan 比较配置和服务中的 state；宿主在 Apply 规划时观察选定的受管资源，执行前再次核对。
+观察未知时停止执行；依赖替换范围不完整时明确报错，不自动增加删除对象。
 主 HCL 外的脚本/模块通过 `--include 相对路径` 明确上传；输入变量通过 `--inputs values.json` 单独发送。
 同一个 topology 始终使用服务指定的存储，不再传 `--state` 或 `--backend`。
 
@@ -80,7 +81,8 @@ Agent 现在必须以普通用户运行，只负责 API 与宿主服务之间的
 
 首次部署先完成下面四步；已有环境按“停止旧服务 → 确认并清理旧资源 → 归档旧数据 → 重新部署”迁移，不覆盖旧身份和密钥。
 
-1. 宿主准备 Python 3（安装脚本使用），构建同版本二进制，创建 UID/GID 32000 的 `sysbox-agent` 用户，将二进制装到 `/usr/local/bin/sysbox`。
+1. 宿主准备 Python 3（安装脚本使用），构建同版本二进制，创建 UID/GID 32000 的 `sysbox-agent` 用户。将同版本的 `sysbox`、`sysbox-init`、`sysbox-netns` 全部安装到 `/usr/local/bin/`（root 所有、0755）。
+   宿主须提供 `ip`、`nsenter`、`nft`；启用 Docker 时还需要 Docker CLI 和 `iptables`。
    用 `sudo sysbox init --authority-dir /etc/sysbox-api` 生成新密钥。
    建立 root 专用的 `/etc/sysbox-host`，把生成的 `host.key` 移到该目录；API 目录只保留 issuer 私钥和公钥材料。
 2. 配置并启动 API。Compose 模板使用 `/etc/sysbox-api/issuer.key` 和 `host.pub`，默认 Agent ID 为 `local-docker`。
@@ -88,7 +90,11 @@ Agent 现在必须以普通用户运行，只负责 API 与宿主服务之间的
 3. 用管理员身份注册，再安装 worker 所需文件：
 
    ```sh
-   make .agent-register AGENT_ID=local-docker AGENT_SUBSTRATES=docker
+   mkdir -p .sysbox/enrollment
+   test ! -e .sysbox/enrollment/identity.json
+   ./bin/sysbox agent register --api "$SYSBOX_API_URL" --token "$SYSBOX_API_TOKEN" \
+     --id local-docker --name local-docker --substrates docker \
+     --identity .sysbox/enrollment/identity.json
    sudo deploy/prepare-worker.sh .sysbox/enrollment/identity.json /etc/sysbox-api/issuer.pub /etc/sysbox-api/host.pub
    ```
 
@@ -98,6 +104,8 @@ Agent 现在必须以普通用户运行，只负责 API 与宿主服务之间的
    填写与 API 相同的数据库、issuer 公钥及实际 provider 配置。
    安装两个 [systemd 单元](deploy/systemd)，先启动 `sysbox-host`，再启动 `sysbox-agent`。
    使用 Compose worker 时，以 `make api deploy-full` 启动；它要求身份、公钥和宿主 socket 已准备好。
+   先设置 `SYSBOX_IMAGE` 为选定版本并拉取该镜像；部署命令不再构建源码镜像。
+   源码开发时显式执行 `make api build-api`。注册和生命周期 Makefile 入口只使用现有 binary，缺少时明确报错。
 
 `prepare-worker.sh` 只安装身份与公钥，不启动服务，也不覆盖已有身份。更多字段见[宿主协议](docs/interfaces.md#host-protocol)。
 

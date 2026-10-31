@@ -32,3 +32,15 @@ class DeploymentTests(unittest.TestCase):
             self.assertEqual(3,len(files))
             (root/'sysbox-netns').write_bytes(b'wrong')
             with self.assertRaises(ValueError):deploy_two_vms.release_files(root/'sysbox',metadata)
+
+    def test_deployment_uses_canonical_host_and_agent_units(self):
+        from pathlib import Path
+        root = Path(__file__).resolve().parents[2]
+        for name in ('host', 'agent'):
+            self.assertEqual((root / 'deploy/systemd' / ('sysbox-' + name + '.service')).read_text(), deploy_two_vms.deployment_unit(name))
+        with self.assertRaises(ValueError):
+            deploy_two_vms.deployment_unit('../api')
+
+    def test_deployment_refuses_unverified_single_binary(self):
+        with self.assertRaisesRegex(ValueError, 'release metadata'):
+            deploy_two_vms.deploy('/unused', '/unused')

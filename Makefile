@@ -8,7 +8,7 @@ endif
 
 BINARY := bin/sysbox
 INITDIR := pkg/provider/firecracker/initbin
-ARCH := $(shell $(GO) env GOARCH)
+ARCH = $(shell $(GO) env GOARCH)
 
 TOPO ?= two-networks
 API_URL ?= http://127.0.0.1:9876
@@ -21,6 +21,7 @@ AGENT_SUBSTRATES ?= docker
 HCL := examples/$(TOPO)/field.sysbox.hcl
 STATE := .sysbox/runs/$(TOPO)/state.json
 SYSBOX := $(BINARY) --state $(STATE) -f $(HCL)
+SERVICE_SYSBOX := $(BINARY) --api $(API_URL) --topology $(TOPO)
 LAB_SSH_KEY ?= .sysbox/runs/$(TOPO)/lab_key
 LAB_SSH_PUBKEY ?= $(LAB_SSH_KEY).pub
 
@@ -207,6 +208,9 @@ help: ## Show command groups
 	@echo "  make build-windows10-image  Build a Windows 10 qcow2 with native libvirt"
 	@echo "  make test-windows10-libvirt  Run the opt-in Windows domain-start lifecycle probe"
 
+$(BINARY):
+	@test -x "$@" || { echo "Build or install matching binaries first: bash scripts/release/build-binaries.sh bin" >&2; exit 1; }
+
 build: $(INITDIR)/sysbox-init.linux-$(ARCH).bin ## Build bin/sysbox
 	$(GOENV) CGO_ENABLED=0 $(GO) build -buildvcs=false -o $(BINARY) ./cmd/sysbox
 
@@ -291,7 +295,7 @@ lint: ## Run go vet
 
 ci: build lint test docs-test ## Run the local CI gate
 	@status=0; for topo in two-networks three-nodes microvm mixed libvirt-vm controlled-egress; do \
-		output="$$( $(BINARY) -f examples/$$topo/field.sysbox.hcl --state /tmp/sysbox-ci-$$topo.json plan 2>&1 )"; rc=$$?; \
+		output="$$( $(BINARY) -f examples/$$topo/field.sysbox.hcl validate 2>&1 )"; rc=$$?; \
 		printf "  %-14s%s\n" "$$topo:" "$$(printf '%s\n' "$$output" | head -1)"; \
 		if [ $$rc -ne 0 ]; then status=$$rc; fi; \
 	done; exit $$status
@@ -305,24 +309,17 @@ cli:
 cli-help:
 	@echo "Usage: make cli <validate|plan|apply|destroy|output|state> [TOPO=$(TOPO)]"
 
-cli-validate: build
-	$(SYSBOX) validate
+cli-validate: $(BINARY)
+	$(BINARY) -f $(HCL) validate
 
-cli-plan: build
-	$(SYSBOX) plan
+cli-plan: $(BINARY)
+	$(SERVICE_SYSBOX) plan -f $(HCL)
 
-cli-apply: build
-	@mkdir -p .sysbox/runs/$(TOPO)
-	@if [ "$(TOPO)" = "three-nodes" ] && [ ! -f "$(LAB_SSH_KEY)" ]; then \
-		echo "Generating lab SSH keypair: $(LAB_SSH_KEY)"; \
-		ssh-keygen -t ed25519 -f "$(LAB_SSH_KEY)" -N "" -C "sysbox-lab" -q; \
-		chmod 600 "$(LAB_SSH_KEY)"; \
-		chmod 644 "$(LAB_SSH_PUBKEY)"; \
-	fi
-	LAB_SSH_PUBKEY="$(LAB_SSH_PUBKEY)" $(SYSBOX) apply --auto-approve
+cli-apply: $(BINARY)
+	$(SERVICE_SYSBOX) apply -f $(HCL) --auto-approve
 
-cli-destroy: build
-	$(SYSBOX) destroy --auto-approve
+cli-destroy: $(BINARY)
+	$(SERVICE_SYSBOX) destroy --auto-approve
 
 cli-output: build
 	$(SYSBOX) output
@@ -352,13 +349,13 @@ api-seed:
 		fi; \
 	done
 
-api-deploy: api-build-api
-	$(COMPOSE) $(COMPOSE_API) up -d
+api-deploy:
+	$(COMPOSE) $(COMPOSE_API) up -d --no-build
 	@echo "API server: $(API_URL)/v1/health"
 	@echo "Seed examples with: make api seed"
 
 api-deploy-full: api-deploy
-	$(COMPOSE) $(COMPOSE_FULL) up -d sysbox-agent
+	$(COMPOSE) $(COMPOSE_FULL) up -d --no-build sysbox-agent
 	@echo "Agent: $(AGENT_ID)"
 
 api-status:
@@ -367,7 +364,7 @@ api-status:
 	@printf "API health: "
 	@curl -sf "$(API_URL)/v1/health" 2>/dev/null || echo "unreachable"
 
-.agent-register: build
+.agent-register: $(BINARY)
 	@mkdir -p .sysbox/enrollment
 	@test ! -e .sysbox/enrollment/identity.json || { echo "Enrollment already exists; inspect it before registering again"; exit 1; }
 	$(BINARY) agent register --api $(AGENT_API_URL) --token "$(SYSBOX_API_TOKEN)" --id $(AGENT_ID) --name $(AGENT_ID) --substrates $(AGENT_SUBSTRATES) --identity .sysbox/enrollment/identity.json
