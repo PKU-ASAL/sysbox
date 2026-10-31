@@ -122,19 +122,46 @@ func PrepareOperation(ctx context.Context, req OperationRequest, deps OperationD
 	return op, nil
 }
 
-func (o *Operation) Plan() (*Plan, error) {
+func (o *Operation) Plan(ctx context.Context) (*Plan, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	switch o.request.Kind {
 	case "apply", "repair":
 		plan, err := ComputePlan(o.Graph, o.State, o.executor.providers)
-		if err != nil || o.request.Target == "" {
-			return plan, err
+		if err != nil {
+			return nil, err
 		}
-		target, parseErr := address.Parse(o.request.Target)
-		if parseErr != nil || !target.Equal(address.Resource(target.Type, target.Name)) {
-			return nil, fmt.Errorf("--target: expected type.name, got %q", o.request.Target)
+		if o.request.Target != "" {
+			target, err := address.Parse(o.request.Target)
+			if err != nil || !target.Equal(address.Resource(target.Type, target.Name)) {
+				return nil, fmt.Errorf("--target: expected type.name, got %q", o.request.Target)
+			}
+			plan = FilterPlanByTarget(plan, target.Type, target.Name)
 		}
-		o.executor.logf("Targeting: %s\n", target)
-		return FilterPlanByTarget(plan, target.Type, target.Name), nil
+		// Observe before fixing the executable scope. Never publish observed
+		// identities into canonical state merely to make a plan succeed.
+		for i := range plan.Actions {
+			change := &plan.Actions[i]
+			if plan.excluded[change.Address.String()] || change.Action != model.PlanActionNoop {
+				continue
+			}
+			observed, err := o.executor.observeTarget(ctx, change.Address)
+			if err != nil {
+				return nil, err
+			}
+			if observed.Status == state.ResourceAbsent || observed.Status == state.ResourceDrifted {
+				if resourcePreventDestroy(o.Graph.Get(change.Address), o.State.FindResource(change.Address)) {
+					return nil, fmt.Errorf("%s: lifecycle.prevent_destroy blocks observed replacement", change.Address)
+				}
+				change.Action = model.PlanActionReplace
+				change.Reason = "observed resource " + string(observed.Status)
+			}
+		}
+		if err := plan.ValidateDependencies(o.State); err != nil {
+			return nil, err
+		}
+		return plan, plan.Validate()
 	case "destroy":
 		return BuildDestroyPlan(o.State)
 	case "reset":

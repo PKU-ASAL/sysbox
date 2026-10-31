@@ -116,7 +116,7 @@ resource "sysbox_node" "web" {
 		req := runtime.OperationRequest{ID: uuid.NewString(), Topology: topology, Kind: kind, Workspace: path, QueuedAt: time.Now().UTC(), Revision: "acceptance"}
 		op, err := runtime.PrepareOperation(ctx, req, runtime.OperationDependencies{Providers: providers, Manager: manager, Actions: repo, Log: io.Discard})
 		require.NoError(t, err)
-		plan, err := op.Plan()
+		plan, err := op.Plan(ctx)
 		require.NoError(t, err)
 		require.Equal(t, changes, plan.HasChanges())
 		if executeErr := op.Execute(ctx, plan); executeErr != nil {

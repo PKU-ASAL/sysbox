@@ -171,7 +171,7 @@ func (e *Executor) executeResourceOperation(ctx context.Context, run *controlpla
 		return nil, err
 	}
 	var plan *runtime.Plan
-	plan, err = op.Plan()
+	plan, err = op.Plan(ctx)
 	if err != nil {
 		return nil, err
 	}

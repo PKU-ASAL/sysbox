@@ -134,17 +134,21 @@ func (e *Executor) converge(ctx context.Context, plan *Plan, operation string) (
 // differently. A dependent outside the approved destructive scope invalidates
 // the plan instead of silently adding another replacement.
 func (e *Executor) orderedDestruction(plan *Plan) ([]model.PlannedChange, error) {
+	return orderedPlanDestruction(e.state, plan)
+}
+
+func orderedPlanDestruction(st *state.State, plan *Plan) ([]model.PlannedChange, error) {
 	selected := map[string]model.PlannedChange{}
 	for _, change := range plan.Actions {
 		if change.Action == model.PlanActionDelete || change.Action == model.PlanActionReplace {
-			if e.state.FindResource(change.Address) != nil {
+			if st.FindResource(change.Address) != nil {
 				change.Action = model.PlanActionDelete
 				selected[change.Address.String()] = change
 			}
 		}
 	}
 	children := map[string][]string{}
-	for _, resource := range e.state.Resources {
+	for _, resource := range st.Resources {
 		for _, dependency := range resource.Dependencies {
 			if _, destroying := selected[dependency.String()]; !destroying {
 				continue

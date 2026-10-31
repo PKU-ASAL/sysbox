@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestExecutorRepairDoesNotEnlargeApprovedNoop(t *testing.T) {
+func TestExecutorRepairObservesBeforeApprovingPlan(t *testing.T) {
 	dir := t.TempDir()
 	topology := "lab"
 	kernelPath := filepath.Join(dir, "vmlinux")
@@ -43,14 +43,17 @@ resource "sysbox_kernel" "linux" {
 		StatePath:  statePath,
 		RunsDir:    dir,
 		Log:        &log,
-		Refresh:    true,
+		BeforeApply: func(plan *runtime.Plan) error {
+			require.True(t, plan.HasChanges(), "approval must see observed replacement")
+			return nil
+		},
 	})
 	run := &controlplane.Run{ID: "run-repair", Topology: topology, Workspace: topology, Op: "repair", Operation: "repair", Status: controlplane.RunRunning}
 
 	NewExecutorWithBridge(bridge).ExecuteContext(context.Background(), run)
 
-	require.Contains(t, run.Err, runtime.ErrPlanStale.Error())
-	require.Equal(t, controlplane.RunFailed, run.Status)
+	require.Empty(t, run.Err)
+	require.Equal(t, controlplane.RunDone, run.Status)
 	cp, err := runtime.LoadCheckpointFile(filepath.Join(dir, topology, "runs", "run-repair.checkpoint.json"))
 	require.NoError(t, err)
 	require.Equal(t, "repair", cp.Operation)

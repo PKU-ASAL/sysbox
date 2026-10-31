@@ -61,5 +61,9 @@ func (s *Server) handleRevisionPlan(w http.ResponseWriter, r *http.Request) {
 		}
 		plan = runtime.FilterPlanByTarget(plan, target.Type, target.Name)
 	}
+	if err := plan.ValidateDependencies(state); err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
 	writeJSON(w, 200, planJSON(plan))
 }

@@ -104,6 +104,13 @@ func ComputePlan(g *graph.Graph, s *state.State, providers *driver.Registry) (*P
 	return plan, plan.Validate()
 }
 
+// ValidateDependencies checks the selected plan after target filtering (and,
+// on the host, observation). It never expands the destructive scope.
+func (p *Plan) ValidateDependencies(st *state.State) error {
+	_, err := orderedPlanDestruction(st, p)
+	return err
+}
+
 func resourcePreventDestroy(node *graph.Node, current *state.Resource) bool {
 	if node != nil {
 		lifecycle := lifecycleOf(node)

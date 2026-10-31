@@ -98,7 +98,7 @@ func TestResourceOperationSQLiteLifecycleWithoutControlPlane(t *testing.T) {
 		req.ID = id
 		op, err := runtime.PrepareOperation(context.Background(), req, deps)
 		require.NoError(t, err)
-		plan, err := op.Plan()
+		plan, err := op.Plan(context.Background())
 		require.NoError(t, err)
 		require.Equal(t, id == "first", plan.HasChanges())
 		require.NoError(t, op.Execute(context.Background(), plan))
@@ -115,7 +115,7 @@ func TestResourceOperationSQLiteLifecycleWithoutControlPlane(t *testing.T) {
 	req.Inputs = nil
 	op, err := runtime.PrepareOperation(context.Background(), req, deps)
 	require.NoError(t, err)
-	plan, err := op.Plan()
+	plan, err := op.Plan(context.Background())
 	require.NoError(t, err)
 	require.NoError(t, op.Execute(context.Background(), plan))
 	require.Equal(t, 1, h.deletes)
@@ -147,7 +147,7 @@ func TestResourceOperationRetainsUncertainEffectAfterCommitFailure(t *testing.T)
 	deps.Actions = fault
 	op, err := runtime.PrepareOperation(context.Background(), req, deps)
 	require.NoError(t, err)
-	plan, err := op.Plan()
+	plan, err := op.Plan(context.Background())
 	require.NoError(t, err)
 	require.ErrorContains(t, op.Execute(context.Background(), plan), "result unavailable")
 	require.Equal(t, 1, h.creates)
@@ -156,7 +156,7 @@ func TestResourceOperationRetainsUncertainEffectAfterCommitFailure(t *testing.T)
 	req.ID = "retry"
 	retry, err := runtime.PrepareOperation(context.Background(), req, deps)
 	require.NoError(t, err)
-	plan, err = retry.Plan()
+	plan, err = retry.Plan(context.Background())
 	require.NoError(t, err)
 	require.Error(t, retry.Execute(context.Background(), plan))
 	require.Equal(t, 1, h.creates)
@@ -164,7 +164,7 @@ func TestResourceOperationRetainsUncertainEffectAfterCommitFailure(t *testing.T)
 	req.ID = "destroy"
 	destroy, err := runtime.PrepareOperation(context.Background(), req, deps)
 	require.NoError(t, err)
-	plan, err = destroy.Plan()
+	plan, err = destroy.Plan(context.Background())
 	require.NoError(t, err)
 	require.Error(t, destroy.Execute(context.Background(), plan))
 	require.Zero(t, h.deletes)
@@ -174,7 +174,7 @@ func TestResourceOperationRejectsEffectsBeforeDurableIntent(t *testing.T) {
 	deps.Actions = &operationFaultRepository{ActionRepository: deps.Actions, failIntent: true}
 	op, err := runtime.PrepareOperation(context.Background(), req, deps)
 	require.NoError(t, err)
-	plan, err := op.Plan()
+	plan, err := op.Plan(context.Background())
 	require.NoError(t, err)
 	require.ErrorContains(t, op.Execute(context.Background(), plan), "intent unavailable")
 	require.Zero(t, h.creates)
@@ -183,7 +183,7 @@ func TestResourceOperationRejectsStalePlan(t *testing.T) {
 	deps, req, h := operationFixture(t)
 	op, err := runtime.PrepareOperation(context.Background(), req, deps)
 	require.NoError(t, err)
-	plan, err := op.Plan()
+	plan, err := op.Plan(context.Background())
 	require.NoError(t, err)
 	other, err := deps.Manager.Load()
 	require.NoError(t, err)
@@ -201,7 +201,7 @@ func TestResourceOperationApplyTargetStaysInsidePlannedScope(t *testing.T) {
 	req.Target = handler.kind + ".node"
 	op, err := runtime.PrepareOperation(context.Background(), req, deps)
 	require.NoError(t, err)
-	plan, err := op.Plan()
+	plan, err := op.Plan(context.Background())
 	require.NoError(t, err)
 	require.NoError(t, op.Execute(context.Background(), plan))
 	stored, err := deps.Manager.Load()
@@ -239,7 +239,7 @@ func TestResourceOperationsUseIndependentProviderRegistries(t *testing.T) {
 	for i, op := range operations {
 		t.Run(fmt.Sprintf("operation-%d", i), func(t *testing.T) {
 			t.Parallel()
-			plan, err := op.Plan()
+			plan, err := op.Plan(context.Background())
 			require.NoError(t, err)
 			require.NoError(t, op.Execute(context.Background(), plan))
 			require.Equal(t, []string{"provider-one", "provider-two"}[i], op.State.Resources[0].ExternalID)
@@ -266,7 +266,7 @@ func TestResourceOperationCancelledBeforeExecutionHasNoEffects(t *testing.T) {
 	deps, request, provider := operationFixture(t)
 	op, err := runtime.PrepareOperation(context.Background(), request, deps)
 	require.NoError(t, err)
-	plan, err := op.Plan()
+	plan, err := op.Plan(context.Background())
 	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -275,4 +275,49 @@ func TestResourceOperationCancelledBeforeExecutionHasNoEffects(t *testing.T) {
 	journal, err := deps.Actions.LoadActions(context.Background(), request.Topology)
 	require.NoError(t, err)
 	require.Empty(t, journal)
+}
+
+func TestResourceOperationPlansRepairOfExternallyMissingResource(t *testing.T) {
+	deps, req, h := operationFixture(t)
+	op, err := runtime.PrepareOperation(context.Background(), req, deps)
+	require.NoError(t, err)
+	plan, err := op.Plan(context.Background())
+	require.NoError(t, err)
+	require.NoError(t, op.Execute(context.Background(), plan))
+	h.exists = false
+	req.ID = "repair-missing"
+	op, err = runtime.PrepareOperation(context.Background(), req, deps)
+	require.NoError(t, err)
+	plan, err = op.Plan(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, model.PlanActionReplace, plan.Actions[0].Action)
+	require.NoError(t, op.Execute(context.Background(), plan))
+	require.Equal(t, 2, h.creates)
+	require.True(t, h.exists)
+}
+
+func TestResourceOperationPlanningUnknownPreservesCanonicalState(t *testing.T) {
+	deps, req, h := operationFixture(t)
+	op, err := runtime.PrepareOperation(context.Background(), req, deps)
+	require.NoError(t, err)
+	plan, err := op.Plan(context.Background())
+	require.NoError(t, err)
+	require.NoError(t, op.Execute(context.Background(), plan))
+	before, err := deps.Manager.Load()
+	require.NoError(t, err)
+	h.unknown = true
+	req.ID = "observe-unknown"
+	op, err = runtime.PrepareOperation(context.Background(), req, deps)
+	require.NoError(t, err)
+	_, err = op.Plan(context.Background())
+	require.ErrorIs(t, err, runtime.ErrObservationUnknown)
+	after, err := deps.Manager.Load()
+	require.NoError(t, err)
+	require.Equal(t, before, after)
+	require.Equal(t, 1, h.creates)
+	require.Zero(t, h.deletes)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = op.Plan(ctx)
+	require.ErrorIs(t, err, context.Canceled)
 }
