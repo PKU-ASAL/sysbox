@@ -124,7 +124,12 @@ python3 -m unittest discover -s scripts/acceptance -p 'test_*.py'
 ```
 
 默认 Go 测试不等于真实 provider/Windows/断电验收；受环境限制而 skip 的测试不能算通过对应能力门槛。
-真实宿主测试只在隔离实验环境运行。发布构建与验收入口：
+真实宿主测试只在隔离实验环境运行。Docker 启动/DNS 和 Windows 域启动专项脚本在所属执行宿主运行，
+要求设置 `SYSBOX_E2E_BINARY`、`SYSBOX_API_URL`、`SYSBOX_API_TOKEN` 和 `SYSBOX_E2E_AGENT_ID`，
+并检查 API 只有这一台在线执行宿主、本机身份匹配，以及隔离部署生成的 `acceptance-lab.json` 标记；
+不自动编译 binary，也不在失败时自动销毁未知状态。
+异构矩阵使用独立双虚拟机、发布 metadata 与预先发布的 revision，环境字段见架构文档的收尾记录。
+发布构建与验收入口：
 [scripts/release](scripts/release)、[scripts/acceptance](scripts/acceptance)、[Makefile](Makefile)。
 Release 镜像应使用已校验归档并核对 CLI/helper 哈希；同源构建不能替代同制品验收。
 

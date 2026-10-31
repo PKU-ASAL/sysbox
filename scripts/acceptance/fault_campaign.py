@@ -19,13 +19,13 @@ def wait_live(execute, topology, timeout=120):
         raise ValueError('test topology required')
     deadline=time.monotonic()+timeout
     while time.monotonic()<deadline:
-        query=("sudo find /var/lib/sysbox-supervisor/journal -maxdepth 1 -name '*.json' "
+        query=("sudo find /var/lib/sysbox-host/journal -maxdepth 1 -name '*.json' "
                "-exec jq -c 'select(.ref.topology==\""+topology+"\")' {} \\;")
         rows=execute('execution',query).splitlines()
         if len(rows)==1:
             record=json.loads(rows[0])
             if record.get('result',{}).get('Status')=='running' and not record.get('cancel_requested') and not record.get('stop_receipt'):
-                checkpoint=("sudo find /var/lib/sysbox-supervisor/journal/runs -maxdepth 1 -name '*.json' "
+                checkpoint=("sudo find /var/lib/sysbox-host/journal/runs -maxdepth 1 -name '*.json' "
                             "-exec jq -c '.outcomes[] | select(.run_checkpoint.request.topology==\""+topology+"\")' {} \\;")
                 if len(execute('execution',checkpoint).splitlines())==1:
                     return record
@@ -86,7 +86,7 @@ def require_clean_execution(execute):
         raise RuntimeError('prior managed container remains; retain evidence and reconcile before another round')
     if execute('execution','sudo docker network ls -q --filter label=sysbox.owner_uid').strip():
         raise RuntimeError('prior managed network remains')
-    query = "sudo find /var/lib/sysbox-supervisor/journal -name '*.json' -exec jq -c 'select(.result.Status==\"running\" or (.outcomes // {} | to_entries | any(.value.state==\"intent\")))' {} \\;"
+    query = "sudo find /var/lib/sysbox-host/journal -name '*.json' -exec jq -c 'select(.result.Status==\"running\" or (.outcomes // {} | to_entries | any(.value.state==\"intent\")))' {} \\;"
     if execute('execution',query).strip():
         raise RuntimeError('prior unresolved host journal remains')
 
@@ -102,7 +102,7 @@ def require_guest_image(execute):
 def running_builds(execute):
     result = {}
     for role, services in (('control',('sysbox-api1','sysbox-api2')),
-                           ('execution',('sysbox-agent','sysbox-supervisor'))):
+                           ('execution',('sysbox-agent','sysbox-host'))):
         hashes=[]
         for service in services:
             pid=execute(role,'sudo systemctl show '+service+' --property=MainPID --value').strip()
@@ -117,7 +117,7 @@ def running_builds(execute):
 def failure_diagnostics(execute):
     result={}
     for role,units in (('control','-u sysbox-api1 -u sysbox-api2'),
-                       ('execution','-u sysbox-supervisor -u sysbox-agent')):
+                       ('execution','-u sysbox-host -u sysbox-agent')):
         try:
             result[role]=execute(role,"sudo journalctl "+units+" --since '10 minutes ago' --no-pager -n 80")[-32768:]
         except Exception as error:
@@ -143,7 +143,7 @@ def run(root, fault):
     guest_image = require_guest_image(execute)
     # Both APIs must be healthy before starting a fresh workload.
     execute('control','sudo systemctl is-active --quiet sysbox-api1 sysbox-api2 postgresql@16-main')
-    execute('execution','sudo systemctl is-active --quiet sysbox-agent sysbox-supervisor')
+    execute('execution','sudo systemctl is-active --quiet sysbox-agent sysbox-host')
     for name in ('cross_host_run.py','recover_failed_cleanup.py'):
         lab.upload(root,manifest,'control',Path(__file__).parent/name,'/home/p9/'+name)
     remote='/var/tmp/'+directory.name

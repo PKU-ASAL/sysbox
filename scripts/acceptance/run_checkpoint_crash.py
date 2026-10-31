@@ -10,7 +10,7 @@ import two_vms as lab
 def inject(topology, execute, save):
     if not topology.startswith("p9-") or not all(c.isalnum() or c == "-" for c in topology):
         raise RuntimeError("test topology required")
-    query = ("sudo find /var/lib/sysbox-supervisor/journal/runs -maxdepth 1 -name '*.json' "
+    query = ("sudo find /var/lib/sysbox-host/journal/runs -maxdepth 1 -name '*.json' "
              "-exec jq -c '.outcomes[] | select(.run_checkpoint.request.topology==\"" + topology + "\")' {} \\;")
 
     def record():
@@ -23,7 +23,7 @@ def inject(topology, execute, save):
     checkpoint = before["run_checkpoint"]
     if before["state"] != "intent" or checkpoint["version"] != 1 or not checkpoint["children"]:
         raise RuntimeError("checkpointed intent with children required")
-    task_query = ("sudo find /var/lib/sysbox-supervisor/journal -maxdepth 1 -name '*.json' "
+    task_query = ("sudo find /var/lib/sysbox-host/journal -maxdepth 1 -name '*.json' "
                   "-exec jq -c 'select(.ref.topology==\"" + topology + "\")' {} \\;")
     tasks = [json.loads(row) for row in execute(task_query).splitlines()]
     original_tasks = {task["handle"]["ID"]: task for task in tasks}
@@ -31,7 +31,7 @@ def inject(topology, execute, save):
     if {task["handle"]["ID"] for task in tasks} != expected or not tasks or any(
             task.get("stop_receipt") or task["result"]["Status"] != "running" for task in tasks):
         raise RuntimeError("all checkpoint children must be observed running")
-    pid_query = "sudo systemctl show sysbox-supervisor --property=MainPID --value"
+    pid_query = "sudo systemctl show sysbox-host --property=MainPID --value"
     old_pid = int(execute(pid_query).strip())
     if old_pid < 2:
         raise RuntimeError("supervisor is not running")
@@ -39,7 +39,7 @@ def inject(topology, execute, save):
                 "children_before": tasks, "old_pid": old_pid}
     save(evidence)
     start = time.monotonic()
-    execute("sudo systemctl kill --signal=SIGKILL --kill-who=main sysbox-supervisor")
+    execute("sudo systemctl kill --signal=SIGKILL --kill-who=main sysbox-host")
     deadline = start + 45
     while time.monotonic() < deadline:
         current = record()

@@ -3,26 +3,25 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 config="${root}/tests/e2e/docker-network-alias/field.sysbox.hcl"
-state="${root}/.sysbox/e2e/docker-network-alias/state.json"
-binary="/tmp/sysbox-docker-network-alias"
-prefix="sysbox-lab-docker-network-alias"
+binary="${SYSBOX_E2E_BINARY:?set the verified sysbox binary path}"
+: "${SYSBOX_API_URL:?set the isolated API URL}"
+: "${SYSBOX_E2E_AGENT_ID:?set the isolated execution host Agent ID}"
+topology="sysbox-alias-${RANDOM}-${RANDOM}"
+# Run on the isolated execution host; provider probes use its Docker daemon.
+export SYSBOX_API_TOKEN="${SYSBOX_API_TOKEN:?API token required}"
+prefix="sysbox-lab-${topology}"
 network="${prefix}-net-app"
 mongo="${prefix}-node-mongo"
 target="${prefix}-node-target"
 attacker="${prefix}-node-attacker"
 
-cleanup() {
-  if [[ -x "${binary}" && -f "${state}" ]]; then
-    "${binary}" --state "${state}" -f "${config}" destroy --auto-approve >/dev/null 2>&1 || true
-  fi
-}
-trap cleanup EXIT INT TERM
+trap 'echo "Acceptance interrupted; retain topology ${topology} and inspect its Runs before cleanup" >&2' ERR
 
 cd "${root}"
-GOCACHE="${GOCACHE:-/tmp/sysbox-gocache}" go build -buildvcs=false -o "${binary}" ./cmd/sysbox
+source "${root}/tests/e2e/service_host_check.sh"
 
-"${binary}" --state "${state}" -f "${config}" validate
-"${binary}" --state "${state}" -f "${config}" apply --auto-approve
+"${binary}" -f "${config}" validate
+"${binary}" --topology "${topology}" -f "${config}" apply --auto-approve
 
 assert_dns() {
   local peer
@@ -36,14 +35,14 @@ assert_dns() {
 }
 
 assert_dns
-"${binary}" --state "${state}" -f "${config}" reset --auto-approve
+"${binary}" --topology "${topology}" -f "${config}" reset --auto-approve
 assert_dns
 
-plan_output="$("${binary}" --state "${state}" -f "${config}" plan)"
-grep -q '0 to add, 0 to replace, 0 to destroy, 5 unchanged' <<<"${plan_output}"
+plan_output="$("${binary}" --topology "${topology}" -f "${config}" plan)"
+jq -e 'all(.actions[]; .action == "no-op")' <<<"${plan_output}" >/dev/null
 
-"${binary}" --state "${state}" -f "${config}" destroy --auto-approve
-trap - EXIT INT TERM
+"${binary}" --topology "${topology}" destroy --auto-approve
+trap - ERR
 
 for container in "${mongo}" "${target}" "${attacker}"; do
   ! docker inspect "${container}" >/dev/null 2>&1

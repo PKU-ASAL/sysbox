@@ -3,27 +3,26 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 config="${root}/tests/e2e/docker-launch/field.sysbox.hcl"
-state="${root}/.sysbox/e2e/docker-launch/state.json"
-binary="/tmp/sysbox-docker-launch"
-service_container="sysbox-lab-docker-launch-node-service"
-inherited_container="sysbox-lab-docker-launch-node-inherited"
-both_container="sysbox-lab-docker-launch-node-both"
-idle_container="sysbox-lab-docker-launch-node-idle"
+binary="${SYSBOX_E2E_BINARY:?set the verified sysbox binary path}"
+: "${SYSBOX_API_URL:?set the isolated API URL}"
+: "${SYSBOX_E2E_AGENT_ID:?set the isolated execution host Agent ID}"
+topology="sysbox-launch-${RANDOM}-${RANDOM}"
+# Run on the isolated execution host; provider probes use its Docker daemon.
+export SYSBOX_API_TOKEN="${SYSBOX_API_TOKEN:?API token required}"
+service_container="sysbox-lab-${topology}-node-service"
+inherited_container="sysbox-lab-${topology}-node-inherited"
+both_container="sysbox-lab-${topology}-node-both"
+idle_container="sysbox-lab-${topology}-node-idle"
 
-cleanup() {
-  if [[ -x "${binary}" && -f "${state}" ]]; then
-    "${binary}" --state "${state}" -f "${config}" destroy --auto-approve >/dev/null 2>&1 || true
-  fi
-}
-trap cleanup EXIT INT TERM
+trap 'echo "Acceptance interrupted; retain topology ${topology} and inspect its Runs before cleanup" >&2' ERR
 
 cd "${root}"
+source "${root}/tests/e2e/service_host_check.sh"
 
 docker build -t sysbox-launch-override:test "${root}/tests/e2e/docker-launch"
-GOCACHE="${GOCACHE:-/tmp/sysbox-gocache}" go build -buildvcs=false -o "${binary}" ./cmd/sysbox
 
-"${binary}" --state "${state}" -f "${config}" validate
-"${binary}" --state "${state}" -f "${config}" apply --auto-approve
+"${binary}" -f "${config}" validate
+"${binary}" --topology "${topology}" -f "${config}" apply --auto-approve
 
 assert_launch_modes() {
   [[ "$(docker exec "${service_container}" cat /tmp/launch-mode)" == "override" ]]
@@ -34,14 +33,14 @@ assert_launch_modes() {
 
 assert_launch_modes
 
-"${binary}" --state "${state}" -f "${config}" reset --auto-approve
+"${binary}" --topology "${topology}" -f "${config}" reset --auto-approve
 assert_launch_modes
 
-plan_output="$("${binary}" --state "${state}" -f "${config}" plan)"
-grep -q '0 to add, 0 to replace, 0 to destroy, 6 unchanged' <<<"${plan_output}"
+plan_output="$("${binary}" --topology "${topology}" -f "${config}" plan)"
+jq -e 'all(.actions[]; .action == "no-op")' <<<"${plan_output}" >/dev/null
 
-"${binary}" --state "${state}" -f "${config}" destroy --auto-approve
-trap - EXIT INT TERM
+"${binary}" --topology "${topology}" destroy --auto-approve
+trap - ERR
 for container in "${service_container}" "${inherited_container}" "${both_container}" "${idle_container}"; do
   ! docker inspect "${container}" >/dev/null 2>&1
 done

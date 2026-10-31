@@ -485,9 +485,18 @@ Makefile 的 plan/apply/destroy 改为服务客户端，配置 CI 使用离线 v
 双虚拟机部署脚本要求 release metadata，安装三个匹配的 Linux 可执行文件，直接使用正式
 host/agent systemd 单元及相同身份路径。首次安装文档补齐 helper 和宿主工具要求。
 
-本轮代码与脚本测试不能替代全新宿主、最终制品实测。历史 mixed_lifecycle 和旧 Windows
-本地 CLI 验收脚本尚未全部转换，不能用它们宣称当前服务客户端验收通过；下一轮交付验收
-必须基于正式单元与 API 路径，完成干净安装、重启和回收，之后再进行 CyberField 联调。
+专项入口已切换：Docker 启动模式/DNS、Windows 域启动使用服务 CLI；异构矩阵通过 API
+执行 Apply、完整/定向 Reset、guest 签名探测和 Destroy，并独立检查 provider 残留。
+混合矩阵要求已发布、含固定镜像摘要的 revision，以及配置好的 Docker/Firecracker/libvirt 宿主；
+不再修改宿主 provider 配置或从本地 --state 执行。`SYSBOX_LAB_ROOT`、`SYSBOX_RELEASE_METADATA`、
+`SYSBOX_E2E_BINARY`、`SYSBOX_E2E_HELPER`、`SYSBOX_MIXED_REVISION`、`SYSBOX_E2E_OUTPUT`
+指定独立实验环境、制品和证据目录。Windows 域启动要求 `SYSBOX_WINDOWS_REVISION`，
+该 revision 的节点名为 windows10；QGA 持久任务另由 windows_tasks.py 验收。
+故障脚本使用正式 sysbox-host 服务及 /var/lib/sysbox-host/journal，ENOSPC 使用已有的
+隔离 tmpfs 故障门槛。失败时保留拓扑、journal 与日志，不以自动删库清理掩盖未知效果。
+
+脚本迁移与单测不代表这些矩阵已经使用最终制品重新实测。全新宿主安装、全部 provider
+矩阵和最终发布制品的验收仍必须保留独立证据；之后再进行 CyberField 联调。
 
 ## 历史资料
 

@@ -16,3 +16,9 @@ done
 output=$(make -n ci BINARY=/usr/bin/true)
 [[ "$output" != *'--state /tmp/sysbox-ci-'* ]] || { echo 'CI still invokes local lifecycle planning' >&2; exit 1; }
 echo 'Service entrypoint tests passed'
+for script in tests/e2e/docker_launch_override.sh tests/e2e/docker_network_alias.sh; do
+ if rg -- '--state|go build' "$script"; then
+  echo "$script retains the removed local lifecycle path" >&2; exit 1
+ fi
+ rg -q 'service_host_check.sh' "$script"
+done

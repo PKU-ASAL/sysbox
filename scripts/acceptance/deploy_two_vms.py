@@ -162,6 +162,8 @@ def deploy(root, binary, database="sysboxp9", deployment="deployment", release_m
     for name in ("host", "agent"):
         stage("execution", name + ".service", deployment_unit(name))
         remote(root, manifest, "execution", f"sudo install -m 0644 /home/p9/{name}.service /etc/systemd/system/sysbox-{name}.service")
+    stage("execution", "acceptance-lab.json", json.dumps({"agent_id":"execution-p9", "lab_id":manifest["id"], "disposable":True}))
+    remote(root, manifest, "execution", "sudo install -m 0600 /home/p9/acceptance-lab.json /etc/sysbox-host/acceptance-lab.json")
     remote(root, manifest, "execution", "sudo systemctl daemon-reload && sudo systemctl enable --now sysbox-host && sudo systemctl enable sysbox-agent && sudo systemctl start sysbox-agent && sudo systemctl is-active sysbox-agent sysbox-host")
     binary_digest = lab.file_sha256(binary)
     services = {"executables": {name: lab.file_sha256(path) for name,path in binaries.items()}, "lab_id": manifest["id"], "binary_sha256": binary_digest, "database": database,
