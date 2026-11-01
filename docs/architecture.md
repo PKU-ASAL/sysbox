@@ -500,6 +500,24 @@ host/agent systemd 单元及相同身份路径。首次安装文档补齐 helper
 
 ## 历史资料
 
+### 干净安装与连接池增长验收（2026-11-01）
+
+候选 `556f5f4` 在全新控制/执行虚拟机安装成功，使用原始 systemd 单元与发布包内的三个
+Linux 可执行文件；普通用户读取宿主私钥/配置、连接 Docker socket 均被拒绝，Docker
+Apply/Reset/Destroy 单拓扑闭环通过。
+
+随后 4 并发、40 次循环验收在第 24 次结束时仅 21 次成功：数据库出现 97 个 idle 连接，
+达到默认 100 连接上限。原因是 lifecycle cache 按带 topology 参数的 URL 缓存 repository，
+实际数据库连接却剥离该参数，导致同一数据库按历史 topology 重复建池。
+
+修复后同一物理数据库只保留一个 pool owner；各 topology 使用独立绑定视图，保留跨拓扑
+访问拒绝，视图 Close 不关闭共享池，cache Close 才释放所有 owner。固定 selector 仍在
+复用前校验，不通过去掉 selector 绕过拓扑限制。文件后端路径保持独立。
+独立 PostgreSQL 的 120 个历史 topology 测试验证池数量与连接上限，并确认关闭后释放连接。
+在原失败环境保留历史、保持数据库 100 连接上限复测：4 并发 40 次全部通过，约 170 秒，
+连接约 25 条；Apply P95 6.31 秒，Destroy P95 13.33 秒；独立检查无受管 Docker 残留。
+本轮结果是短期增长回归，不代表多日稳定性或故障矩阵全部通过；修复 binary 尚未重建成发布包。
+
 原 84 份文档逐字节保存在 [归档](archive/2026-10-27-documentation.tar.gz)，
 [清单](archive/2026-10-27-documentation.json)记录原路径、提交、大小和 SHA-256。
 归档是历史证据，不覆盖当前三份文档；其中引用的 `/tmp` 日志、VM 磁盘和远端文件并未包含在文档归档中。

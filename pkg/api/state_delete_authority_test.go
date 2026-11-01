@@ -21,12 +21,7 @@ func stateDeleteTestServer(t *testing.T, store controlstore.Store) *Server {
 	// Each fixture and cold reconstruction owns its cached lifecycle pools.
 	// Closing only the API store leaves these connections alive across tests.
 	t.Cleanup(func() {
-		s.RepositoryMu.Lock()
-		defer s.RepositoryMu.Unlock()
-		for _, repo := range s.Repositories {
-			require.NoError(t, repo.Close())
-		}
-		s.Repositories = nil
+		require.NoError(t, s.LifecycleRepositories.Close())
 	})
 	s.apiStore, s.workspaces = store, nil
 	switch typed := store.(type) {

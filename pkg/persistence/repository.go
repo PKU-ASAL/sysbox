@@ -60,6 +60,7 @@ type backend interface {
 type Repository struct {
 	backend             backend
 	boundTopology       string
+	borrowedBackend     bool
 	externalGCMu        sync.RWMutex
 	externalGCInventory func(context.Context, string) (map[string][]string, error)
 }
@@ -82,7 +83,24 @@ func (r *Repository) SetExternalGCInventoryProvider(provider func(context.Contex
 	return nil
 }
 
-func (r *Repository) Close() error { return r.backend.close() }
+func (r *Repository) Close() error {
+	if r.borrowedBackend {
+		return nil
+	}
+	return r.backend.close()
+}
+
+// BindTopology borrows this repository's database pool without transferring
+// ownership. The owner must outlive every view and close after users stop.
+func (r *Repository) BindTopology(topology string) (*Repository, error) {
+	if !topologyName.MatchString(topology) || r.boundTopology != "" && r.boundTopology != topology {
+		return nil, ErrInvalidRecord
+	}
+	if _, ok := r.backend.(*sqlBackend); !ok {
+		return nil, ErrUnsupportedVersion
+	}
+	return &Repository{backend: r.backend, boundTopology: topology, borrowedBackend: true}, nil
+}
 
 func (r *Repository) ListTopologies(ctx context.Context) ([]state.TopologyMetadata, error) {
 	keys, err := r.backend.keys(ctx)

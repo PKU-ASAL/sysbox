@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sync"
@@ -13,8 +14,9 @@ import (
 )
 
 type LifecycleRepositories struct {
-	RepositoryMu sync.Mutex
-	Repositories map[string]*persistence.Repository
+	RepositoryMu         sync.Mutex
+	Repositories         map[string]*persistence.Repository
+	databaseRepositories map[string]*persistence.Repository
 }
 
 func (s *LifecycleRepositories) Open(runsDir, stateBackend, topology string) (*persistence.Repository, error) {
@@ -45,6 +47,41 @@ func (s *LifecycleRepositories) Open(runsDir, stateBackend, topology string) (*p
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	// A topology selector is an authorization boundary, not a distinct
+	// database. Validate it above, then share only the physical connection pool.
+	if u, parseErr := url.Parse(raw); parseErr == nil && (u.Scheme == "postgres" || u.Scheme == "postgresql" || u.Scheme == "sqlite") {
+		query := u.Query()
+		query.Del("topology")
+		u.RawQuery = query.Encode()
+		if u.Scheme == "postgresql" {
+			u.Scheme = "postgres"
+		}
+		databaseKey := u.String()
+		owner := s.databaseRepositories[databaseKey]
+		if owner == nil {
+			owner, err = persistence.OpenConfigured(ctx, databaseKey, path)
+			if err != nil {
+				return nil, err
+			}
+			if s.databaseRepositories == nil {
+				s.databaseRepositories = map[string]*persistence.Repository{}
+			}
+			s.databaseRepositories[databaseKey] = owner
+		}
+		key = databaseKey + "\x00" + topology
+		if existing := s.Repositories[key]; existing != nil {
+			return existing, nil
+		}
+		repo, err := owner.BindTopology(topology)
+		if err != nil {
+			return nil, err
+		}
+		if s.Repositories == nil {
+			s.Repositories = map[string]*persistence.Repository{}
+		}
+		s.Repositories[key] = repo
+		return repo, nil
+	}
 	repo, err := persistence.OpenConfigured(ctx, raw, path)
 	if err != nil {
 		return nil, err
@@ -64,5 +101,9 @@ func (s *LifecycleRepositories) Close() error {
 		failures = append(failures, repo.Close())
 	}
 	s.Repositories = nil
+	for _, repo := range s.databaseRepositories {
+		failures = append(failures, repo.Close())
+	}
+	s.databaseRepositories = nil
 	return errors.Join(failures...)
 }
