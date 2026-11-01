@@ -42,7 +42,7 @@ RUN cd /release && sha256sum -c SHA256SUMS && \
     jq -e --arg revision "${REVISION}" --arg version "${VERSION}" --arg fingerprint "${RELEASE_FINGERPRINT}" \
       '.commit == $revision and .version == $version and .release_fingerprint == $fingerprint' build-metadata.json && \
     mkdir /out && tar -xzf "sysbox_${VERSION}_linux_${TARGETARCH}.tar.gz" -C /out && \
-    jq -r --arg arch "${TARGETARCH}" '.targets[] | select(.architecture == $arch) | \
+    jq -r --arg arch "${TARGETARCH}" '.targets[] | select(.os == "linux" and .architecture == $arch) | \
       "\(.sysbox_sha256)  /out/sysbox\n\(.sysbox_init_sha256)  /out/sysbox-init\n\(.sysbox_netns_sha256)  /out/sysbox-netns"' \
       build-metadata.json | sha256sum -c -
 FROM binaries-${BINARY_SOURCE} AS binaries
@@ -65,7 +65,7 @@ LABEL org.opencontainers.image.title="Sysbox" \
       org.opencontainers.image.created="${CREATED}" \
       org.opencontainers.image.licenses="MulanPSL-2.0" \
       io.github.pku-asal.sysbox.release-fingerprint="${RELEASE_FINGERPRINT}" \
-      org.opencontainers.image.documentation="${SOURCE_URL}/blob/main/docs/index.md"
+      org.opencontainers.image.documentation="${SOURCE_URL}/blob/main/README.md"
 
 # Reuse the build stage CA bundle to bootstrap runtime HTTPS package installs.
 COPY --from=binaries /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt

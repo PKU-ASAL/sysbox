@@ -9,6 +9,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
 )
@@ -32,7 +33,7 @@ resource "sysbox_actor" "red" {
 	require.NoError(t, err)
 	ctx, err := config.BuildEvalContext(root)
 	require.NoError(t, err)
-	_, err = BuildGraph(root, ctx)
+	_, err = BuildGraph(root, ctx, driver.DefaultRegistry)
 	require.ErrorContains(t, err, `unsupported resource type "sysbox_actor"`)
 }
 
@@ -42,7 +43,7 @@ func TestComputePlanRejectsRemovedActorState(t *testing.T) {
 		Driver:  "docker",
 	}}}
 
-	_, err := ComputePlan(graph.New(), st)
+	_, err := ComputePlan(graph.New(), st, driver.DefaultRegistry)
 
 	require.ErrorContains(t, err, `unsupported state resource type "sysbox_actor"`)
 }
@@ -62,7 +63,7 @@ resource "sysbox_image" "alpine" {
 	require.NoError(t, err)
 	ctx, err := config.BuildEvalContext(root)
 	require.NoError(t, err)
-	g, err := BuildGraph(root, ctx)
+	g, err := BuildGraph(root, ctx, driver.DefaultRegistry)
 	require.NoError(t, err)
 	image := g.Get(address.Resource("sysbox_image", "alpine"))
 	require.NotNil(t, image)
@@ -83,7 +84,7 @@ resource "sysbox_image" "alpine" {
 	require.NoError(t, err)
 	ctx, err = config.BuildEvalContext(root)
 	require.NoError(t, err)
-	_, err = BuildGraph(root, ctx)
+	_, err = BuildGraph(root, ctx, driver.DefaultRegistry)
 	require.ErrorContains(t, err, "docker_ref")
 }
 
@@ -114,7 +115,7 @@ resource "sysbox_node" "server" {
 	require.NoError(t, err)
 	ctx, err := config.BuildEvalContext(root)
 	require.NoError(t, err)
-	g, err := BuildGraph(root, ctx)
+	g, err := BuildGraph(root, ctx, driver.DefaultRegistry)
 	require.NoError(t, err)
 	cfg := g.Get(address.Resource("sysbox_node", "server")).Data.(*config.NodeConfig)
 	require.Equal(t, "/usr/bin/install", cfg.Provisioners[0].Program)
@@ -142,7 +143,7 @@ resource "sysbox_node" "server" {
 	require.NoError(t, err)
 	ctx, err = config.BuildEvalContext(root)
 	require.NoError(t, err)
-	_, err = BuildGraph(root, ctx)
+	_, err = BuildGraph(root, ctx, driver.DefaultRegistry)
 	require.ErrorContains(t, err, "inline")
 }
 
@@ -158,7 +159,7 @@ resource "sysbox_network" "lab" {
 
 	ctx, err := config.BuildEvalContext(root)
 	require.NoError(t, err)
-	g, err := BuildGraph(root, ctx)
+	g, err := BuildGraph(root, ctx, driver.DefaultRegistry)
 	require.NoError(t, err)
 
 	require.Len(t, g.All(), 3)
@@ -181,7 +182,7 @@ resource "sysbox_network" "dmz" {
 
 	ctx, err := config.BuildEvalContext(root)
 	require.NoError(t, err)
-	g, err := BuildGraph(root, ctx)
+	g, err := BuildGraph(root, ctx, driver.DefaultRegistry)
 	require.NoError(t, err)
 
 	// count = 0 expands to nothing
@@ -200,7 +201,7 @@ resource "sysbox_network" "lab" {
 
 	ctx, err := config.BuildEvalContext(root)
 	require.NoError(t, err)
-	g, err := BuildGraph(root, ctx)
+	g, err := BuildGraph(root, ctx, driver.DefaultRegistry)
 	require.NoError(t, err)
 
 	require.Len(t, g.All(), 2)
@@ -220,7 +221,7 @@ resource "sysbox_network" "lab" {
 
 	ctx, err := config.BuildEvalContext(root)
 	require.NoError(t, err)
-	g, err := BuildGraph(root, ctx)
+	g, err := BuildGraph(root, ctx, driver.DefaultRegistry)
 	require.NoError(t, err)
 
 	require.Len(t, g.All(), 3)
@@ -242,7 +243,7 @@ resource "sysbox_network" "seg" {
 
 	ctx, err := config.BuildEvalContext(root)
 	require.NoError(t, err)
-	g, err := BuildGraph(root, ctx)
+	g, err := BuildGraph(root, ctx, driver.DefaultRegistry)
 	require.NoError(t, err)
 
 	require.Len(t, g.All(), 2)
@@ -268,7 +269,7 @@ resource "sysbox_network" "lab_dmz" {
 	require.NoError(t, err)
 	ctx, err := config.BuildEvalContext(root)
 	require.NoError(t, err)
-	g, err := BuildGraph(root, ctx)
+	g, err := BuildGraph(root, ctx, driver.DefaultRegistry)
 	require.NoError(t, err)
 	require.Len(t, g.All(), 2)
 	require.NotNil(t, g.Get(address.StringInstance("sysbox_network", "lab", "dmz")))
@@ -286,7 +287,7 @@ func TestBuildGraphModule(t *testing.T) {
 
 	ctx, err := config.BuildEvalContext(root, filepath.Dir(callerFile))
 	require.NoError(t, err)
-	g, err := BuildGraph(root, ctx, callerFile)
+	g, err := BuildGraph(root, ctx, driver.DefaultRegistry, callerFile)
 	require.NoError(t, err)
 
 	// Module expands to two networks under module.net.
@@ -346,7 +347,7 @@ resource "sysbox_network" "net" { cidr = var.cidr }
 
 	ctx, err := config.BuildEvalContext(root, dir)
 	require.NoError(t, err)
-	g, err := BuildGraph(root, ctx, callerFile)
+	g, err := BuildGraph(root, ctx, driver.DefaultRegistry, callerFile)
 	require.NoError(t, err)
 
 	require.Len(t, g.All(), 1)
@@ -373,7 +374,7 @@ module "outer" { source = "./mod" }
 	require.NoError(t, err)
 	ctx, err := config.BuildEvalContext(root, dir)
 	require.NoError(t, err)
-	_, err = BuildGraph(root, ctx, callerFile)
+	_, err = BuildGraph(root, ctx, driver.DefaultRegistry, callerFile)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "nested modules")
 }
@@ -400,7 +401,7 @@ module "net" { source = "./mod" }
 	require.NoError(t, err)
 	ctx, err := config.BuildEvalContext(root, dir)
 	require.NoError(t, err)
-	g, err := BuildGraph(root, ctx, callerFile)
+	g, err := BuildGraph(root, ctx, driver.DefaultRegistry, callerFile)
 	require.NoError(t, err)
 
 	// for_each keys and the module path remain separate address components.
@@ -447,7 +448,7 @@ resource "sysbox_firewall" "edge" {
 	require.NoError(t, err)
 	ctx, err := config.BuildEvalContext(root, dir)
 	require.NoError(t, err)
-	g, err := BuildGraph(root, ctx, callerFile)
+	g, err := BuildGraph(root, ctx, driver.DefaultRegistry, callerFile)
 	require.NoError(t, err)
 	module := address.ModuleInstance{Name: "lab"}
 	firewall := address.Resource("sysbox_firewall", "edge").WithModule(module)
@@ -470,7 +471,7 @@ resource "sysbox_network" "lab" {
 
 	ctx, err := config.BuildEvalContext(root)
 	require.NoError(t, err)
-	_, err = BuildGraph(root, ctx)
+	_, err = BuildGraph(root, ctx, driver.DefaultRegistry)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "set must contain strings")
 }
@@ -504,7 +505,7 @@ resource "sysbox_node" "web" {
 
 	mgr := state.NewManager(filepath.Join(t.TempDir(), "state.json"))
 
-	g, _, st, root, evalCtx, err := LoadWorkspaceWithInputs(hclFile, mgr, map[string]string{"mode": "prod"})
+	g, _, st, root, evalCtx, err := LoadWorkspaceWithInputs(hclFile, mgr, map[string]string{"mode": "prod"}, driver.DefaultRegistry)
 	require.NoError(t, err)
 	require.NotNil(t, st)
 	require.NotNil(t, root)
@@ -525,7 +526,7 @@ resource "sysbox_node" "web" {
 	// The no-inputs path (preflight/destroy/refresh) now also builds: var.n
 	// falls back to its default (2) and var.mode to a placeholder (""), so
 	// count still expands instead of failing with "no variable named var".
-	g2, _, _, _, _, err := LoadWorkspaceWithManager(hclFile, mgr)
+	g2, _, _, _, _, err := LoadWorkspaceWithManager(hclFile, mgr, driver.DefaultRegistry)
 	require.NoError(t, err)
 	require.NotNil(t, g2.Get(address.IntInstance("sysbox_node", "web", 1)))
 	require.Nil(t, g2.Get(address.Resource("sysbox_node", "web")))
@@ -556,7 +557,7 @@ resource "sysbox_node" "web" {
 
 	mgr := state.NewManager(filepath.Join(t.TempDir(), "state.json"))
 
-	g, _, _, _, _, err := LoadWorkspaceWithInputs(hclFile, mgr, map[string]string{"n": "2"})
+	g, _, _, _, _, err := LoadWorkspaceWithInputs(hclFile, mgr, map[string]string{"n": "2"}, driver.DefaultRegistry)
 	require.NoError(t, err)
 
 	// count = var.n, with n supplied as the string "2", expands to two nodes.
@@ -585,7 +586,7 @@ resource "sysbox_node" "web" {
 `)
 	mgr := state.NewManager(filepath.Join(t.TempDir(), "state.json"))
 	require.NoError(t, mgr.Save(&state.State{Version: state.SchemaVersion, AppliedVariables: map[string]string{"mode": "prod"}}))
-	g, _, _, _, _, err := LoadWorkspaceWithManager(hclFile, mgr)
+	g, _, _, _, _, err := LoadWorkspaceWithManager(hclFile, mgr, driver.DefaultRegistry)
 	require.NoError(t, err)
 	node := g.Get(address.Resource("sysbox_node", "web"))
 	require.NotNil(t, node)

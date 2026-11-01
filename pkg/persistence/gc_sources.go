@@ -11,7 +11,6 @@ import (
 
 // Format 7 is opt-in: old writers must refuse an enrolled aggregate rather
 // than silently dropping or ignoring its external reference protections.
-const GCSourceFormatVersion = 7
 
 // GCSourceManifest is committed only after a participating writer finishes
 // publication. Every external mutation must first call BeginGCSource.
@@ -67,20 +66,11 @@ func validateGCSourceManifest(m GCSourceManifest, owner string) error {
 	return nil
 }
 func validateGCSources(a *aggregate) error {
-	if a.Format == FormatVersion {
-		if a.GCSources != nil {
-			return ErrCorruptRecord
-		}
-		return nil
-	}
-	if (a.Format == GCDispositionFormatVersion || a.Format == OwnershipRetirementFormatVersion || a.Format == OwnershipTargetFormatVersion || a.Format == GCAdmissionFormatVersion || a.Format == IntentDispositionFormatVersion || a.Format == AdoptionRecoveryFormatVersion || a.Format == LegacyAdoptionRecoveryFormatVersion) && len(a.GCSources) == 0 {
-		return nil
-	}
-	if (a.Format != GCSourceFormatVersion && a.Format != GCSourceRetirementFormatVersion && a.Format != GCDispositionFormatVersion && a.Format != OwnershipRetirementFormatVersion && a.Format != OwnershipTargetFormatVersion && a.Format != GCAdmissionFormatVersion && a.Format != IntentDispositionFormatVersion && a.Format != AdoptionRecoveryFormatVersion && a.Format != LegacyAdoptionRecoveryFormatVersion) || a.GCSources == nil || len(a.GCSources) == 0 || len(a.GCSources) > 128 {
+	if len(a.GCSources) > 128 {
 		return ErrCorruptRecord
 	}
 	for id, s := range a.GCSources {
-		if s.Retired && ((a.Format != GCSourceRetirementFormatVersion && a.Format != GCDispositionFormatVersion && a.Format != OwnershipRetirementFormatVersion && a.Format != OwnershipTargetFormatVersion && a.Format != GCAdmissionFormatVersion && a.Format != IntentDispositionFormatVersion && a.Format != AdoptionRecoveryFormatVersion && a.Format != LegacyAdoptionRecoveryFormatVersion) || s.Updating) {
+		if s.Retired && s.Updating {
 			return ErrCorruptRecord
 		}
 		if !topologyName.MatchString(id) || len(id) > 128 || s.Version < 1 {
@@ -125,9 +115,7 @@ func (r *Repository) BeginGCSource(ctx context.Context, topology, source, owner 
 		current.Version++
 		current.Updating = true
 		a.GCSources[source] = current
-		if a.Format == FormatVersion {
-			a.Format = GCSourceFormatVersion
-		}
+
 		version = current.Version
 		return nil
 	})

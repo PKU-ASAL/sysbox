@@ -8,18 +8,20 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/persistence"
-	"github.com/stretchr/testify/require"
-	"golang.org/x/crypto/ssh"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/ssh"
 )
 
 func TestSSHHostCompletionBindsEvidenceAndSurvivesRetiredCommand(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := NewServer(t.TempDir(), t.TempDir())
 		s.apiStore = store
@@ -28,7 +30,7 @@ func TestSSHHostCompletionBindsEvidenceAndSurvivesRetiredCommand(t *testing.T) {
 		s.grantHostKeys = map[string]ed25519.PublicKey{"agent": pub}
 		public, err := ssh.NewPublicKey(pub)
 		require.NoError(t, err)
-		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		session, err := authority.OpenSession(ctx, "agent", "session", "")
 		require.NoError(t, err)
 		for _, action := range []string{"ssh_access_apply", "ssh_access_delete"} {

@@ -2,15 +2,15 @@ package runtime
 
 import (
 	"context"
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/oslab/sysbox/pkg/address"
-
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
@@ -42,7 +42,7 @@ func TestRouterResourceHandlerPlanDiff(t *testing.T) {
 
 	action, err := p.PlanDiff(n, current)
 	require.NoError(t, err)
-	require.Equal(t, controlplane.PlanActionNoop, action.Action)
+	require.Equal(t, model.PlanActionNoop, action.Action)
 
 	n.Data = &config.RouterConfig{
 		Image:     "sysbox_image.alpine.id",
@@ -55,13 +55,13 @@ func TestRouterResourceHandlerPlanDiff(t *testing.T) {
 	}
 	action, err = p.PlanDiff(n, current)
 	require.NoError(t, err)
-	require.Equal(t, controlplane.PlanActionReplace, action.Action)
+	require.Equal(t, model.PlanActionReplace, action.Action)
 	_, ok := fieldChangeAt(action.Changes, "interfaces[0].IP")
 	require.True(t, ok)
 }
 
 func TestRouterResourceHandlerDeleteMissingSubstrateReturnsError(t *testing.T) {
-	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
+	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion}, driver.DefaultRegistry)
 	res := state.Resource{
 		Address:    address.Resource("sysbox_router", "r1"),
 		Driver:     "missing-router-provider",
@@ -79,7 +79,7 @@ func TestRouterNATUsesLogicalAttachments(t *testing.T) {
 	st.AddResource(state.Resource{Address: address.Resource("sysbox_image", "router"), Attributes: map[string]any{"image_id": "image", "repository": "router:latest"}})
 	st.AddResource(state.Resource{Address: address.Resource("sysbox_network", "internal"), Attributes: map[string]any{"netns": "ns", "bridge": "br"}})
 	st.AddResource(state.Resource{Address: address.Resource("sysbox_network", "public"), Attributes: map[string]any{"nat": true, "docker_network_id": "net-1"}})
-	exec := NewExecutor(graph.New(), st)
+	exec := NewExecutor(graph.New(), st, driver.DefaultRegistry)
 	n := &graph.Node{Address: address.Resource("sysbox_router", "edge"), Data: &config.RouterConfig{Image: "sysbox_image.router", Substrate: sub.name, NatFrom: "internal", NatTo: "uplink", Interfaces: []config.RouterInterface{{Name: "internal", Network: "sysbox_network.internal", IP: "10.0.0.1/24"}, {Name: "uplink", Network: "sysbox_network.public", IP: "172.20.0.2/24"}}}}
 	ctx := substrate.WithOperationIdentity(context.Background(), substrate.OperationIdentity{ActionID: "create", OwnerUID: "owner", TopologyUID: "owner", ResourceUID: "router", Generation: 1})
 	_, invalidErr := RouterResourceHandler{}.Create(context.Background(), &ProviderContext{exec: exec}, n)
@@ -98,7 +98,7 @@ func TestRouterConfiguresStaticRoutes(t *testing.T) {
 	st := &state.State{Version: state.SchemaVersion}
 	st.AddResource(state.Resource{Address: address.Resource("sysbox_image", "router"), Attributes: map[string]any{"image_id": "image", "repository": "router:latest"}})
 	st.AddResource(state.Resource{Address: address.Resource("sysbox_network", "lan"), Attributes: map[string]any{"netns": "ns", "bridge": "br"}})
-	exec := NewExecutor(graph.New(), st)
+	exec := NewExecutor(graph.New(), st, driver.DefaultRegistry)
 	n := &graph.Node{Address: address.Resource("sysbox_router", "edge"), Data: &config.RouterConfig{
 		Image:      "sysbox_image.router",
 		Substrate:  sub.name,

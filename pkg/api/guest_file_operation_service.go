@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 )
 
 var (
@@ -14,11 +15,11 @@ var (
 )
 
 type GuestFileOperationService struct {
-	store guestFileOperationPersistence
+	store controlstore.GuestFileOperationPersistence
 	now   func() time.Time
 }
 
-func newGuestFileOperationService(store guestFileOperationPersistence) *GuestFileOperationService {
+func newGuestFileOperationService(store controlstore.GuestFileOperationPersistence) *GuestFileOperationService {
 	return &GuestFileOperationService{store: store, now: func() time.Time { return time.Now().UTC() }}
 }
 

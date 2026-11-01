@@ -1,0 +1,119 @@
+package api
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/persistence"
+)
+
+func failedDelivery(status string) bool {
+	return status == controlplane.AgentCommandStatusFailed || status == controlplane.AgentCommandStatusDenied || status == controlplane.AgentCommandStatusCancelled
+}
+
+// Retirement is persisted before reading authority. Grant issuance locks and
+// validates the same command, so no grant can appear after this retired command
+// is observed. Both current grants and stop history must be empty for this ID.
+func reconcileUnissuedNodeFailure(ctx context.Context, store controlstore.Store, command controlplane.AgentCommand) error {
+	if command.Type != "node_operation" || command.ActionID == "" || !failedDelivery(command.Status) {
+		return nil
+	}
+	record, err := readFailureCommand(ctx, store, command.ID)
+	if err != nil {
+		return err
+	}
+	if record == nil || !record.Retired || !failedDelivery(record.Command.Status) || record.Command.AgentID != command.AgentID {
+		return persistence.ErrConflict
+	}
+	command = record.Command
+	op, err := store.GetNodeOperation(ctx, command.ActionID)
+	if errors.Is(err, persistence.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !hostNodeDeliveryOperation(op.Operation) {
+		return nil
+	}
+	history, err := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store}).HasCommandExecutionHistory(ctx, command.AgentID, command.ID)
+	if err != nil || history {
+		return err
+	}
+	transition := func(current controlplane.NodeOperation, record *persistence.CommandRecord) (controlplane.NodeOperation, error) {
+		if record == nil || !record.Retired || !failedDelivery(record.Command.Status) || record.Command.ID != command.ID || record.Command.AgentID != command.AgentID || record.Command.ActionID != current.ID || current.ID != op.ID || current.CommandID != command.ID || current.AgentID != command.AgentID || current.Operation != op.Operation || current.ResourceUID != record.Command.ResourceUID || current.Generation != record.Command.Generation || record.Command.EndedAt.IsZero() {
+			return current, persistence.ErrConflict
+		}
+		if current.Status == controlplane.NodeOperationStatusDone || current.Status == controlplane.NodeOperationStatusFailed {
+			return current, nil
+		}
+		next := current
+		next.Status = controlplane.NodeOperationStatusFailed
+		next.EndedAt = record.Command.EndedAt
+		next.Err = "node operation delivery failed before execution authorization"
+		if err := persistence.ValidateNodeOperationTransition(current, next); err != nil {
+			return current, err
+		}
+		return next, nil
+	}
+	switch s := store.(type) {
+	case *controlstore.Local:
+		_, err = s.TransitionNodeOperation(ctx, command.AgentID, op.ID, nil, transition)
+	case *controlstore.SQLite:
+		_, err = s.TransitionNodeOperation(ctx, command.AgentID, op.ID, nil, transition)
+	case *controlstore.Postgres:
+		_, err = s.TransitionNodeOperation(ctx, command.AgentID, op.ID, nil, transition)
+	default:
+		err = persistence.ErrUnsupportedVersion
+	}
+	return err
+}
+
+func readFailureCommand(ctx context.Context, store controlstore.Store, id string) (*persistence.CommandRecord, error) {
+	switch s := store.(type) {
+	case *controlstore.Local:
+		return (controlstore.LocalCommandStorage{Store: s}).ReadCommand(ctx, id)
+	case *controlstore.SQLite:
+		return (controlstore.SqliteCommandStorage{Store: s}).ReadCommand(ctx, id)
+	case *controlstore.Postgres:
+		return (controlstore.PostgresCommandStorage{Store: s}).ReadCommand(ctx, id)
+	default:
+		return nil, persistence.ErrUnsupportedVersion
+	}
+}
+
+// Resume the retirement-before-failure window after controller restart. Issued
+// commands remain for host reconciliation; the scanner never retries effects.
+func (s *AgentService) reconcileUnissuedNodeFailures(ctx context.Context) error {
+	ops, err := s.store.ListNodeOperations(ctx, "")
+	if err != nil {
+		return err
+	}
+	var failures []error
+	for _, op := range ops {
+		if !hostNodeDeliveryOperation(op.Operation) || (op.Status != controlplane.NodeOperationStatusQueued && op.Status != controlplane.NodeOperationStatusRunning) || op.CommandID == "" {
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return errors.Join(append(failures, err)...)
+		}
+		call, cancel := context.WithTimeout(ctx, 2*time.Second)
+		record, err := readFailureCommand(call, s.store, op.CommandID)
+		if err == nil && record != nil && record.Retired && failedDelivery(record.Command.Status) {
+			err = reconcileUnissuedNodeFailure(call, s.store, record.Command)
+		}
+		cancel()
+		if err != nil {
+			failures = append(failures, fmt.Errorf("node operation %s: %w", op.ID, err))
+		}
+	}
+	return errors.Join(failures...)
+}
+
+func hostNodeDeliveryOperation(operation string) bool {
+	return operation == "pause" || operation == "resume" || operation == "ssh_access_apply" || operation == "ssh_access_delete"
+}

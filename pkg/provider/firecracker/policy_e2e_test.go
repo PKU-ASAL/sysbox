@@ -46,7 +46,7 @@ func TestFirecrackerDurablePolicyFaultMatrixE2E(t *testing.T) {
 	defer cancel()
 	node := substrate.OperationIdentity{ActionID: "create", OwnerUID: "owner", TopologyUID: "owner", ResourceUID: "node", Generation: 1}
 	ctx = substrate.WithOperationIdentity(ctx, node)
-	h, err := s.CreateNode(ctx, substrate.NodeSpec{Name: "policy-vm", Image: substrate.ArtifactHandle{ID: rootfs}, ProviderConfig: &Config{Kernel: kernel, AllowDirect: true}})
+	h, err := s.CreateNode(ctx, substrate.NodeSpec{Name: "policy-vm", Image: substrate.ArtifactHandle{ID: rootfs}, ProviderConfig: &Config{Kernel: kernel}})
 	require.NoError(t, err)
 	cleanupRealVM(t, s, h)
 	require.NoError(t, s.StartNode(ctx, h))

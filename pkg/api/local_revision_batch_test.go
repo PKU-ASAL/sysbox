@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/revisiongate"
 	"github.com/stretchr/testify/require"
 )
@@ -112,7 +113,7 @@ func TestFileRevisionBatchCleanupAfterInterruptedCommit(t *testing.T) {
 
 func TestBatchProofFilenameOutsideCatalogCannotHideReference(t *testing.T) {
 	s, ids, policy := fileBatchFixture(t)
-	require.NoError(t, writeLocalObject(filepath.Join(s.runsDir, "lab", "retirement-batch-fake.json"), map[string]string{"revision": ids[0]}))
+	require.NoError(t, controlstore.WriteLocalObject(filepath.Join(s.runsDir, "lab", "retirement-batch-fake.json"), map[string]string{"revision": ids[0]}))
 	require.Error(t, s.deleteLocalRevisionBatch(context.Background(), ids, policy))
 	for _, id := range ids {
 		_, err := s.apiStore.GetGlobalRevision(context.Background(), id)

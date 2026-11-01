@@ -2,10 +2,11 @@ package persistence
 
 import (
 	"context"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCommandAuthorityHistoryIncludesStoppedAndSupersededGrant(t *testing.T) {

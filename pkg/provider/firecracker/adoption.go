@@ -6,10 +6,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/oslab/sysbox/pkg/driver"
-	"github.com/oslab/sysbox/pkg/substrate"
 	"os"
 	"path/filepath"
+
+	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 func (s *Substrate) findAdoptionManifest(ctx context.Context, id string) (vmManifest, []byte, error) {

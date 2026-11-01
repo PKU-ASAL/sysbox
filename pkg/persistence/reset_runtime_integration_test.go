@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/driver"
@@ -16,7 +18,6 @@ import (
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
-	"github.com/stretchr/testify/require"
 )
 
 type continuationDriver struct {
@@ -120,7 +121,7 @@ func TestRuntimeContinuationWithRealRepository(t *testing.T) {
 			require.NoError(t, err)
 			queued := time.Now().UTC()
 			originalPath := filepath.Join(t.TempDir(), "original.checkpoint.json")
-			original := runtime.NewExecutor(g, st)
+			original := runtime.NewExecutor(g, st, driver.DefaultRegistry)
 			original.SetRunContext("lab", "original")
 			original.SetRunIncarnation(queued, "config")
 			recorder := runtime.NewFileRecorder(originalPath, "original", "lab")
@@ -155,7 +156,7 @@ func TestRuntimeContinuationWithRealRepository(t *testing.T) {
 			for _, executionID := range []string{"continuation", "cold-retry"} {
 				current, err := r.LoadState(ctx, "lab")
 				require.NoError(t, err)
-				e := runtime.NewExecutor(g, current)
+				e := runtime.NewExecutor(g, current, driver.DefaultRegistry)
 				e.SetRunContext("lab", executionID)
 				e.SetRecorder(runtime.NewFileRecorder(filepath.Join(t.TempDir(), executionID+".json"), executionID, "lab"))
 				e.SetActionRepository(r)

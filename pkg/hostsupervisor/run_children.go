@@ -283,6 +283,18 @@ func (r *RunChildren) Cancel(ctx context.Context) error {
 	return r.Wait(ctx)
 }
 
+// Close releases local ownership only after every admitted Start and observer
+// has returned. It does not certify remote termination; Wait and ProveStopped
+// retain that distinction. The host keeps its storage open until Close returns.
+func (r *RunChildren) Close() {
+	r.mu.Lock()
+	r.initializeLocked()
+	r.closed = true
+	r.stop()
+	r.mu.Unlock()
+	r.wg.Wait()
+}
+
 // Finish timestamps the entire Run only after every owned child has completed.
 func (r *RunChildren) Finish(ctx context.Context, run *controlplane.Run) error {
 	if run == nil || run.Status != controlplane.RunDone {

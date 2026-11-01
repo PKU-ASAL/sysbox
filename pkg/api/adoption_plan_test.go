@@ -2,10 +2,11 @@ package api
 
 import (
 	"bytes"
-	"github.com/oslab/sysbox/pkg/state"
-	"github.com/stretchr/testify/require"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/oslab/sysbox/pkg/state"
+	"github.com/stretchr/testify/require"
 )
 
 func TestAdoptionPlanIsReadOnlyAndFailClosedWithoutCapability(t *testing.T) {

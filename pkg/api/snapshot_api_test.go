@@ -4,13 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net/http/httptest"
+	"testing"
+	"time"
+
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/stretchr/testify/require"
-	"net/http/httptest"
-	"testing"
-	"time"
 )
 
 func TestSnapshotAPIStoresJournalAndRejectsActiveRestore(t *testing.T) {
@@ -44,17 +45,17 @@ func TestStateMaintenanceRejectsIncompleteActivityRegistry(t *testing.T) {
 			service := s.workspaceService()
 			switch missing {
 			case "runs":
-				service.loadRuns = nil
+				service.LoadRuns = nil
 			case "nodes":
-				service.loadNodeOperations = nil
+				service.LoadNodeOperations = nil
 			case "guests":
-				service.loadGuestActivity = nil
+				service.LoadGuestActivity = nil
 			case "consoles":
-				service.loadConsoleSessions = nil
+				service.LoadConsoleSessions = nil
 			case "commands":
-				service.loadAgentCommands = nil
+				service.LoadAgentCommands = nil
 			}
-			require.ErrorIs(t, service.ensureTopologyQuiescent(context.Background(), "lab"), persistence.ErrConflict)
+			require.ErrorIs(t, service.EnsureTopologyQuiescent(context.Background(), "lab"), persistence.ErrConflict)
 			require.ErrorIs(t, service.ForceUnlock(context.Background(), "lab"), persistence.ErrConflict)
 		})
 	}

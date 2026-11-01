@@ -131,6 +131,13 @@ func (c *domainConnection) Start(ctx context.Context, req substrate.ExecRequest)
 	return c.ssh.Start(ctx, req)
 }
 
+func (c *domainConnection) ControlExecution(ctx context.Context, h substrate.ExecutionHandle, control substrate.TerminalControl) error {
+	if err := c.validate(ctx); err != nil {
+		return err
+	}
+	return c.ssh.ControlExecution(ctx, h, control)
+}
+
 func (c *domainConnection) ObserveExecution(ctx context.Context, h substrate.ExecutionHandle) (substrate.ExecResult, error) {
 	if err := c.validate(ctx); err != nil {
 		return substrate.ExecResult{}, err
@@ -209,32 +216,6 @@ func (c *domainConnection) WaitReady(ctx context.Context, timeout time.Duration)
 	}
 	return c.ssh.WaitReady(ctx, timeout)
 }
-
-func (s *Substrate) OpenConsole(ctx context.Context, handle substrate.NodeHandle, req substrate.ConsoleRequest) (substrate.ConsoleSession, error) {
-	if hsFrom(handle).GuestFamily == substrate.GuestFamilyWindows {
-		return nil, substrate.ErrNotSupported
-	}
-	conn, err := s.Connection(handle, nil)
-	if err != nil {
-		return nil, err
-	}
-	guarded, ok := conn.(*domainConnection)
-	if !ok {
-		return nil, substrate.ErrNotSupported
-	}
-	if err := guarded.validate(ctx); err != nil {
-		return nil, err
-	}
-	return guarded.ssh.OpenConsole(ctx, transport.ConsoleRequest{
-		Cmd:   req.Cmd,
-		Shell: req.Shell,
-		Env:   req.Env,
-		Cols:  req.Cols,
-		Rows:  req.Rows,
-	})
-}
-
-var _ substrate.ConsoleProvider = (*Substrate)(nil)
 
 // QGA calls always address the immutable domain UUID and validate its binding.
 // Durable operations require the installed, scope-bound Windows task helper.

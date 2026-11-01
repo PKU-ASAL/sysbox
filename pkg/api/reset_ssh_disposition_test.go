@@ -9,14 +9,15 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/ssh"
+
 	"github.com/oslab/sysbox/pkg/address"
-	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
-	"github.com/stretchr/testify/require"
-	"golang.org/x/crypto/ssh"
 )
 
 func TestHostFenceResetSSHCommittedDispositionAPI(t *testing.T) {
@@ -47,7 +48,7 @@ func seedResetSSHAPI(t *testing.T, repo *persistence.Repository, action *runtime
 	result := resource(depID, "replacement", 2, 2)
 	st, err := repo.LoadState(ctx, action.Topology)
 	require.NoError(t, err)
-	seed := runtime.ActionRecord{ID: "ssh-seed", Topology: action.Topology, RunID: "older-run", Resource: addr, Action: controlplane.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: action.OwnerUID, ResourceUID: previous.ResourceUID, Generation: 1, StateSerial: st.Meta.Serial, ExpectedSerial: st.Meta.Serial, Candidate: &previous}
+	seed := runtime.ActionRecord{ID: "ssh-seed", Topology: action.Topology, RunID: "older-run", Resource: addr, Action: model.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: action.OwnerUID, ResourceUID: previous.ResourceUID, Generation: 1, StateSerial: st.Meta.Serial, ExpectedSerial: st.Meta.Serial, Candidate: &previous}
 	require.NoError(t, repo.CommitActionIntent(ctx, seed))
 	records, err := repo.LoadActions(ctx, action.Topology)
 	require.NoError(t, err)

@@ -4,18 +4,16 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
-	"github.com/oslab/sysbox/pkg/runtime"
 	"reflect"
 	"strings"
 	"time"
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
+	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 )
-
-const LegacyAdoptionRecoveryFormatVersion = 13
-const AdoptionRecoveryFormatVersion = 14
 
 type AdoptionRecoveryRecord struct {
 	Actions     map[string]runtime.ActionRecord       `json:"actions,omitempty"`
@@ -69,7 +67,7 @@ func ApplyFencedAdoption(raw, authorityRaw []byte, p controlplane.AdoptionDispos
 		if action.RunID != req.ID {
 			continue
 		}
-		if action.DispositionID != "" || action.Status == runtime.ActionSucceeded || action.Action != controlplane.PlanActionAdopt || action.Topology != req.Topology || !action.Resource.Equal(addr) || action.OwnerUID != req.TopologyUID || action.ResourceUID != req.ResourceUID || action.Generation != req.Generation || action.StateSerial != req.ExpectedSerial || action.Candidate == nil || action.Candidate.ExternalID != req.ExternalID || action.Candidate.Driver != req.Provider {
+		if action.DispositionID != "" || action.Status == runtime.ActionSucceeded || action.Action != model.PlanActionAdopt || action.Topology != req.Topology || !action.Resource.Equal(addr) || action.OwnerUID != req.TopologyUID || action.ResourceUID != req.ResourceUID || action.Generation != req.Generation || action.StateSerial != req.ExpectedSerial || action.Candidate == nil || action.Candidate.ExternalID != req.ExternalID || action.Candidate.Driver != req.Provider {
 			return nil, ErrConflict
 		}
 		archived[id] = action
@@ -99,9 +97,7 @@ func ApplyFencedAdoption(raw, authorityRaw []byte, p controlplane.AdoptionDispos
 		action.DispositionID = p.Request.ID
 		a.Actions[id] = action
 	}
-	if a.Format != IntentDispositionFormatVersion {
-		a.Format = AdoptionRecoveryFormatVersion
-	}
+
 	a.Serial++
 	a.UpdatedAt = time.Now().UTC()
 	if err = validateAggregate(a, req.Topology); err != nil {
@@ -128,17 +124,13 @@ func (r *Repository) CommitFencedAdoption(ctx context.Context, p controlplane.Ad
 	})
 }
 func validateAdoptionRecoveries(a *aggregate) error {
-	if len(a.AdoptionRecoveries) > 0 && a.Format != IntentDispositionFormatVersion && a.Format != AdoptionRecoveryFormatVersion && a.Format != LegacyAdoptionRecoveryFormatVersion {
-		return ErrCorruptRecord
-	}
+
 	for id, r := range a.AdoptionRecoveries {
-		if (len(r.Actions) > 0 || r.Proof.Disposition() != "recover-owned") && a.Format != IntentDispositionFormatVersion && a.Format != AdoptionRecoveryFormatVersion {
-			return ErrCorruptRecord
-		}
+
 		for actionID, old := range r.Actions {
 			req := r.Proof.Adoption
 			addr, err := address.Parse(req.Address)
-			if err != nil || validateAction(old) != nil || old.Revision == 0 || old.ID != actionID || old.DispositionID != "" || old.Action != controlplane.PlanActionAdopt || (old.Status != runtime.ActionIntentCommitted && old.Status != runtime.ActionUncertain && old.Status != runtime.ActionBlocked) || old.RunID != req.ID || old.Topology != req.Topology || !old.Resource.Equal(addr) || old.OwnerUID != req.TopologyUID || old.ResourceUID != req.ResourceUID || old.Generation != req.Generation || old.StateSerial != req.ExpectedSerial || old.Candidate == nil || old.Candidate.ExternalID != req.ExternalID || old.Candidate.Driver != req.Provider {
+			if err != nil || validateAction(old) != nil || old.Revision == 0 || old.ID != actionID || old.DispositionID != "" || old.Action != model.PlanActionAdopt || (old.Status != runtime.ActionIntentCommitted && old.Status != runtime.ActionUncertain && old.Status != runtime.ActionBlocked) || old.RunID != req.ID || old.Topology != req.Topology || !old.Resource.Equal(addr) || old.OwnerUID != req.TopologyUID || old.ResourceUID != req.ResourceUID || old.Generation != req.Generation || old.StateSerial != req.ExpectedSerial || old.Candidate == nil || old.Candidate.ExternalID != req.ExternalID || old.Candidate.Driver != req.Provider {
 				return ErrCorruptRecord
 			}
 			if current, ok := a.Actions[actionID]; ok {

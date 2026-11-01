@@ -4,20 +4,22 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"github.com/oslab/sysbox/pkg/address"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/stretchr/testify/require"
-
+	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
+	"github.com/stretchr/testify/require"
 )
 
 func TestListResources(t *testing.T) {
@@ -41,12 +43,12 @@ func TestListResources(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	var body struct {
-		Resources []controlplane.ResourceHealth `json:"resources"`
+		Resources []model.ResourceHealth `json:"resources"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	require.Len(t, body.Resources, 1)
 	require.Equal(t, "sysbox_kernel.linux", body.Resources[0].Resource)
-	require.Equal(t, controlplane.ResourceHealthHealthy, body.Resources[0].Status)
+	require.Equal(t, model.ResourceHealthHealthy, body.Resources[0].Status)
 }
 
 func TestListResourcesUsesLatestAgentProjectionAsAuthoritative(t *testing.T) {
@@ -63,7 +65,7 @@ func TestListResourcesUsesLatestAgentProjectionAsAuthoritative(t *testing.T) {
 
 	s := NewServer(runs, filepath.Join(dir, "workspaces"))
 	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}}))
-	session, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).OpenSession(context.Background(), "host-a", "resources-process", "")
+	session, err := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore}).OpenSession(context.Background(), "host-a", "resources-process", "")
 	require.NoError(t, err)
 	body := bytes.NewBufferString(`{
   "agent_id": "host-a",
@@ -71,13 +73,13 @@ func TestListResourcesUsesLatestAgentProjectionAsAuthoritative(t *testing.T) {
 	  "sequence": 1,
   "topology": "mixed",
   "workspace": "mixed",
-  "observed_at": "2026-05-29T06:52:52Z",
+
   "resources": [
     {"resource":"test_resource.web","type":"test_resource","name":"web","provider":"test","status":"drifted","reason":"exited","decision":"mark_drift"}
   ]
 }`)
 	rec := httptest.NewRecorder()
-	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/agents/host-a/projections/resources", body))
+	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/agents/host-a/observations", bindObservationTestBody(t, s, "host-a", body)))
 	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
 
 	rec = httptest.NewRecorder()
@@ -86,13 +88,13 @@ func TestListResourcesUsesLatestAgentProjectionAsAuthoritative(t *testing.T) {
 	require.NotContains(t, rec.Body.String(), "projections")
 
 	var out struct {
-		Resources []controlplane.ResourceHealth `json:"resources"`
-		Health    controlplane.TopologyHealth   `json:"health"`
+		Resources []model.ResourceHealth `json:"resources"`
+		Health    model.TopologyHealth   `json:"health"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
 	require.Len(t, out.Resources, 1)
-	require.Equal(t, controlplane.ResourceHealthDrifted, out.Resources[0].Status)
-	require.Equal(t, controlplane.ResourceHealthDrifted, out.Health.Status)
+	require.Equal(t, model.ResourceHealthDrifted, out.Resources[0].Status)
+	require.Equal(t, model.ResourceHealthDrifted, out.Health.Status)
 	require.Equal(t, 1, out.Health.Drifted)
 }
 
@@ -115,11 +117,11 @@ func TestGetResourceHealth(t *testing.T) {
 	s.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	var body controlplane.ResourceHealth
+	var body model.ResourceHealth
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	require.Equal(t, "sysbox_kernel.linux", body.Resource)
-	require.Equal(t, controlplane.ResourceHealthDrifted, body.Status)
-	require.Equal(t, controlplane.RecoveryDecisionMarkDrift, body.Decision)
+	require.Equal(t, model.ResourceHealthDrifted, body.Status)
+	require.Equal(t, model.RecoveryDecisionMarkDrift, body.Decision)
 }
 
 func writeState(t *testing.T, runsDir, topology string, st *state.State) {
@@ -148,11 +150,11 @@ func (testResourceHandler) Type() string { return "test_resource" }
 func (testResourceHandler) Schema() runtime.ResourceSchema {
 	return runtime.ResourceSchemaFor("test_resource")
 }
-func (testResourceHandler) Read(context.Context, state.Resource) (runtime.ResourceReadResult, error) {
-	return runtime.ResourceReadResult{Decision: controlplane.RecoveryDecisionNoop}, nil
+func (testResourceHandler) Read(context.Context, state.Resource, *driver.Registry) (runtime.ResourceReadResult, error) {
+	return runtime.ResourceReadResult{Decision: model.RecoveryDecisionNoop}, nil
 }
-func (testResourceHandler) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
-	return controlplane.PlannedChange{Address: desired.Address, Action: controlplane.PlanActionNoop}, nil
+func (testResourceHandler) PlanDiff(desired *graph.Node, current *state.Resource) (model.PlannedChange, error) {
+	return model.PlannedChange{Address: desired.Address, Action: model.PlanActionNoop}, nil
 }
 func (testResourceHandler) Create(context.Context, *runtime.ProviderContext, *graph.Node) (state.Resource, error) {
 	return state.Resource{}, nil

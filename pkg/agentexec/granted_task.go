@@ -5,14 +5,15 @@ import (
 	"crypto/ed25519"
 	"errors"
 	"fmt"
+	"os"
+	"strings"
+	"time"
+
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/guesttask"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/oslab/sysbox/pkg/transport"
-	"os"
-	"strings"
-	"time"
 )
 
 type durableGuestTaskConnection interface {
@@ -24,47 +25,70 @@ type durableGuestTaskConnection interface {
 	GuestTaskBootID(context.Context) (string, error)
 }
 
-func executeGrantedGuestOperation(ctx context.Context, opts Options, cmd controlplane.AgentCommand) guestOperationCompletion {
+func executeGrantedGuestOperation(ctx context.Context, opts Options, cmd controlplane.AgentCommand) controlplane.GuestOperationCompletion {
 	result, err := runGrantedGuestTask(ctx, opts, cmd)
 	if err != nil {
-		class := classifyGuestExecError(ctx, err)
-		return guestOperationCompletion{Result: encodeGuestResult(result), ResultClass: class, Err: class + " guest operation"}
+		class := controlplane.ClassifyGuestExecError(ctx, err)
+		return controlplane.GuestOperationCompletion{Result: controlplane.EncodeGuestResult(result), ResultClass: class, Err: class + " guest operation"}
 	}
-	out := encodeGuestResult(result)
+	out := controlplane.EncodeGuestResult(result)
 	out.ExitCode = result.ExitCode
-	return guestOperationCompletion{Result: out, ResultClass: controlplane.GuestExecutionResultClassExit}
+	return controlplane.GuestOperationCompletion{Result: out, ResultClass: controlplane.GuestExecutionResultClassExit}
 }
 
-func runGrantedGuestTask(ctx context.Context, opts Options, cmd controlplane.AgentCommand) (substrate.ExecResult, error) {
+type grantedTask struct {
+	client   *hostsupervisor.TaskClient
+	handle   substrate.ExecutionHandle
+	grant    controlplane.SignedExecutionGrant
+	endpoint string
+	check    func(controlplane.SignedExecutionGrant) error
+}
+
+func startGrantedTask(ctx context.Context, opts Options, cmd controlplane.AgentCommand) (*grantedTask, error) {
 	if opts.HostSupervisorSocket == "" {
-		return substrate.ExecResult{}, errors.New("guest execution requires a separate host supervisor socket")
+		return nil, errors.New("guest execution requires a separate host supervisor socket")
 	}
 	if opts.ExecutionSessionID == "" || opts.ExecutionGrantPublicKeyFile == "" {
-		return substrate.ExecResult{}, errors.New("guest execution requires an authenticated session and pinned grant issuer key")
+		return nil, errors.New("guest execution requires an authenticated session and pinned grant issuer key")
 	}
 	key, err := os.ReadFile(opts.ExecutionGrantPublicKeyFile)
 	if err != nil {
-		return substrate.ExecResult{}, err
+		return nil, err
 	}
 	if len(key) != ed25519.PublicKeySize {
-		return substrate.ExecResult{}, controlplane.ErrInvalidExecutionGrant
+		return nil, controlplane.ErrInvalidExecutionGrant
 	}
-	task, err := guesttask.FromExecutionCommand(cmd)
+	var task guesttask.Request
+	var topology, node string
+	switch cmd.Type {
+	case "guest_execution":
+		task, err = guesttask.FromExecutionCommand(cmd)
+		if cmd.Execution != nil {
+			topology, node = cmd.Execution.Topology, cmd.Execution.Node
+		}
+	case "session_open":
+		task, err = guesttask.FromConsoleCommand(cmd)
+		if cmd.Session != nil {
+			topology, node = cmd.Session.Topology, cmd.Session.Node
+		}
+	default:
+		return nil, guesttask.ErrUnauthorized
+	}
 	if err != nil {
-		return substrate.ExecResult{}, err
+		return nil, err
 	}
-	if cmd.TopologyUID == "" || cmd.ResourceUID == "" || cmd.Generation < 1 || cmd.Execution.Topology == "" || cmd.Execution.Node == "" {
-		return substrate.ExecResult{}, guesttask.ErrConflict
+	if cmd.TopologyUID == "" || cmd.ResourceUID == "" || cmd.Generation < 1 || topology == "" || node == "" {
+		return nil, guesttask.ErrConflict
 	}
-	client := hostsupervisor.NewTaskClient(opts.HostSupervisorSocket, hostsupervisor.TargetRef{Topology: cmd.Execution.Topology, Node: cmd.Execution.Node, Scope: controlplane.ExecutionScope{TopologyUID: cmd.TopologyUID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation}})
+	client := hostsupervisor.NewTaskClient(opts.HostSupervisorSocket, hostsupervisor.TargetRef{Topology: topology, Node: node, Scope: controlplane.ExecutionScope{TopologyUID: cmd.TopologyUID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation}})
 	boot, err := client.GuestTaskBootID(ctx)
 	if err != nil {
-		return substrate.ExecResult{}, err
+		return nil, err
 	}
 	endpoint := opts.APIURL + "/v1/agents/" + opts.ID + "/commands/" + cmd.ID + "/execution-grant"
 	var grant controlplane.SignedExecutionGrant
 	if err = post(ctx, opts, endpoint, map[string]any{"session_id": opts.ExecutionSessionID, "lease_owner": cmd.LeaseOwner, "attempt": cmd.Attempt, "boot_id": boot}, &grant); err != nil {
-		return substrate.ExecResult{}, err
+		return nil, err
 	}
 	check := func(g controlplane.SignedExecutionGrant) error {
 		if err := controlplane.VerifyExecutionGrant(key, g, boot, time.Now()); err != nil {
@@ -81,19 +105,27 @@ func runGrantedGuestTask(ctx context.Context, opts Options, cmd controlplane.Age
 		return nil
 	}
 	if err = check(grant); err != nil {
-		return substrate.ExecResult{}, err
+		return nil, err
 	}
-	req := substrate.ExecRequest{Program: task.Args[0], Args: task.Args[1:], Environment: task.Environment, WorkingDir: task.WorkingDir, Shell: substrate.ShellNone, OutputLimitBytes: task.OutputLimit}
+	req := substrate.ExecRequest{Program: task.Args[0], Args: task.Args[1:], Environment: task.Environment, WorkingDir: task.WorkingDir, Shell: substrate.ShellNone, OutputLimitBytes: task.OutputLimit, Terminal: task.Terminal}
 	execution, err := client.Start(transport.WithTaskGrant(ctx, task.ID, grant), req)
 	if err != nil {
 		if execution.ID == "" {
-			return substrate.ExecResult{}, err
+			return nil, err
 		}
 		if _, observeErr := client.ObserveExecution(ctx, execution); observeErr != nil {
-			return substrate.ExecResult{}, fmt.Errorf("task start outcome unknown: %w", err)
+			return nil, fmt.Errorf("task start outcome unknown: %w", err)
 		}
 	}
-	return awaitGrantedTask(ctx, opts, client, execution, endpoint, cmd.LeaseOwner, grant, check)
+	return &grantedTask{client: client, handle: execution, endpoint: endpoint, grant: grant, check: check}, nil
+}
+
+func runGrantedGuestTask(ctx context.Context, opts Options, cmd controlplane.AgentCommand) (substrate.ExecResult, error) {
+	task, err := startGrantedTask(ctx, opts, cmd)
+	if err != nil {
+		return substrate.ExecResult{}, err
+	}
+	return awaitGrantedTask(ctx, opts, task.client, task.handle, task.endpoint, cmd.LeaseOwner, task.grant, task.check)
 }
 
 func awaitGrantedTask(ctx context.Context, opts Options, client durableGuestTaskConnection, handle substrate.ExecutionHandle, endpoint, leaseOwner string, grant controlplane.SignedExecutionGrant, check func(controlplane.SignedExecutionGrant) error) (substrate.ExecResult, error) {
@@ -178,7 +210,7 @@ func readGrantedTaskOutput(ctx context.Context, client substrate.ConnectionExecu
 		if err := ctx.Err(); err != nil {
 			return output.String(), false, err
 		}
-		remaining := guestOutputLimit - output.Len()
+		remaining := controlplane.GuestOutputLimit - output.Len()
 		limit := min(64<<10, remaining)
 		if remaining == 0 {
 			limit = 1

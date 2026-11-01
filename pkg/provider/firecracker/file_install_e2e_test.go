@@ -9,15 +9,16 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"fmt"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/substrate"
-	"github.com/oslab/sysbox/pkg/transport"
-	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/substrate"
+	"github.com/oslab/sysbox/pkg/transport"
+	"github.com/stretchr/testify/require"
 )
 
 func TestFirecrackerSignedFileInstallE2E(t *testing.T) {
@@ -32,7 +33,7 @@ func TestFirecrackerSignedFileInstallE2E(t *testing.T) {
 	defer cancel()
 	id := substrate.OperationIdentity{ActionID: "create", OwnerUID: "file-owner", TopologyUID: "file-topology", ResourceUID: "file-node", Generation: 1}
 	ctx = substrate.WithOperationIdentity(ctx, id)
-	h, err := s.CreateNode(ctx, substrate.NodeSpec{Name: "file-e2e", Image: substrate.ArtifactHandle{ID: rootfs}, ProviderConfig: &Config{Kernel: kernel, AllowDirect: true}})
+	h, err := s.CreateNode(ctx, substrate.NodeSpec{Name: "file-e2e", Image: substrate.ArtifactHandle{ID: rootfs}, ProviderConfig: &Config{Kernel: kernel}})
 	require.NoError(t, err)
 	cleanupRealVM(t, s, h)
 	require.NoError(t, s.StartNode(ctx, h))

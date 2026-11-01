@@ -79,7 +79,7 @@ func TestAdoptionFenceGuestProbe(t *testing.T) {
 		if cfg.SourceIdentity.OwnerUID != "" {
 			createCtx = substrate.WithOperationIdentity(ctx, cfg.SourceIdentity)
 		}
-		h, err := fc.CreateNode(createCtx, substrate.NodeSpec{Name: "adoption-recovery", Image: substrate.ArtifactHandle{ID: "/var/tmp/gc-rootfs.ext4"}, ProviderConfig: &fcprovider.Config{Kernel: "/var/tmp/gc-vmlinux", AllowDirect: true}})
+		h, err := fc.CreateNode(createCtx, substrate.NodeSpec{Name: "adoption-recovery", Image: substrate.ArtifactHandle{ID: "/var/tmp/gc-rootfs.ext4"}, ProviderConfig: &fcprovider.Config{Kernel: "/var/tmp/gc-vmlinux"}})
 		require.NoError(t, err)
 		if cfg.SourceIdentity.OwnerUID == "" {
 			require.NoError(t, fc.StartNode(createCtx, h))

@@ -3,17 +3,19 @@ package hostsupervisor
 import (
 	"context"
 	"fmt"
-	"github.com/oslab/sysbox/pkg/address"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/driver"
-	"github.com/oslab/sysbox/pkg/persistence"
-	"github.com/oslab/sysbox/pkg/runtime"
-	"github.com/oslab/sysbox/pkg/state"
-	"github.com/oslab/sysbox/pkg/substrate"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/oslab/sysbox/pkg/address"
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/model"
+	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/oslab/sysbox/pkg/runtime"
+	"github.com/oslab/sysbox/pkg/state"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 // CanonicalResolver uses supervisor-configured repository locations. No worker
@@ -193,18 +195,18 @@ func selectRunTaskResource(st *state.State, actions []runtime.ActionRecord, ref 
 		if runID == "" || action.RunID != runID || action.Topology != ref.Topology || !matchesAddress(action.Resource) || (action.Status != runtime.ActionIntentCommitted && action.Status != runtime.ActionUncertain) || action.OwnerUID != st.TopologyUID || action.ResourceUID != ref.Scope.ResourceUID || action.Generation != ref.Scope.Generation {
 			continue
 		}
-		if action.Action != controlplane.PlanActionCreate && action.Action != controlplane.PlanActionReset {
+		if action.Action != model.PlanActionCreate && action.Action != model.PlanActionReset {
 			continue
 		}
 		c := action.Candidate
-		replacement := action.Action == controlplane.PlanActionReset && action.Phase == "applying" && !action.EffectComplete && action.Replacement != nil
+		replacement := action.Action == model.PlanActionReset && action.Phase == "applying" && !action.EffectComplete && action.Replacement != nil
 		if replacement {
 			c = action.Replacement
 		}
 		if c == nil || !c.Address.Equal(action.Resource) || !matchesIdentity(c) {
 			continue
 		}
-		if current != nil && (action.Action != controlplane.PlanActionReset || (!action.EffectComplete && !replacement) || !current.Address.Equal(c.Address) || current.OwnerUID != c.OwnerUID || current.ResourceUID != c.ResourceUID || current.Generation+1 != c.Generation) {
+		if current != nil && (action.Action != model.PlanActionReset || (!action.EffectComplete && !replacement) || !current.Address.Equal(c.Address) || current.OwnerUID != c.OwnerUID || current.ResourceUID != c.ResourceUID || current.Generation+1 != c.Generation) {
 			return nil, fmt.Errorf("supervisor canonical resource conflicts with candidate")
 		}
 		if candidate != nil {

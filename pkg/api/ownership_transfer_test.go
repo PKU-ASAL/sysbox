@@ -18,6 +18,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -42,7 +43,7 @@ func TestOwnershipTransferProcessCrashMatrix(t *testing.T) {
 	}
 }
 func testOwnershipTransferFlow(t *testing.T, phase string) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		pub, key, err := ed25519.GenerateKey(rand.Reader)
@@ -80,7 +81,7 @@ func testOwnershipTransferFlow(t *testing.T, phase string) {
 		require.Error(t, targetRepo.ReserveOwnershipTarget(ctx, cancelled))
 		_, err = s.beginOwnershipMaintenance(ctx, cancelled)
 		require.Error(t, err, "cancelled target cannot create a delayed source barrier")
-		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		session, err := authority.OpenSession(ctx, "host", "worker", "")
 		require.NoError(t, err)
 		grant, err := authority.Issue(ctx, controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: source.TopologyUID}, AgentID: "host", SessionID: session.ID, CommandID: "old", ActionID: "old", Attempt: 1, Operation: "run_apply", Digest: "old", TargetBootID: "boot"}, time.Minute)
@@ -103,15 +104,15 @@ func testOwnershipTransferFlow(t *testing.T, phase string) {
 			}
 			input := ownershipCrashInput{Phase: stage, Plan: plan, Issuer: key, Operation: op, Evidence: evidence, Completion: completion, HostKey: completionKey, Ready: filepath.Join(t.TempDir(), "ready")}
 			switch typed := store.(type) {
-			case *localAPIStore:
+			case *controlstore.Local:
 				input.Kind = "file"
-				input.Path = typed.runsDir
-			case *sqliteAPIStore:
+				input.Path = typed.RunsDir
+			case *controlstore.SQLite:
 				input.Kind = "sqlite"
-				input.Path = typed.dbPath
-			case *postgresAPIStore:
+				input.Path = typed.DbPath
+			case *controlstore.Postgres:
 				input.Kind = "postgres"
-				input.Path = typed.dsn
+				input.Path = typed.DSN
 			}
 			raw, err := json.Marshal(input)
 			require.NoError(t, err)
@@ -249,7 +250,7 @@ func testOwnershipTransferFlow(t *testing.T, phase string) {
 }
 
 func TestOwnershipAbortCannotReleaseForeignMaintenanceID(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		repo, err := s.actionRepository("target")
@@ -262,7 +263,7 @@ func TestOwnershipAbortCannotReleaseForeignMaintenanceID(t *testing.T) {
 		require.NoError(t, err)
 		p := controlplane.OwnershipTransferPlan{Version: 1, ID: "same-id", SourceTopology: "source", TargetTopology: "target", SourceAddress: "sysbox_node.old", TargetAddress: "sysbox_node.new", AgentID: "host", Provider: "libvirt", ExternalID: "external", Source: substrate.OperationIdentity{ActionID: "old", OwnerUID: old.TopologyUID, TopologyUID: old.TopologyUID, ResourceUID: "old", Generation: 1}, Target: substrate.OperationIdentity{ActionID: "same-id", OwnerUID: st.TopologyUID, TopologyUID: st.TopologyUID, ResourceUID: "new", Generation: 2}, TargetSerial: st.Meta.Serial, Fingerprint: "sha256:" + strings.Repeat("a", 64)}
 		require.NoError(t, repo.ReserveOwnershipTarget(ctx, p))
-		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		_, err = authority.BeginMaintenance(ctx, p.ID, "another-topology", "unrelated")
 		require.NoError(t, err)
 		require.Error(t, s.abortOwnershipTransfer(ctx, p))
@@ -291,14 +292,14 @@ func TestOwnershipTransferCrashChild(t *testing.T) {
 	require.NoError(t, err)
 	var input ownershipCrashInput
 	require.NoError(t, json.Unmarshal(raw, &input))
-	var store apiStore
+	var store controlstore.Store
 	switch input.Kind {
 	case "file":
-		store = &localAPIStore{runsDir: input.Path}
+		store = &controlstore.Local{RunsDir: input.Path}
 	case "sqlite":
-		store = &sqliteAPIStore{dbPath: input.Path, runsDir: t.TempDir()}
+		store = &controlstore.SQLite{DbPath: input.Path, RunsDir: t.TempDir()}
 	case "postgres":
-		store = &postgresAPIStore{dsn: input.Path}
+		store = &controlstore.Postgres{DSN: input.Path}
 	default:
 		t.Fatal("invalid backend")
 	}
@@ -325,7 +326,7 @@ func TestOwnershipTransferCrashChild(t *testing.T) {
 		_, err := store.CompleteAdoptionFromHost(ctx, "host", input.Plan.ID, input.Completion.Receipt)
 		require.NoError(t, err)
 		if input.Phase != "operation-committed" {
-			authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+			authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 			raw, err := json.Marshal(input.Completion.Receipt)
 			require.NoError(t, err)
 			sum := sha256.Sum256(raw)

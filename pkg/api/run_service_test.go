@@ -12,13 +12,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
-
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
+	"github.com/oslab/sysbox/pkg/workspace"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDestroyHTTPIdempotencyKeyDispatchesOnceAcrossConcurrencyAndRestart(t *testing.T) {
@@ -227,7 +228,7 @@ func assertLegacyRunDispatchAdopted(t *testing.T, cfg config.ServiceConfig) {
 	legacy.QueuedAt = legacy.QueuedAt.Truncate(time.Microsecond)
 	legacy.StartedAt = legacy.StartedAt.Truncate(time.Microsecond)
 	require.NoError(t, server.apiStore.SaveRun(context.Background(), *legacy))
-	command := controlplaneRunAssignedCommand(legacy)
+	command := workspace.ControlplaneRunAssignedCommand(legacy)
 	command.ID = "run-" + legacy.ID
 	command.AgentID = "host-a"
 	command.Status = controlplane.AgentCommandStatusQueued
@@ -287,7 +288,7 @@ func TestRunServiceStartApplyDispatchesAssignedRun(t *testing.T) {
 
 func TestRunServiceStartResetPersistsExactTargetAndDispatches(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
-	manager, err := s.workspaceService().stateManager("lab")
+	manager, err := s.workspaceService().StateManager("lab")
 	require.NoError(t, err)
 	canonical, err := manager.LoadWithContext(context.Background())
 	require.NoError(t, err)
@@ -323,7 +324,7 @@ func TestRunServiceResumeAllowsFailedReset(t *testing.T) {
 	parent := s.jobs.startWithOptions("lab", "reset", runStartOptions{Target: "sysbox_node.web", UnsafeState: true})
 	cpPath := filepath.Join(t.TempDir(), "parent.json")
 	recorder := runtime.NewFileRecorder(cpPath, parent.ID, "lab")
-	require.NoError(t, recorder.Begin("reset", &runtime.Plan{Actions: []controlplane.PlannedChange{{Address: address.Resource("sysbox_node", "web"), Action: controlplane.PlanActionReset}}}))
+	require.NoError(t, recorder.Begin("reset", &runtime.Plan{Actions: []model.PlannedChange{{Address: address.Resource("sysbox_node", "web"), Action: model.PlanActionReset}}}))
 	cp, err := runtime.LoadCheckpointFile(cpPath)
 	require.NoError(t, err)
 	require.NoError(t, s.apiStore.SaveCheckpoint(context.Background(), "lab", parent.ID, *cp))
@@ -363,7 +364,7 @@ func TestRunServiceResumeRejectsTamperedResetCheckpoint(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
 	parent := s.jobs.startWithOptions("lab", "reset", runStartOptions{})
 	require.NoError(t, s.jobs.finish(parent, errors.New("interrupted")))
-	cp := runtime.OperationCheckpoint{RunID: parent.ID, Topology: "lab", Operation: "reset", PlanSHA256: "tampered", Plan: []controlplane.PlannedChange{{Address: address.Resource("sysbox_node", "web"), Action: controlplane.PlanActionReset}}}
+	cp := runtime.OperationCheckpoint{RunID: parent.ID, Topology: "lab", Operation: "reset", PlanSHA256: "tampered", Plan: []model.PlannedChange{{Address: address.Resource("sysbox_node", "web"), Action: model.PlanActionReset}}}
 	require.NoError(t, s.apiStore.SaveCheckpoint(context.Background(), "lab", parent.ID, cp))
 	run, _, err := s.runs().Resume(context.Background(), parent.ID)
 	require.Nil(t, run)

@@ -8,11 +8,12 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+
 	"github.com/oslab/sysbox/pkg/address"
-	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
-	"github.com/stretchr/testify/require"
 )
 
 func TestGCReferencesRetainJournalAndSnapshotSources(t *testing.T) {
@@ -39,7 +40,7 @@ func TestGCReferencesRetainJournalAndSnapshotSources(t *testing.T) {
 			require.NoError(t, repo.update(ctx, topology, func(a *aggregate) error {
 				r := state.Resource{Address: address.Resource("sysbox_node", "vm"), Driver: "firecracker", ExternalID: "vm", OwnerUID: a.State.TopologyUID, ResourceUID: "vm-uid", Generation: 1}
 				a.Serial = 1
-				a.Actions["create"] = runtime.ActionRecord{ID: "create", Revision: 1, Topology: topology, RunID: "run", Resource: r.Address, Action: controlplane.PlanActionCreate, Status: runtime.ActionSucceeded, OwnerUID: r.OwnerUID, ResourceUID: r.ResourceUID, Generation: 1, Candidate: &r}
+				a.Actions["create"] = runtime.ActionRecord{ID: "create", Revision: 1, Topology: topology, RunID: "run", Resource: r.Address, Action: model.PlanActionCreate, Status: runtime.ActionSucceeded, OwnerUID: r.OwnerUID, ResourceUID: r.ResourceUID, Generation: 1, Candidate: &r}
 				return nil
 			}))
 			first, err := repo.LoadGCReferences(ctx, topology)
@@ -80,7 +81,7 @@ func TestGCReferencesUseOneTransactionAndRejectUnresolvedJournal(t *testing.T) {
 	require.Len(t, snapshot.References, 1)
 	snapshot.References[0].ExternalID = "changed"
 	require.Equal(t, "vm", before.State.Resources[0].ExternalID)
-	after.Actions["pending"] = runtime.ActionRecord{ID: "pending", Revision: 1, Topology: "lab", RunID: "run", OwnerUID: after.State.TopologyUID, ResourceUID: "pending", Resource: address.Resource("sysbox_node", "pending"), Generation: 1, Action: controlplane.PlanActionCreate, Status: runtime.ActionIntentCommitted}
+	after.Actions["pending"] = runtime.ActionRecord{ID: "pending", Revision: 1, Topology: "lab", RunID: "run", OwnerUID: after.State.TopologyUID, ResourceUID: "pending", Resource: address.Resource("sysbox_node", "pending"), Generation: 1, Action: model.PlanActionCreate, Status: runtime.ActionIntentCommitted}
 	snapshot, err = repo.LoadGCReferences(context.Background(), "lab")
 	require.ErrorIs(t, err, ErrConflict)
 	require.Empty(t, snapshot.Digest)
@@ -98,7 +99,7 @@ func TestGCReferencesRejectInvalidRetainedEvidenceWithoutPartialResult(t *testin
 				a.Serial = 1
 				a.State.Resources = []state.Resource{{Address: address.Resource("sysbox_node", "vm"), Driver: "firecracker", ExternalID: "vm", OwnerUID: a.State.TopologyUID, ResourceUID: "vm", Generation: 1}}
 				if scenario == "unresolved" {
-					a.Actions["pending"] = runtime.ActionRecord{ID: "pending", Revision: 1, Topology: "lab", RunID: "run", OwnerUID: a.State.TopologyUID, ResourceUID: "pending", Resource: address.Resource("sysbox_node", "pending"), Generation: 1, Action: controlplane.PlanActionCreate, Status: runtime.ActionIntentCommitted}
+					a.Actions["pending"] = runtime.ActionRecord{ID: "pending", Revision: 1, Topology: "lab", RunID: "run", OwnerUID: a.State.TopologyUID, ResourceUID: "pending", Resource: address.Resource("sysbox_node", "pending"), Generation: 1, Action: model.PlanActionCreate, Status: runtime.ActionIntentCommitted}
 				}
 				return nil
 			}))

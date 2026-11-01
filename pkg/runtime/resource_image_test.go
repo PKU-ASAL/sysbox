@@ -10,11 +10,10 @@ import (
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/artifact"
-
 	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/secret"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -57,7 +56,7 @@ func TestImageResourceHandlerCreateOCIArtifact(t *testing.T) {
 			Architecture: "amd64", GuestFamily: "linux",
 		},
 	}
-	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
+	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion}, driver.DefaultRegistry)
 
 	res, err := ImageResourceHandler{}.Create(context.Background(), &ProviderContext{exec: exec}, n)
 
@@ -84,7 +83,7 @@ func TestImageResourceHandlerCreateRootfsArtifact(t *testing.T) {
 			Architecture: "amd64", GuestFamily: "linux",
 		},
 	}
-	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
+	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion}, driver.DefaultRegistry)
 	exec.SetSecretResolver(secret.EnvironmentResolver{Lookup: func(name string) (string, bool) {
 		return rootfs, name == "SYSBOX_ROOTFS"
 	}})
@@ -109,7 +108,7 @@ func TestImageResourceHandlerResolvesRootfsSecretReferenceAtExecution(t *testing
 		Address: address.Resource("sysbox_image", "rootfs"),
 		Data:    &config.ImageConfig{Substrate: "image-test", Kind: "rootfs", Source: reference, Architecture: "amd64", GuestFamily: "linux"},
 	}
-	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
+	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion}, driver.DefaultRegistry)
 	exec.SetSecretResolver(secret.EnvironmentResolver{Lookup: func(name string) (string, bool) {
 		return rootfs, name == "SYSBOX_ROOTFS"
 	}})
@@ -122,7 +121,7 @@ func TestImageResourceHandlerResolvesRootfsSecretReferenceAtExecution(t *testing
 }
 
 func TestImageResourceHandlerDelete(t *testing.T) {
-	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
+	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion}, driver.DefaultRegistry)
 	res := state.Resource{Address: address.Resource("sysbox_image", "alpine"), Driver: "image-test", Attributes: map[string]any{}}
 	exec.state.AddResource(res)
 
@@ -142,12 +141,12 @@ func TestImageResourceHandlerPlanDiff(t *testing.T) {
 
 	action, err := p.PlanDiff(n, current)
 	require.NoError(t, err)
-	require.Equal(t, controlplane.PlanActionNoop, action.Action)
+	require.Equal(t, model.PlanActionNoop, action.Action)
 
 	n.Data = &config.ImageConfig{Substrate: "docker", Kind: "oci", Source: "alpine:3.21", Architecture: "amd64", GuestFamily: "linux"}
 	action, err = p.PlanDiff(n, current)
 	require.NoError(t, err)
-	require.Equal(t, controlplane.PlanActionReplace, action.Action)
+	require.Equal(t, model.PlanActionReplace, action.Action)
 	_, ok := fieldChangeAt(action.Changes, "source")
 	require.True(t, ok)
 }
@@ -165,7 +164,7 @@ func TestImageResourceHandlerPassesVMPullSource(t *testing.T) {
 			PullSource: pullURL, Architecture: "amd64", GuestFamily: "linux",
 		},
 	}
-	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion})
+	exec := NewExecutor(graph.New(), &state.State{Version: state.SchemaVersion}, driver.DefaultRegistry)
 	_, err := ImageResourceHandler{}.Create(context.Background(), &ProviderContext{exec: exec}, n)
 	require.NoError(t, err)
 	require.Equal(t, pullURL, sub.lastSource.PullSource)

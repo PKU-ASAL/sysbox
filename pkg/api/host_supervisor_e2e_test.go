@@ -23,10 +23,12 @@ import (
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/guesttask"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
 	"github.com/oslab/sysbox/pkg/persistence"
+
 	dockerprovider "github.com/oslab/sysbox/pkg/provider/docker"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -131,7 +133,7 @@ func TestHostSupervisorRealTaskStopAndSuccessorE2E(t *testing.T) {
 	client := hostsupervisor.NewTaskClient(socket, ref)
 	guestBoot, err := client.GuestTaskBootID(ctx)
 	require.NoError(t, err)
-	session, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: server.apiStore}).OpenSession(ctx, "owner", "first-process", "")
+	session, err := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: server.apiStore}).OpenSession(ctx, "owner", "first-process", "")
 	require.NoError(t, err)
 	var previousEpoch uint64
 	for round := 0; round < 4; round++ {
@@ -183,7 +185,7 @@ func TestHostSupervisorRealTaskStopAndSuccessorE2E(t *testing.T) {
 			// A new Agent incarnation invalidates the live task's authority.
 			// No worker cancellation is sent: the supervisor must discover the
 			// loss, stop the guest and report independently verified quiescence.
-			session, err = persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: server.apiStore}).OpenSession(ctx, "owner", "second-process", session.ID)
+			session, err = persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: server.apiStore}).OpenSession(ctx, "owner", "second-process", session.ID)
 			require.NoError(t, err)
 			require.Error(t, authority.Authorize(ctx, grant))
 		}
@@ -250,7 +252,7 @@ func TestHostSupervisorRealTaskStopAndSuccessorE2E(t *testing.T) {
 	}
 	// A Run child has no standalone GuestExecution. Its immutable parent source
 	// and canonical node must be sufficient for the same recovery path.
-	ledger := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: server.apiStore})
+	ledger := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: server.apiStore})
 	parentRun := controlplane.Run{ID: "parent-run", Topology: "lab", Revision: "revision", Op: "apply", Operation: "apply", AgentID: "owner", Status: controlplane.RunRunning}
 	parentCommand := controlplane.AgentCommand{ID: "parent-command", Type: "run_assigned", AgentID: "owner", TopologyUID: st.TopologyUID, Run: &parentRun, ActionID: "parent-action", Attempt: 1}
 	require.NoError(t, server.apiStore.SaveAgentCommand(ctx, parentCommand))

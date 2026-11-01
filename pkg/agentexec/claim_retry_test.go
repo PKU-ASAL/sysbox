@@ -3,13 +3,14 @@ package agentexec
 import (
 	"context"
 	"encoding/json"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/stretchr/testify/require"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/stretchr/testify/require"
 )
 
 func TestClaimRetriesUnavailablePreservingIncarnation(t *testing.T) {

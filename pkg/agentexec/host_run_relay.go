@@ -8,7 +8,6 @@ import (
 
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
-	"github.com/oslab/sysbox/pkg/persistence"
 )
 
 type hostRunClient interface {
@@ -28,7 +27,7 @@ func terminalHostRun(observation hostsupervisor.RunObservation, original control
 	if err != nil {
 		return nil, err
 	}
-	if !persistence.SameRunIncarnation(original, *run) || run.Attempt != original.Attempt || run.LeaseOwner != original.LeaseOwner || run.AgentID != original.AgentID {
+	if !controlplane.SameRunIncarnation(original, *run) || run.Attempt != original.Attempt || run.LeaseOwner != original.LeaseOwner || run.AgentID != original.AgentID {
 		return nil, fmt.Errorf("host run outcome unknown: terminal evidence identity mismatch")
 	}
 	return run, nil
@@ -96,7 +95,7 @@ func awaitHostRun(ctx context.Context, client hostRunClient, req hostsupervisor.
 				renewErr = controlplane.VerifyExecutionGrant(key, next, initial.BootID, next.IssuedAt)
 			}
 			if renewErr == nil {
-				renewErr = waitForCanonicalRunStart(renewCtx, next.IssuedAt)
+				renewErr = controlplane.WaitForCanonicalRunStart(renewCtx, next.IssuedAt)
 			}
 			if renewErr == nil {
 				renewErr = controlplane.VerifyExecutionGrant(key, next, initial.BootID, time.Now())

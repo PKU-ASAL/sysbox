@@ -48,6 +48,7 @@ type ServiceConfig struct {
 }
 
 type HostSupervisorConfig struct {
+	DockerSocket   string `yaml:"docker_socket" json:"docker_socket,omitempty"`
 	Socket         string `yaml:"socket" json:"socket"`
 	Root           string `yaml:"root" json:"root"`
 	SigningKeyFile string `yaml:"signing_key_file" json:"signing_key_file"`
@@ -100,6 +101,7 @@ type APIHeadersConfig struct {
 }
 
 type AgentConfig struct {
+	HostPublicKeyFile           string            `yaml:"host_public_key_file" json:"host_public_key_file,omitempty"`
 	HostSupervisorSocket        string            `yaml:"host_supervisor_socket" json:"host_supervisor_socket,omitempty"`
 	ExecutionSessionFile        string            `yaml:"execution_session_file" json:"execution_session_file,omitempty"`
 	ExecutionGrantPublicKeyFile string            `yaml:"execution_grant_public_key_file" json:"execution_grant_public_key_file,omitempty"`
@@ -165,6 +167,9 @@ type LibvirtConfig struct {
 }
 
 type FirecrackerConfig struct {
+	Jailer         string `yaml:"jailer" json:"jailer,omitempty"`
+	JailRoot       string `yaml:"jail_root" json:"jail_root,omitempty"`
+	CgroupParent   string `yaml:"cgroup_parent" json:"cgroup_parent,omitempty"`
 	ProviderConfig `yaml:",inline" json:",inline"`
 	Binary         string `yaml:"binary" json:"binary,omitempty"`
 	Kernel         string `yaml:"kernel" json:"kernel,omitempty"`
@@ -259,6 +264,21 @@ func DefaultServiceConfig() ServiceConfig {
 }
 
 func LoadServiceConfig(path string) (ServiceConfig, error) {
+	return loadServiceConfig(path, true)
+}
+
+// LoadServiceConfigStrict loads a trusted service file without applying
+// process environment overrides. Root host services use this entry point so a
+// caller-controlled environment cannot replace provider paths, cgroups,
+// databases, or signing locations after the file has been validated.
+func LoadServiceConfigStrict(path string) (ServiceConfig, error) {
+	if path == "" {
+		return ServiceConfig{}, fmt.Errorf("explicit service configuration required")
+	}
+	return loadServiceConfig(path, false)
+}
+
+func loadServiceConfig(path string, allowEnv bool) (ServiceConfig, error) {
 	cfg := DefaultServiceConfig()
 	if path == "" {
 		path = os.Getenv("SYSBOX_CONFIG")
@@ -268,7 +288,7 @@ func LoadServiceConfig(path string) (ServiceConfig, error) {
 	}
 	if path != "" {
 		raw, err := os.ReadFile(path)
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err != nil && (!allowEnv || !errors.Is(err, os.ErrNotExist)) {
 			return cfg, fmt.Errorf("read sysbox config %s: %w", path, err)
 		}
 		if err == nil {
@@ -279,7 +299,9 @@ func LoadServiceConfig(path string) (ServiceConfig, error) {
 			}
 		}
 	}
-	applyEnvOverrides(&cfg)
+	if allowEnv {
+		applyEnvOverrides(&cfg)
+	}
 	applyDerivedDefaults(&cfg)
 	if err := cfg.Validate(); err != nil {
 		return cfg, err
@@ -359,6 +381,9 @@ func applyEnvOverrides(c *ServiceConfig) {
 	set(&c.API.Token, "SYSBOX_API_TOKEN")
 	set(&c.State.Backend, "SYSBOX_STATE_BACKEND")
 	set(&c.Providers.Firecracker.Binary, "SYSBOX_PROVIDER_FIRECRACKER_BIN")
+	set(&c.Providers.Firecracker.Jailer, "SYSBOX_PROVIDER_FIRECRACKER_JAILER")
+	set(&c.Providers.Firecracker.JailRoot, "SYSBOX_PROVIDER_FIRECRACKER_JAIL_ROOT")
+	set(&c.Providers.Firecracker.CgroupParent, "SYSBOX_PROVIDER_FIRECRACKER_CGROUP_PARENT")
 	set(&c.Providers.Firecracker.Kernel, "SYSBOX_PROVIDER_FIRECRACKER_KERNEL")
 	set(&c.Providers.Firecracker.Workdir, "SYSBOX_PROVIDER_FIRECRACKER_WORKDIR")
 	set(&c.Providers.Libvirt.Workdir, "SYSBOX_PROVIDER_LIBVIRT_WORKDIR")
@@ -384,6 +409,18 @@ func applyDerivedDefaults(c *ServiceConfig) {
 	}
 	if c.Paths.RunsDir == "" {
 		c.Paths.RunsDir = filepath.Join(c.Paths.Home, "runs")
+	}
+	if c.Providers.Firecracker.Binary == "" {
+		c.Providers.Firecracker.Binary = "/usr/local/bin/firecracker"
+	}
+	if c.Providers.Firecracker.Jailer == "" {
+		c.Providers.Firecracker.Jailer = "/usr/local/bin/jailer"
+	}
+	if c.Providers.Firecracker.JailRoot == "" {
+		c.Providers.Firecracker.JailRoot = "/var/lib/sysbox/jails"
+	}
+	if c.Providers.Firecracker.CgroupParent == "" {
+		c.Providers.Firecracker.CgroupParent = "sysbox/firecracker"
 	}
 	if c.Providers.Firecracker.Workdir == "" {
 		c.Providers.Firecracker.Workdir = filepath.Join(c.Paths.Home, "firecracker")

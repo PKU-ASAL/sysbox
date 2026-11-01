@@ -36,5 +36,8 @@ func (s *Substrate) InspectFencedGC(ctx context.Context, id, owner, resource str
 			return "", fmt.Errorf("GC VM directory absence not established")
 		}
 	}
+	if err = s.jailResidueAbsent(id); err != nil {
+		return "", err
+	}
 	return "absent", nil
 }

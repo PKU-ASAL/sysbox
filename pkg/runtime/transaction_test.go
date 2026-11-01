@@ -3,14 +3,14 @@ package runtime
 import (
 	"encoding/json"
 	"errors"
-	"github.com/oslab/sysbox/pkg/address"
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/oslab/sysbox/pkg/address"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/state"
 )
 
@@ -20,11 +20,11 @@ func TestFileRecorderPersistsPlanLeaseAndStateSerials(t *testing.T) {
 	rec.SetLeaseOwner("sysbox-api:apply:run-1")
 	rec.SetStateSerialBefore(4)
 
-	plan := &Plan{Actions: []controlplane.PlannedChange{{
-		Address: address.Resource("sysbox_node", "web"), Action: controlplane.PlanActionCreate,
+	plan := &Plan{Actions: []model.PlannedChange{{
+		Address: address.Resource("sysbox_node", "web"), Action: model.PlanActionCreate,
 	}}}
 	require.NoError(t, rec.Begin("apply", plan))
-	step := rec.StepStartKind("state", "state", controlplane.PlanActionNoop)
+	step := rec.StepStartKind("state", "state", model.PlanActionNoop)
 	rec.StepFailed(step, errors.New("cas conflict"))
 	rec.SetStateSerialAfter(5)
 	rec.Finish(errors.New("failed"))
@@ -50,7 +50,7 @@ func TestFileRecorderPersistsSubsteps(t *testing.T) {
 	rec := NewFileRecorder(path, "run-1", "mixed")
 	require.NoError(t, rec.Begin("apply", nil))
 
-	parent := rec.StepStart("sysbox_node.vm", controlplane.PlanActionCreate)
+	parent := rec.StepStart("sysbox_node.vm", model.PlanActionCreate)
 	child := rec.SubstepStart(parent, "create_resource", map[string]any{"resource": "sysbox_node.vm"})
 	rec.StepDone(child)
 	rec.StepDone(parent)
@@ -74,7 +74,7 @@ func TestFileRecorderPersistsStatePatches(t *testing.T) {
 	rec := NewFileRecorder(path, "run-1", "mixed")
 	require.NoError(t, rec.Begin("apply", nil))
 
-	step := rec.StepStart("sysbox_node.web", controlplane.PlanActionCreate)
+	step := rec.StepStart("sysbox_node.web", model.PlanActionCreate)
 	stateLog := StateResourceLog{
 		Type:        "sysbox_node",
 		Name:        "web",
@@ -107,7 +107,7 @@ func TestApplyStatePatchUpsertAndDelete(t *testing.T) {
 	st := &state.State{Version: state.SchemaVersion}
 	patch := StatePatch{
 		Resource: "sysbox_node.web",
-		Action:   controlplane.PlanActionCreate,
+		Action:   model.PlanActionCreate,
 		Op:       StatePatchUpsert,
 		State: &StateResourceLog{
 			Type:     "sysbox_node",
@@ -126,7 +126,7 @@ func TestApplyStatePatchUpsertAndDelete(t *testing.T) {
 
 	require.True(t, ApplyStatePatch(st, StatePatch{
 		Resource: "sysbox_node.web",
-		Action:   controlplane.PlanActionDelete,
+		Action:   model.PlanActionDelete,
 		Op:       StatePatchDelete,
 	}))
 	require.Nil(t, st.FindResource(address.Resource("sysbox_node", "web")))

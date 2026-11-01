@@ -4,16 +4,17 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/guesttask"
-	"github.com/oslab/sysbox/pkg/hostsupervisor"
-	"github.com/oslab/sysbox/pkg/substrate"
-	"github.com/stretchr/testify/require"
 	"net"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/guesttask"
+	"github.com/oslab/sysbox/pkg/hostsupervisor"
+	"github.com/oslab/sysbox/pkg/substrate"
+	"github.com/stretchr/testify/require"
 )
 
 type cancellationTask struct{ cancelled bool }

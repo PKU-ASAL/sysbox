@@ -8,20 +8,21 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
 )
 
 func TestRunDispatchMaintenanceBlocksNewWorkButPreservesReplay(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
-		request := func(id string) RunDispatchRequest {
+		request := func(id string) controlstore.RunDispatchRequest {
 			run := controlplane.Run{ID: id, Topology: "lab", AgentID: "agent", Op: "apply", Status: controlplane.RunAssigned, QueuedAt: time.Now().UTC()}
 			r := incarnationDispatch(run)
 			r.Command.TopologyUID = "owner"
 			return r
 		}
-		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		queued := controlplane.Run{ID: "queued", Topology: "lab", Status: controlplane.RunQueued, Op: "apply", QueuedAt: time.Now().UTC()}
 		require.NoError(t, store.SaveRun(ctx, queued))
 		barrier, err := authority.BeginMaintenance(ctx, "freeze", "owner", "plan")
@@ -33,7 +34,7 @@ func TestRunDispatchMaintenanceBlocksNewWorkButPreservesReplay(t *testing.T) {
 		require.False(t, created)
 		_, err = store.GetRun(ctx, first.Run.ID)
 		require.ErrorIs(t, err, persistence.ErrNotFound)
-		_, found, err := store.GetRunDispatch(ctx, runDispatchKey(first), first.Fingerprint)
+		_, found, err := store.GetRunDispatch(ctx, controlstore.RunDispatchKey(first), first.Fingerprint)
 		require.NoError(t, err)
 		require.False(t, found, "rejection must roll back idempotency mapping")
 		assigned := queued
@@ -61,9 +62,9 @@ func TestRunDispatchMaintenanceBlocksNewWorkButPreservesReplay(t *testing.T) {
 }
 
 func TestRunDispatchAndMaintenanceSerializePublication(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
-		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		for i := 0; i < 6; i++ {
 			id := fmt.Sprintf("run-%d", i)
 			run := controlplane.Run{ID: id, Topology: "lab-" + id, AgentID: "agent", Op: "apply", Status: controlplane.RunAssigned, QueuedAt: time.Now().UTC()}

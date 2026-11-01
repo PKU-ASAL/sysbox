@@ -6,14 +6,15 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/substrate"
-	"github.com/oslab/sysbox/pkg/transport"
-	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/substrate"
+	"github.com/oslab/sysbox/pkg/transport"
+	"github.com/stretchr/testify/require"
 )
 
 func TestFirecrackerDurableGuestTaskE2E(t *testing.T) {
@@ -28,7 +29,7 @@ func TestFirecrackerDurableGuestTaskE2E(t *testing.T) {
 	defer cancel()
 	id := substrate.OperationIdentity{ActionID: "create", OwnerUID: "task-owner", TopologyUID: "task-topology", ResourceUID: "task-node", Generation: 1}
 	ctx = substrate.WithOperationIdentity(ctx, id)
-	h, err := s.CreateNode(ctx, substrate.NodeSpec{Name: "task-e2e", Image: substrate.ArtifactHandle{ID: rootfs}, ProviderConfig: &Config{Kernel: kernel, AllowDirect: true}})
+	h, err := s.CreateNode(ctx, substrate.NodeSpec{Name: "task-e2e", Image: substrate.ArtifactHandle{ID: rootfs}, ProviderConfig: &Config{Kernel: kernel}})
 	require.NoError(t, err)
 	cleanupRealVM(t, s, h)
 	require.NoError(t, s.StartNode(ctx, h))

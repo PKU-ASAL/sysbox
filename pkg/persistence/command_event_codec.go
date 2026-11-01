@@ -2,9 +2,10 @@ package persistence
 
 import (
 	"encoding/json"
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"strings"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
 )
 
 func NormalizeCommandEvent(e controlplane.AgentCommandEvent) controlplane.AgentCommandEvent {

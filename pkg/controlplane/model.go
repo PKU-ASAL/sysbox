@@ -4,6 +4,7 @@ package controlplane
 import (
 	"time"
 
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
@@ -31,16 +32,6 @@ type Workspace struct {
 	Backend        string    `json:"backend,omitempty"`
 	UpdatedAt      time.Time `json:"updated_at,omitempty"`
 	LatestRevision string    `json:"latest_revision,omitempty"`
-}
-
-type PlanFingerprint struct {
-	ConfigSHA256    string            `json:"config_sha256"`
-	StateLineage    string            `json:"state_lineage"`
-	StateSerial     int64             `json:"state_serial"`
-	ResourceSchemas map[string]int    `json:"resource_schemas"`
-	Drivers         map[string]string `json:"drivers"`
-	Artifacts       map[string]string `json:"artifacts"`
-	VariablesSHA256 string            `json:"variables_sha256"`
 }
 
 type Run struct {
@@ -77,9 +68,8 @@ type Run struct {
 	// Assertion is the outcome of the check/assert evaluation this run performed
 	// (nil when the run evaluated no checks). It is in-memory state feeding the
 	// topology's Asserted condition; it is recomputed by the next apply.
-	Assertion            *AssertionResult `json:"assertion,omitempty"`
-	Cleanup              *CleanupReceipt  `json:"cleanup,omitempty"`
-	CompletionProjection *Projection      `json:"completion_projection,omitempty"`
+	Assertion *AssertionResult `json:"assertion,omitempty"`
+	Cleanup   *CleanupReceipt  `json:"cleanup,omitempty"`
 	// Inputs are the apply-time variable values. They are transient: carried in
 	// the run dispatch so the agent can bind var.<name>, but not durably
 	// persisted, so a sensitive input's plaintext does not survive the run.
@@ -89,10 +79,10 @@ type Run struct {
 	Inputs map[string]string `json:"inputs,omitempty"`
 }
 
-type RunCompletion struct {
-	Cleanup    *CleanupReceipt `json:"cleanup,omitempty"`
-	Run        Run             `json:"run"`
-	Projection Projection      `json:"projection,omitempty"`
+// HostRunResult is the acknowledged durable result returned to the host signer.
+type HostRunResult struct {
+	Cleanup *CleanupReceipt `json:"cleanup,omitempty"`
+	Run     Run             `json:"run"`
 }
 
 type RunStatus string
@@ -174,35 +164,42 @@ type InventoryItem struct {
 }
 
 type ConsoleSession struct {
-	ID          string    `json:"id"`
-	ProjectID   string    `json:"project_id,omitempty"`
-	Workspace   string    `json:"workspace,omitempty"`
-	Topology    string    `json:"topology"`
-	Node        string    `json:"node"`
-	AgentID     string    `json:"agent_id"`
-	Status      string    `json:"status"`
-	Err         string    `json:"error,omitempty"`
-	ExitCode    *int      `json:"exit_code,omitempty"`
-	RequestedBy string    `json:"requested_by,omitempty"`
-	Roles       []string  `json:"roles,omitempty"`
-	Policy      string    `json:"policy,omitempty"`
-	TTY         bool      `json:"tty"`
-	Audit       []Event   `json:"audit,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
-	StartedAt   time.Time `json:"started_at,omitempty"`
-	EndedAt     time.Time `json:"ended_at,omitempty"`
+	CommandID            string    `json:"command_id,omitempty"`
+	NotStarted           bool      `json:"not_started,omitempty"`
+	TopologyUID          string    `json:"topology_uid,omitempty"`
+	ResourceUID          string    `json:"resource_uid,omitempty"`
+	Generation           int64     `json:"generation,omitempty"`
+	HostCompletion       string    `json:"host_completion,omitempty"`
+	TerminationConfirmed bool      `json:"termination_confirmed"`
+	ID                   string    `json:"id"`
+	ProjectID            string    `json:"project_id,omitempty"`
+	Workspace            string    `json:"workspace,omitempty"`
+	Topology             string    `json:"topology"`
+	Node                 string    `json:"node"`
+	AgentID              string    `json:"agent_id"`
+	Status               string    `json:"status"`
+	Err                  string    `json:"error,omitempty"`
+	ExitCode             *int      `json:"exit_code,omitempty"`
+	RequestedBy          string    `json:"requested_by,omitempty"`
+	Roles                []string  `json:"roles,omitempty"`
+	Policy               string    `json:"policy,omitempty"`
+	TTY                  bool      `json:"tty"`
+	Audit                []Event   `json:"audit,omitempty"`
+	CreatedAt            time.Time `json:"created_at"`
+	StartedAt            time.Time `json:"started_at,omitempty"`
+	EndedAt              time.Time `json:"ended_at,omitempty"`
 }
 
 type ResourceProjection struct {
-	SessionID  string           `json:"session_id"`
-	Sequence   uint64           `json:"sequence"`
-	AgentID    string           `json:"agent_id,omitempty"`
-	Workspace  string           `json:"workspace,omitempty"`
-	Topology   string           `json:"topology,omitempty"`
-	Serial     int64            `json:"serial,omitempty"`
-	ObservedAt time.Time        `json:"observed_at,omitempty"`
-	Health     TopologyHealth   `json:"health"`
-	Resources  []ResourceHealth `json:"resources,omitempty"`
+	SessionID  string                 `json:"session_id"`
+	Sequence   uint64                 `json:"sequence"`
+	AgentID    string                 `json:"agent_id,omitempty"`
+	Workspace  string                 `json:"workspace,omitempty"`
+	Topology   string                 `json:"topology,omitempty"`
+	Serial     int64                  `json:"serial,omitempty"`
+	ObservedAt time.Time              `json:"observed_at,omitempty"`
+	Health     model.TopologyHealth   `json:"health"`
+	Resources  []model.ResourceHealth `json:"resources,omitempty"`
 }
 
 type ConsoleRequest struct {
@@ -301,16 +298,6 @@ type GuestFileOperation struct {
 	StartedAt       time.Time                    `json:"started_at,omitempty"`
 	EndedAt         time.Time                    `json:"ended_at,omitempty"`
 	Error           string                       `json:"error,omitempty"`
-}
-
-type GuestFileOperationCompletion struct {
-	Error       string `json:"error,omitempty"`
-	ActionID    string `json:"action_id,omitempty"`
-	ResourceUID string `json:"resource_uid,omitempty"`
-	Generation  int64  `json:"generation,omitempty"`
-	LeaseEpoch  int64  `json:"lease_epoch,omitempty"`
-	LeaseOwner  string `json:"lease_owner,omitempty"`
-	Attempt     int    `json:"attempt,omitempty"`
 }
 
 type GuestExecution struct {

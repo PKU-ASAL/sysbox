@@ -11,8 +11,9 @@ import (
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
@@ -93,9 +94,9 @@ func TestBuildResetPlanSupportsWholeTopologyAndExactNodeTarget(t *testing.T) {
 	g, st := resetTestGraph(t)
 	plan, err := BuildResetPlan(g, st, "")
 	require.NoError(t, err)
-	require.Equal(t, []controlplane.PlannedChange{
-		{Address: address.Resource("sysbox_node", "first"), Action: controlplane.PlanActionReset, Reason: "reset mutable guest state from immutable baseline", Changes: []controlplane.FieldChange{{Path: "baseline_digest", After: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}},
-		{Address: address.Resource("sysbox_node", "second"), Action: controlplane.PlanActionReset, Reason: "reset mutable guest state from immutable baseline", Changes: []controlplane.FieldChange{{Path: "baseline_digest", After: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}},
+	require.Equal(t, []model.PlannedChange{
+		{Address: address.Resource("sysbox_node", "first"), Action: model.PlanActionReset, Reason: "reset mutable guest state from immutable baseline", Changes: []model.FieldChange{{Path: "baseline_digest", After: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}},
+		{Address: address.Resource("sysbox_node", "second"), Action: model.PlanActionReset, Reason: "reset mutable guest state from immutable baseline", Changes: []model.FieldChange{{Path: "baseline_digest", After: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}},
 	}, plan.Actions)
 
 	targeted, err := BuildResetPlan(g, st, "sysbox_node.second")
@@ -120,7 +121,7 @@ func TestBuildResetPlanIgnoresPreventDestroyBecauseLogicalResourceSurvives(t *te
 	plan, err := BuildResetPlan(g, st, "sysbox_node.first")
 	require.NoError(t, err)
 	require.Len(t, plan.Actions, 1)
-	require.Equal(t, controlplane.PlanActionReset, plan.Actions[0].Action)
+	require.Equal(t, model.PlanActionReset, plan.Actions[0].Action)
 }
 
 func TestResetPlanPinsBaselineAndRejectsDigestChangeBeforeMutation(t *testing.T) {
@@ -147,9 +148,9 @@ func TestResumeResetPlanSkipsCompletedNodesAndKeepsFailedNodes(t *testing.T) {
 	require.NoError(t, err)
 	digest, err := planActionsSHA256(plan.Actions)
 	require.NoError(t, err)
-	cp := &OperationCheckpoint{Plan: append([]controlplane.PlannedChange(nil), plan.Actions...), PlanSHA256: digest, Steps: []OperationStep{
-		{Kind: "resource", Resource: "sysbox_node.first", Action: controlplane.PlanActionReset, Status: OperationDone},
-		{Kind: "resource", Resource: "sysbox_node.second", Action: controlplane.PlanActionReset, Status: OperationFailed},
+	cp := &OperationCheckpoint{Plan: append([]model.PlannedChange(nil), plan.Actions...), PlanSHA256: digest, Steps: []OperationStep{
+		{Kind: "resource", Resource: "sysbox_node.first", Action: model.PlanActionReset, Status: OperationDone},
+		{Kind: "resource", Resource: "sysbox_node.second", Action: model.PlanActionReset, Status: OperationFailed},
 	}}
 
 	resumed, err := ResumeResetPlan(cp, plan)
@@ -165,15 +166,15 @@ func TestResumeResetPlanSupportsConsecutiveFailedRecoveryAttempts(t *testing.T) 
 	fullDigest, err := planActionsSHA256(full.Actions)
 	require.NoError(t, err)
 	first := &OperationCheckpoint{Plan: full.Actions, PlanSHA256: fullDigest, Steps: []OperationStep{
-		{Kind: "resource", Resource: "sysbox_node.first", Action: controlplane.PlanActionReset, Status: OperationDone},
-		{Kind: "resource", Resource: "sysbox_node.second", Action: controlplane.PlanActionReset, Status: OperationFailed},
+		{Kind: "resource", Resource: "sysbox_node.first", Action: model.PlanActionReset, Status: OperationDone},
+		{Kind: "resource", Resource: "sysbox_node.second", Action: model.PlanActionReset, Status: OperationFailed},
 	}}
 	pending, err := ResumeResetPlan(first, full)
 	require.NoError(t, err)
 	pendingDigest, err := planActionsSHA256(pending.Actions)
 	require.NoError(t, err)
 	second := &OperationCheckpoint{Plan: pending.Actions, PlanSHA256: pendingDigest, Steps: []OperationStep{
-		{Kind: "resource", Resource: "sysbox_node.second", Action: controlplane.PlanActionReset, Status: OperationFailed},
+		{Kind: "resource", Resource: "sysbox_node.second", Action: model.PlanActionReset, Status: OperationFailed},
 	}}
 
 	resumedAgain, err := ResumeResetPlan(second, full)
@@ -187,9 +188,9 @@ func TestResumeResetPlanRejectsChangedPinnedBaseline(t *testing.T) {
 	require.NoError(t, err)
 	digest, err := planActionsSHA256(plan.Actions)
 	require.NoError(t, err)
-	cp := &OperationCheckpoint{Plan: append([]controlplane.PlannedChange(nil), plan.Actions...), PlanSHA256: digest}
-	changed := &Plan{Actions: append([]controlplane.PlannedChange(nil), plan.Actions...)}
-	changed.Actions[0].Changes = append([]controlplane.FieldChange(nil), plan.Actions[0].Changes...)
+	cp := &OperationCheckpoint{Plan: append([]model.PlannedChange(nil), plan.Actions...), PlanSHA256: digest}
+	changed := &Plan{Actions: append([]model.PlannedChange(nil), plan.Actions...)}
+	changed.Actions[0].Changes = append([]model.FieldChange(nil), plan.Actions[0].Changes...)
 	changed.Actions[0].Changes[0].After = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 
 	_, err = ResumeResetPlan(cp, changed)
@@ -202,7 +203,7 @@ func TestResumeResetPlanRejectsCheckpointFingerprintMismatch(t *testing.T) {
 	require.NoError(t, err)
 	digest, err := planActionsSHA256(plan.Actions)
 	require.NoError(t, err)
-	cp := &OperationCheckpoint{Plan: append([]controlplane.PlannedChange(nil), plan.Actions...), PlanSHA256: digest}
+	cp := &OperationCheckpoint{Plan: append([]model.PlannedChange(nil), plan.Actions...), PlanSHA256: digest}
 	cp.Plan[0].Reason = "tampered"
 
 	_, err = ResumeResetPlan(cp, plan)
@@ -215,17 +216,17 @@ func TestResumeResetPlanRejectsInvalidPlanBeforeSkippingCompletedSteps(t *testin
 			g, st := resetTestGraph(t)
 			current, err := BuildResetPlan(g, st, "")
 			require.NoError(t, err)
-			cp := &OperationCheckpoint{Plan: append([]controlplane.PlannedChange(nil), current.Actions...)}
+			cp := &OperationCheckpoint{Plan: append([]model.PlannedChange(nil), current.Actions...)}
 			switch scenario {
 			case "duplicate-current":
 				current.Actions = append(current.Actions, current.Actions[0])
 			case "completed-create":
-				current.Actions[0].Action = controlplane.PlanActionCreate
-				cp.Plan[0].Action = controlplane.PlanActionCreate
+				current.Actions[0].Action = model.PlanActionCreate
+				cp.Plan[0].Action = model.PlanActionCreate
 			case "duplicate-completed":
 				cp.Plan = append(cp.Plan, cp.Plan[0])
 			}
-			cp.Steps = []OperationStep{{Kind: "resource", Resource: cp.Plan[0].Address.String(), Action: controlplane.PlanActionReset, Status: OperationDone}}
+			cp.Steps = []OperationStep{{Kind: "resource", Resource: cp.Plan[0].Address.String(), Action: model.PlanActionReset, Status: OperationDone}}
 			cp.PlanSHA256, err = planActionsSHA256(cp.Plan)
 			require.NoError(t, err)
 			_, err = ResumeResetPlan(cp, current)
@@ -307,7 +308,7 @@ func TestResetReturnedDestroySurvivesObservationCommitFailure(t *testing.T) {
 	require.Equal(t, []string{"prepare:old-first", "destroy"}, sub.resetLifecycle)
 	coldState, err := m.LoadState(context.Background(), e.topology)
 	require.NoError(t, err)
-	cold := NewExecutor(g, coldState)
+	cold := NewExecutor(g, coldState, driver.DefaultRegistry)
 	cold.SetRunContext(e.topology, "cold")
 	cold.SetResumeRunID(e.runID)
 	cold.SetActionRepository(resetOutcomeContract{m})
@@ -343,7 +344,7 @@ func TestResetDestroyRequiresCommittedClaim(t *testing.T) {
 	require.Equal(t, "prepared", m.actions[0].Phase)
 	// A committed claim without a returned callback is not permission to replay.
 	m.actions[0].Phase = "destroying"
-	cold := NewExecutor(g, st)
+	cold := NewExecutor(g, st, driver.DefaultRegistry)
 	cold.SetRunContext(e.topology, "cold")
 	cold.SetResumeRunID(e.runID)
 	cold.SetActionRepository(m)
@@ -372,7 +373,7 @@ func TestResetNewRunCannotTakeOverPendingActions(t *testing.T) {
 			require.Error(t, e.Reset(context.Background(), plan))
 			before := append([]ActionRecord(nil), m.actions...)
 			m.outcomeErr = nil
-			cold := NewExecutor(g, st)
+			cold := NewExecutor(g, st, driver.DefaultRegistry)
 			cold.SetRunContext(e.topology, "new-run")
 			cold.SetResumeRunID(resume)
 			cold.SetActionRepository(m)
@@ -402,7 +403,7 @@ func TestResetAcceptedIntentColdRecoveryBeforePrepare(t *testing.T) {
 	// Once the prepare marker committed, a crash may have followed an effect.
 	// That phase must never be treated as the safe, not-yet-started phase.
 	m.actions[0].Phase = "preparing"
-	uncertain := NewExecutor(g, st)
+	uncertain := NewExecutor(g, st, driver.DefaultRegistry)
 	uncertain.SetRunContext(e.topology, "uncertain-reset")
 	uncertain.SetResumeRunID(e.runID)
 	uncertain.SetActionRepository(m)
@@ -411,7 +412,7 @@ func TestResetAcceptedIntentColdRecoveryBeforePrepare(t *testing.T) {
 	m.actions[0].Phase = "accepted"
 	coldState, err := m.LoadState(context.Background(), e.topology)
 	require.NoError(t, err)
-	cold := NewExecutor(g, coldState)
+	cold := NewExecutor(g, coldState, driver.DefaultRegistry)
 	cold.SetRunContext(e.topology, "cold-reset")
 	cold.SetResumeRunID(e.runID)
 	cold.SetActionRepository(resetOutcomeContract{m})
@@ -477,7 +478,7 @@ func TestResetBatchColdRecoveryRetainsBothOriginalActions(t *testing.T) {
 	m.outcomeErr = nil
 	coldState, err := m.LoadState(context.Background(), e.topology)
 	require.NoError(t, err)
-	cold := NewExecutor(g, coldState)
+	cold := NewExecutor(g, coldState, driver.DefaultRegistry)
 	cold.SetRunContext(e.topology, "new-process")
 	cold.SetResumeRunID(e.runID)
 	cold.SetActionRepository(resetOutcomeContract{m})
@@ -653,7 +654,7 @@ func TestResetRecoveryDoesNotAdvanceGenerationOrReplayEffects(t *testing.T) {
 	require.Equal(t, int64(2), repo.actions[0].Generation)
 	before := append([]string(nil), sub.resetLifecycle...)
 	repo.patchErr = nil
-	restarted := NewExecutor(g, st)
+	restarted := NewExecutor(g, st, driver.DefaultRegistry)
 	restarted.SetRunContext(e.topology, "run-2")
 	restarted.SetResumeRunID(e.runID)
 	restarted.SetActionRepository(repo)
@@ -711,7 +712,7 @@ func TestNewResetSkipsDisposedAdoptionButOldRequestCannotResume(t *testing.T) {
 			g, st := configuredResetTestState(t, sub, "first")
 			e := testActionExecutor(t, g, st)
 			e.runID = "new-run"
-			old := ActionRecord{ID: "disposed-adoption", RunID: "old-adoption", Action: controlplane.PlanActionAdopt, Status: ActionUncertain, DispositionID: "fence-receipt", Resource: address.Resource("sysbox_node", "first")}
+			old := ActionRecord{ID: "disposed-adoption", RunID: "old-adoption", Action: model.PlanActionAdopt, Status: ActionUncertain, DispositionID: "fence-receipt", Resource: address.Resource("sysbox_node", "first")}
 			m := e.actions.(*memoryActions)
 			m.actions = append(m.actions, old)
 			if oldRequest {

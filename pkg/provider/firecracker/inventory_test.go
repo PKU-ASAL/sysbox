@@ -2,11 +2,12 @@ package firecracker
 
 import (
 	"context"
-	"github.com/oslab/sysbox/pkg/driver"
-	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/stretchr/testify/require"
 )
 
 func TestManagedInventoryReturnsVerifiedManifestIdentity(t *testing.T) {

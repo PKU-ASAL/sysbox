@@ -26,6 +26,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/revisiongate"
 	"github.com/stretchr/testify/require"
 )
@@ -90,7 +91,7 @@ func TestRemoteRegistryAcrossIsolatedVMHTTPS(t *testing.T) {
 	files := map[string][]byte{"field.sysbox.hcl": []byte("separate VM")}
 	id := controlplane.ComputeRevisionDigest(files)
 	ctx := context.Background()
-	store := server.apiStore.(*localAPIStore)
+	store := server.apiStore.(*controlstore.Local)
 	require.NoError(t, store.SaveGlobalRevision(ctx, controlplane.GlobalRevision{Revision: id, Files: files, CreatedAt: time.Now().Add(-time.Hour)}))
 	remoteDir := "/var/tmp/rr-" + uuid.NewString()
 	ssh("mkdir -m700 " + remoteDir)

@@ -1,10 +1,11 @@
 package controlplane
 
 import (
-	"github.com/oslab/sysbox/pkg/substrate"
-	"github.com/stretchr/testify/require"
 	"strings"
 	"testing"
+
+	"github.com/oslab/sysbox/pkg/substrate"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGuestTaskResultRequiresTerminationAndPreservesUnknown(t *testing.T) {

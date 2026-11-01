@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
 )
@@ -15,14 +16,14 @@ import (
 func TestMetadataDeleteRechecksRunAndConsoleInsideCommit(t *testing.T) {
 	for _, kind := range []string{"run", "console"} {
 		t.Run(kind, func(t *testing.T) {
-			eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+			eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 				ctx := context.Background()
 				s := stateDeleteTestServer(t, store)
 				repo, err := s.actionRepository("lab")
 				require.NoError(t, err)
 				before, err := repo.LoadState(ctx, "lab")
 				require.NoError(t, err)
-				require.NoError(t, s.workspaceService().ensureTopologyQuiescent(ctx, "lab"))
+				require.NoError(t, s.workspaceService().EnsureTopologyQuiescent(ctx, "lab"))
 				// Admission after preflight must still be visible at commit.
 				run := controlplane.Run{ID: "late-run", Topology: "lab", Status: controlplane.RunQueued, QueuedAt: time.Now().UTC()}
 				sess := controlplane.ConsoleSession{ID: "late-session", Topology: "lab", Workspace: "different-workspace", Status: "lost", CreatedAt: time.Now().UTC()}
@@ -58,20 +59,20 @@ func TestMetadataDeleteRechecksRunAndConsoleInsideCommit(t *testing.T) {
 func TestRunActivityRequiresValidTerminalEvidence(t *testing.T) {
 	now := time.Now().UTC()
 	for _, status := range []controlplane.RunStatus{controlplane.RunQueued, controlplane.RunAssigned, controlplane.RunRunning, "unknown", ""} {
-		require.True(t, runActivityUnresolved(controlplane.Run{Status: status, QueuedAt: now, EndedAt: now}))
+		require.True(t, controlstore.RunActivityUnresolved(controlplane.Run{Status: status, QueuedAt: now, EndedAt: now}))
 	}
 	for _, status := range []controlplane.RunStatus{controlplane.RunDone, controlplane.RunFailed, controlplane.RunCancelled} {
-		require.False(t, runActivityUnresolved(controlplane.Run{Status: status, QueuedAt: now, EndedAt: now}))
-		require.True(t, runActivityUnresolved(controlplane.Run{Status: status, EndedAt: now}))
-		require.True(t, runActivityUnresolved(controlplane.Run{Status: status, QueuedAt: now}))
-		require.True(t, runActivityUnresolved(controlplane.Run{Status: status, QueuedAt: now, EndedAt: now.Add(-time.Second)}))
+		require.False(t, controlstore.RunActivityUnresolved(controlplane.Run{Status: status, QueuedAt: now, EndedAt: now}))
+		require.True(t, controlstore.RunActivityUnresolved(controlplane.Run{Status: status, EndedAt: now}))
+		require.True(t, controlstore.RunActivityUnresolved(controlplane.Run{Status: status, QueuedAt: now}))
+		require.True(t, controlstore.RunActivityUnresolved(controlplane.Run{Status: status, QueuedAt: now, EndedAt: now.Add(-time.Second)}))
 	}
 }
 
 func TestMetadataDeleteRejectsSQLiteRunIndexMismatch(t *testing.T) {
 	ctx := context.Background()
-	store := &sqliteAPIStore{dbPath: filepath.Join(t.TempDir(), "api.db"), runsDir: t.TempDir()}
-	db, err := store.open()
+	store := &controlstore.SQLite{DbPath: filepath.Join(t.TempDir(), "api.db"), RunsDir: t.TempDir()}
+	db, err := store.OpenDB()
 	require.NoError(t, err)
 	defer db.Close()
 	s := stateDeleteTestServer(t, store)
@@ -81,7 +82,7 @@ func TestMetadataDeleteRejectsSQLiteRunIndexMismatch(t *testing.T) {
 	require.NoError(t, err)
 	run := controlplane.Run{ID: "run", Topology: "lab", Status: controlplane.RunDone, QueuedAt: time.Now().Add(-time.Minute), EndedAt: time.Now()}
 	require.NoError(t, store.SaveRun(ctx, run))
-	require.NoError(t, s.workspaceService().ensureTopologyQuiescent(ctx, "lab"))
+	require.NoError(t, s.workspaceService().EnsureTopologyQuiescent(ctx, "lab"))
 	_, err = db.ExecContext(ctx, "UPDATE sysbox_runs SET status='running' WHERE id='run'")
 	require.NoError(t, err)
 	_, err = store.LoadRuns(ctx)
@@ -94,14 +95,14 @@ func TestMetadataDeleteRejectsSQLiteRunIndexMismatch(t *testing.T) {
 }
 
 func TestMetadataDeleteRechecksCommandsInsideCommit(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		repo, err := s.actionRepository("lab")
 		require.NoError(t, err)
 		before, err := repo.LoadState(ctx, "lab")
 		require.NoError(t, err)
-		require.NoError(t, s.workspaceService().ensureTopologyQuiescent(ctx, "lab"))
+		require.NoError(t, s.workspaceService().EnsureTopologyQuiescent(ctx, "lab"))
 		cmd := controlplane.AgentCommand{ID: "late-command", AgentID: "unregistered", TopologyUID: before.TopologyUID, Type: "run_assigned", Status: controlplane.AgentCommandStatusQueued}
 		require.NoError(t, store.SaveAgentCommand(ctx, cmd))
 		require.ErrorIs(t, s.deleteStateWithAuthority(ctx, "lab", before.Meta.Serial, before.TopologyUID), persistence.ErrConflict)
@@ -122,7 +123,7 @@ func TestMetadataDeleteRechecksCommandsInsideCommit(t *testing.T) {
 }
 
 func TestCommandPublicationWaitsForAuthorityTransaction(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		entered, release := make(chan struct{}), make(chan struct{})
 		var once sync.Once
@@ -130,12 +131,12 @@ func TestCommandPublicationWaitsForAuthorityTransaction(t *testing.T) {
 		defer unblock()
 		done := make(chan error, 1)
 		go func() {
-			done <- (apiExecutionGrantStorage{store: store}).UpdateExecutionAuthority(ctx, func(raw []byte) ([]byte, error) {
-				memory := &grantTransaction{raw: raw}
+			done <- (controlstore.AuthorityStorage{Store: store}).UpdateExecutionAuthority(ctx, func(raw []byte) ([]byte, error) {
+				memory := &controlstore.GrantTransaction{Raw: raw}
 				err := persistence.NewExecutionGrantRepository(memory).ObserveTime(ctx)
 				close(entered)
 				<-release
-				return memory.raw, err
+				return memory.Raw, err
 			})
 		}()
 		select {

@@ -8,10 +8,11 @@ import (
 	"testing"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/stretchr/testify/require"
 )
 
-type unavailableConsoleInventory struct{ apiStore }
+type unavailableConsoleInventory struct{ controlstore.Store }
 
 func (unavailableConsoleInventory) ListConsoleSessions(context.Context, string) ([]controlplane.ConsoleSession, error) {
 	return nil, errors.New("console inventory unavailable")
@@ -42,10 +43,10 @@ func TestConsoleStartupDoesNotTreatFailedInventoryAsEmpty(t *testing.T) {
 }
 
 func TestConsoleStartupDoesNotPublishUncommittedLostState(t *testing.T) {
-	store := &localAPIStore{runsDir: t.TempDir()}
+	store := &controlstore.Local{RunsDir: t.TempDir()}
 	original := newConsoleSessionHub(store)
 	sess := createConsoleForTest(t, original)
-	hub := newConsoleSessionHub(failingConsoleSave{apiStore: store})
+	hub := newConsoleSessionHub(failingConsoleSave{Store: store})
 	_, err := hub.Snapshot(sess.ID)
 	require.ErrorContains(t, err, "storage unavailable")
 	require.Empty(t, hub.sessions)

@@ -12,8 +12,9 @@ import (
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/secret"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -22,6 +23,7 @@ import (
 // Executor wires graph walking to provider calls. It holds references to
 // registered capability drivers and updates state after each action.
 type Executor struct {
+	providers           *driver.Registry
 	graph               *graph.Graph
 	state               *state.State
 	logger              io.Writer
@@ -43,8 +45,8 @@ type Executor struct {
 	currentResourceStep int
 }
 
-func NewExecutor(g *graph.Graph, s *state.State) *Executor {
-	return &Executor{graph: g, state: s, logger: os.Stdout, recorder: NoopRecorder{}, currentResourceStep: -1}
+func NewExecutor(g *graph.Graph, s *state.State, providers *driver.Registry) *Executor {
+	return &Executor{providers: providers, graph: g, state: s, logger: os.Stdout, recorder: NoopRecorder{}, currentResourceStep: -1}
 }
 
 // SetLogger redirects all apply/destroy log output (e.g. to capture it for
@@ -162,7 +164,7 @@ func (e *Executor) setCurrentResourceStep(step int) func() {
 	}
 }
 
-func (e *Executor) recordStepExternal(ctx context.Context, step int, id address.Address, action controlplane.PlanActionType) error {
+func (e *Executor) recordStepExternal(ctx context.Context, step int, id address.Address, action model.PlanActionType) error {
 	r := e.state.FindResource(id)
 	if r == nil {
 		return nil
@@ -240,7 +242,7 @@ func (e *Executor) recordStepExternal(ctx context.Context, step int, id address.
 	return nil
 }
 
-func (e *Executor) recordDeletePatch(ctx context.Context, step int, r state.Resource, action controlplane.PlanActionType) error {
+func (e *Executor) recordDeletePatch(ctx context.Context, step int, r state.Resource, action model.PlanActionType) error {
 	log := StateResourceLog{
 		Type:        r.Address.Type,
 		Name:        r.Address.Name,

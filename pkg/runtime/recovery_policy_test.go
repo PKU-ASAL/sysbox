@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
@@ -22,7 +22,7 @@ func TestDecideNodeRecoveryRefreshHealthy(t *testing.T) {
 		},
 	})
 
-	require.Equal(t, controlplane.RecoveryDecisionNoop, plan.Decision)
+	require.Equal(t, model.RecoveryDecisionNoop, plan.Decision)
 	require.Equal(t, "process alive", plan.Reason)
 }
 
@@ -39,6 +39,6 @@ func TestDecideNodeRecoveryRefreshMissingMarksDrift(t *testing.T) {
 		},
 	})
 
-	require.Equal(t, controlplane.RecoveryDecisionMarkDrift, plan.Decision)
+	require.Equal(t, model.RecoveryDecisionMarkDrift, plan.Decision)
 	require.Equal(t, "container not found", plan.Reason)
 }

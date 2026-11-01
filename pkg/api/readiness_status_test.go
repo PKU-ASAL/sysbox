@@ -9,9 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
-
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/model"
+	"github.com/oslab/sysbox/pkg/workspace"
+	"github.com/stretchr/testify/require"
 )
 
 func condition(t *testing.T, s *controlplane.TopologyStatus, typ string) controlplane.Condition {
@@ -25,12 +27,12 @@ func condition(t *testing.T, s *controlplane.TopologyStatus, typ string) control
 	return controlplane.Condition{}
 }
 
-func getTopology(t *testing.T, s *Server, name string) WorkspaceInfo {
+func getTopology(t *testing.T, s *Server, name string) workspace.Info {
 	t.Helper()
 	rec := httptest.NewRecorder()
 	s.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/topologies/"+name, nil))
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	var body WorkspaceInfo
+	var body workspace.Info
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	return body
 }
@@ -56,9 +58,9 @@ func TestGetTopologyReportsReadinessConditions(t *testing.T) {
 	s.jobs.replace(run)
 
 	// A healthy observation.
-	require.NoError(t, s.saveHealthSnapshot("lab", HealthSnapshot{
+	require.NoError(t, s.saveHealthSnapshot("lab", controlstore.HealthSnapshot{
 		Topology: "lab",
-		Health:   controlplane.TopologyHealth{Status: controlplane.ResourceHealthHealthy},
+		Health:   model.TopologyHealth{Status: model.ResourceHealthHealthy},
 	}))
 
 	body := getTopology(t, s, "lab")

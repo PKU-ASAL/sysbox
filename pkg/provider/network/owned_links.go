@@ -10,7 +10,6 @@ import (
 
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/vishvananda/netlink"
-	"github.com/vishvananda/netns"
 )
 
 // Each link is assigned an index before creation. The write-ahead proof is
@@ -268,5 +267,5 @@ func (d Driver) deleteRecordedLinks(ctx context.Context, m networkOwnership) err
 	if err := checkNamespaceFile(ns, m.NamespaceDevice, m.NamespaceInode); err != nil {
 		return err
 	}
-	return netns.DeleteNamed(m.Spec.Name)
+	return anchorCommand("--anchor-delete", m.Spec.Name, fmt.Sprint(m.NamespaceDevice), fmt.Sprint(m.NamespaceInode))
 }

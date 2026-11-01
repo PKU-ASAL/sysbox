@@ -2,18 +2,18 @@ package api
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
 )
 
 func TestNodeOperationRepositoryPreservesIdentityAndRejectsOverwrite(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, s controlstore.Store) {
 		ctx := context.Background()
 		op := controlplane.NodeOperation{ID: "operation", Topology: "lab", Workspace: "lab", ProjectID: "project", AgentID: "agent", Operation: "pause", Node: "web", Status: controlplane.NodeOperationStatusQueued, CreatedAt: time.Now().UTC(), CommandID: "command", ActionID: "action", ResourceUID: "resource", Generation: 2, LeaseEpoch: 3, LeaseOwner: "worker", Attempt: 1}
 		require.NoError(t, s.CreateNodeOperation(ctx, op))
@@ -50,33 +50,8 @@ func TestNodeOperationRepositoryPreservesIdentityAndRejectsOverwrite(t *testing.
 	})
 }
 
-type failingNodeOperationReads struct {
-	apiStore
-	failure error
-	saves   int
-}
-
-func (s *failingNodeOperationReads) GetNodeOperation(context.Context, string) (*controlplane.NodeOperation, error) {
-	return nil, s.failure
-}
-func (s *failingNodeOperationReads) CompleteNodeOperation(context.Context, string, string, controlplane.NodeOperation) (*controlplane.NodeOperation, error) {
-	return nil, s.failure
-}
-func (s *failingNodeOperationReads) CreateNodeOperation(context.Context, controlplane.NodeOperation) error {
-	s.saves++
-	return nil
-}
-func TestNodeOperationCompletionDoesNotSaveOnReadFailure(t *testing.T) {
-	failure := errors.New("storage unavailable")
-	s := &failingNodeOperationReads{failure: failure}
-	service := &NodeOperationService{operations: newNodeOperationStore(s)}
-	_, err := service.CompleteFromAgent("agent", "op", controlplane.NodeOperation{ID: "op", AgentID: "agent", Topology: "lab", Status: controlplane.NodeOperationStatusDone})
-	require.ErrorIs(t, err, failure)
-	require.Zero(t, s.saves)
-}
-
 func TestNodeOperationCASHasOneWinner(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, s controlstore.Store) {
 		ctx := context.Background()
 		op := controlplane.NodeOperation{ID: "race", Topology: "lab", AgentID: "agent", Status: controlplane.NodeOperationStatusQueued}
 		require.NoError(t, s.CreateNodeOperation(ctx, op))

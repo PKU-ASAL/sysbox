@@ -113,7 +113,7 @@ def inject(topology, execute, save, fault="database"):
         raise RuntimeError("unsupported fault")
     if not re.fullmatch(r"p9-[a-zA-Z0-9-]+", topology):
         raise RuntimeError("test topology required")
-    query = ("sudo find /var/lib/sysbox-supervisor/journal -maxdepth 1 -name '*.json' "
+    query = ("sudo find /var/lib/sysbox-host/journal -maxdepth 1 -name '*.json' "
              "-exec jq -c 'select(.ref.topology==\"" + topology + "\")' {} \\;")
 
     def record():
@@ -129,7 +129,7 @@ def inject(topology, execute, save, fault="database"):
     container = before["provider_node_id"]
     if not re.fullmatch(r"[a-f0-9]{64}", container) or not re.fullmatch(r"[a-zA-Z0-9_-]+", handle["ID"]):
         raise RuntimeError("invalid durable container/task identity")
-    checkpoint_query = ("sudo find /var/lib/sysbox-supervisor/journal/runs -maxdepth 1 -name '*.json' "
+    checkpoint_query = ("sudo find /var/lib/sysbox-host/journal/runs -maxdepth 1 -name '*.json' "
                         "-exec jq -c '.outcomes[] | select(.run_checkpoint.request.topology==\"" + topology + "\")' {} \\;")
     checkpoints = execute("execution", checkpoint_query).splitlines()
     if len(checkpoints) != 1:

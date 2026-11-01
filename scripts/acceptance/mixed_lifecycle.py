@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Run current CLI mixed Docker NAT lifecycle only in an enrolled disposable lab."""
+"""Run the released API mixed-provider lifecycle in an enrolled disposable lab."""
 import argparse
 import concurrent.futures
 import ipaddress
+import re
 import json
 import os
 from pathlib import Path
@@ -18,7 +19,7 @@ import two_vms as lab
 PROVIDERS = ('docker', 'firecracker', 'libvirt')
 
 
-def verify_states(before, after):
+def verify_states(before, after, targets=PROVIDERS):
     if not before.get('topology_uid') or before['topology_uid'] != after.get('topology_uid'):
         raise ValueError('topology identity changed')
     def index(state):
@@ -35,13 +36,19 @@ def verify_states(before, after):
         a, b = old[key], new[key]
         if (a['driver'] != name or b['driver'] != name or
                 any(a[k] != b[k] for k in ('owner_uid', 'resource_uid')) or
-                b['generation'] <= a['generation'] or b['external_id'] == a['external_id']):
+                (name in targets and (b['generation'] <= a['generation'] or b['external_id'] == a['external_id'])) or
+                (name not in targets and (b['generation'] != a['generation'] or b['external_id'] != a['external_id']))):
             raise ValueError('node reset identity conflict')
         def links(item):
             return [(link['name'], link.get('mac'), link.get('ip_prefixes')) for link in item['attachments']]
         if links(a) != links(b):
             raise ValueError('logical network coordinates changed')
     for key, a in old.items():
+        if a['resource_type'] in ('sysbox_image', 'sysbox_kernel'):
+            if any(a.get(k) != new[key].get(k) for k in ('owner_uid', 'resource_uid', 'generation', 'external_id')):
+                raise ValueError('baseline identity changed')
+            if a.get('attributes', {}).get('sha256') != new[key].get('attributes', {}).get('sha256'):
+                raise ValueError('baseline digest changed')
         if a['resource_type'] == 'sysbox_network':
             if any(a[k] != new[key][k] for k in ('owner_uid', 'resource_uid', 'generation', 'external_id')):
                 raise ValueError('network identity changed')
@@ -57,7 +64,7 @@ def verify_translated_sources(observations, expected):
 
 def release_inputs(metadata_path, binary, helper):
     metadata = json.loads(Path(metadata_path).read_text())
-    targets = [target for target in metadata['targets'] if target['architecture'] == 'amd64']
+    targets = [target for target in metadata['targets'] if target['os'] == 'linux' and target['architecture'] == 'amd64']
     if len(targets) != 1 or not metadata.get('commit'):
         raise ValueError('one amd64 release target and commit required')
     for path, key in ((binary, 'sysbox_sha256'), (helper, 'sysbox_init_sha256')):
@@ -70,13 +77,18 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', required=True)
     parser.add_argument('--output', type=Path, required=True)
-    parser.add_argument('--release-metadata', type=Path)
+    parser.add_argument('--release-metadata', type=Path, required=True)
+    parser.add_argument('--revision', required=True, help='published mixed-provider revision with pinned URLs and prepared host configuration')
     parser.add_argument('--binary', type=Path)
     parser.add_argument('--helper', type=Path)
     parser.add_argument('--cidr', default='10.59.0.0/24')
-    for name in ('firecracker', 'kernel', 'rootfs', 'cloud'):
-        parser.add_argument('--' + name, type=Path, required=True)
+    parser.add_argument('--reset-cycles', type=int, default=1)
+    parser.add_argument('--targeted-reset', action='store_true')
     args = parser.parse_args()
+    if not 1 <= args.reset_cycles <= 3:
+        raise ValueError('reset cycles must be between one and three')
+    if not re.fullmatch(r"sha256:[a-f0-9]{64}", args.revision):
+        raise ValueError("published revision digest required")
     subnet = ipaddress.ip_network(args.cidr)
     if subnet.version != 4 or subnet.prefixlen != 24 or not subnet.is_private:
         raise ValueError('private IPv4 /24 required')
@@ -101,106 +113,72 @@ def main():
         if result.returncode:
             raise RuntimeError(role + ': ' + result.stderr[-1800:] + result.stdout[-1800:])
         return result.stdout.strip()
-    build_env = dict(os.environ, CGO_ENABLED='0')
-    helper, binary, probe = [args.output.resolve() / name for name in ('helper', 'sysbox', 'probe')]
-    if args.release_metadata:
-        if not args.binary or not args.helper:
-            raise ValueError('release metadata requires binary and helper')
-        binary, helper, metadata = release_inputs(args.release_metadata, args.binary, args.helper)
-        report['release_commit'] = metadata['commit']
-        report['release_fingerprint'] = metadata.get('release_fingerprint')
-        subprocess.run(['go', 'build', '-buildvcs=false', '-o', str(probe), './tests/e2e/matrixprobe'],
-                       cwd=source, env=build_env, check=True)
-    else:
-        if args.binary or args.helper:
-            raise ValueError('external executables require release metadata')
-        subprocess.run(['go', 'build', '-buildvcs=false', '-o', str(helper), './cmd/sysbox-init'],
-                       cwd=source, env=build_env, check=True)
-        overlay = args.output.resolve() / 'overlay.json'
-        overlay.write_text(json.dumps({'Replace': {
-            str(source / 'pkg/provider/firecracker/initbin/sysbox-init.linux-amd64.bin'): str(helper)}}))
-        for target, package, extra in ((binary, './cmd/sysbox', ['-overlay=' + str(overlay)]),
-                                       (probe, './tests/e2e/matrixprobe', [])):
-            subprocess.run(['go', 'build', '-buildvcs=false', *extra, '-o', str(target), package],
-                           cwd=source, env=build_env, check=True)
-    save()
+    if not args.binary or not args.helper:
+        raise ValueError('release metadata requires binary and helper')
+    binary, helper, metadata = release_inputs(args.release_metadata, args.binary, args.helper)
+    if subprocess.check_output(['git','rev-parse','HEAD'],cwd=source,text=True).strip() != metadata['commit']:
+        raise ValueError('probe source must match release commit')
+    if subprocess.check_output(['git','status','--porcelain','--untracked-files=all'],cwd=source,text=True).strip():
+        raise ValueError('probe source must be clean')
+    report['release_commit'] = metadata['commit']
+    report['revision'] = args.revision
+    probe = args.output.resolve() / 'probe'
+    subprocess.run(['go','build','-buildvcs=false','-o',str(probe),'./tests/e2e/matrixprobe'],cwd=source,env=dict(os.environ,CGO_ENABLED='0'),check=True)
+    def api(method, path, payload=None, key=None):
+        code = ("import sys,json;sys.path.insert(0,'/home/p9');from cross_host_run import request_json;"
+                "c=json.load(open('/etc/sysbox-api/api1.json'));"
+                "print(json.dumps(request_json('http://10.77.0.10:19870',c['api']['token'],"+
+                repr(method)+","+repr(path)+","+repr(payload)+","+repr(key)+")))")
+        return json.loads(execute('control','sudo python3 -c '+quote(code)))
+    operation_counts = {}
+    def lifecycle(operation, target=None):
+        operation_counts[operation] = operation_counts.get(operation, 0) + 1
+        body = {'revision':args.revision} if operation != 'destroy' else {}
+        if target is not None: body['target'] = 'sysbox_node.' + target
+        accepted = api('POST','/v1/topologies/'+topology+'/'+operation,body,topology+'-'+operation+'-'+str(operation_counts[operation]))
+        report[operation+'_run']=accepted;save()
+        deadline=time.monotonic()+600
+        while time.monotonic()<deadline:
+            result=api('GET','/v1/runs/'+accepted['run_id'])
+            report['latest_run']=result;save()
+            if result['status']=='done':return
+            if result['status'] in ('failed','cancelled'):raise RuntimeError('lifecycle failed; retained evidence')
+            time.sleep(2)
+        raise RuntimeError('lifecycle unresolved; retained evidence')
+    def state():
+        return api('GET','/v1/topologies/'+topology+'/state')
+    def unchanged_plan():
+        plan = api('POST','/v1/topologies/'+topology+'/plan',{'revision':args.revision})
+        if not plan.get('actions') or any(a['action'] != 'no-op' for a in plan['actions']):
+            raise RuntimeError('expected unchanged plan')
+        report.setdefault('plans', []).append(plan)
+        save()
     try:
         h.wait_boot(root, manifest, 'execution')
-        # Refuse missing tools before creating any provider resource.
-        execute('execution', 'command -v virsh && command -v genisoimage && command -v qemu-img && command -v ssh-keygen && command -v docker')
-        execute('execution', 'mkdir -m 755 ' + quote(remote))
-        assets = dict(sysbox=binary, probe=probe, helper=helper,
-                      firecracker=args.firecracker, kernel=args.kernel, rootfs=args.rootfs, cloud=args.cloud)
-        for name, path in assets.items():
-            path = path.resolve(strict=True)
-            digest = lab.file_sha256(path)
-            lab.upload(root, manifest, 'execution', path, remote + '/' + name)
-            actual = execute('execution', 'sha256sum ' + quote(remote + '/' + name)).split()[0]
-            if actual != digest:
-                raise RuntimeError('remote artifact mismatch: ' + name)
-            report['artifacts'][name] = dict(sha256=digest, source=str(path))
-        execute('execution', 'chmod 755 ' + quote(remote + '/sysbox') + ' ' + quote(remote + '/probe') +
-                ' ' + quote(remote + '/firecracker') + '; chmod 644 ' + quote(remote + '/cloud') +
-                '; sudo mkdir -m 700 ' + quote(remote + '/fc') +
-                '; sudo mkdir -m 755 ' + quote(remote + '/lv') +
-                '; ssh-keygen -q -t ed25519 -N "" -f ' + quote(remote + '/key'))
-        public = execute('execution', 'cat ' + quote(remote + '/key.pub'))
-        service = {'providers': {'firecracker': {'binary': remote + '/firecracker',
-                    'kernel': remote + '/kernel', 'workdir': remote + '/fc'},
-                    'libvirt': {'workdir': remote + '/lv'}}}
-        local = args.output / 'service.json'
-        local.write_text(json.dumps(service))
-        lab.upload(root, manifest, 'execution', local, remote + '/service.json')
-        text = (source / 'examples/heterogeneous-matrix/field.sysbox.hcl').read_text()
-        prefix_ip = str(subnet.network_address).rsplit('.', 1)[0] + '.'
-        text = text.replace('alpine:latest', 'alpine:3.22').replace(
-            'cidr = "10.44.0.0/24"', 'cidr = "10.44.0.0/24"\n  nat = true')
-        text = text.replace('memory    = "2048"', 'memory    = "512"').replace(
-            'memory            = "1024"', 'memory            = "512"')
-        for last in ('20', '30'):
-            text = text.replace('ip      = "10.44.0.' + last + '/24"',
-                                'ip      = "10.44.0.' + last + '/24"\n    gw = "10.44.0.1"')
-        text = text.replace('10.44.0.', prefix_ip)
-        local = args.output / 'field.sysbox.hcl'
-        local.write_text(text)
-        lab.upload(root, manifest, 'execution', local, remote + '/field.sysbox.hcl')
-        env = dict(SYSBOX_CONFIG=remote + '/service.json', SYSBOX_KERNEL=remote + '/kernel',
-                   SYSBOX_ROOTFS=remote + '/rootfs', SYSBOX_QCOW2=remote + '/cloud',
-                   SYSBOX_MATRIX_SSH_PRIVATE_KEY=remote + '/key', SYSBOX_MATRIX_SSH_PUBLIC_KEY=public)
-        cli = 'sudo env ' + ' '.join(k + '=' + quote(v) for k, v in env.items()) + ' ' + quote(remote + '/sysbox')
-        state_path = remote + '/' + topology + '/state.json'
-        cli += ' --state ' + quote(state_path) + ' -f ' + quote(remote + '/field.sysbox.hcl')
-        probe_cmd = ('sudo env SYSBOX_CONFIG=' + quote(env['SYSBOX_CONFIG']) + ' ' + quote(remote + '/probe') +
-                     ' -state ' + quote(state_path) + ' -topology ' + topology)
-        ips = dict(zip(PROVIDERS, [prefix_ip + n for n in ('10', '20', '30')]))
-        def state():
-            return json.loads(execute('execution', 'sudo cat ' + quote(state_path + '.lifecycle/' + topology + '.json')))['state']
+        expected=lab.file_sha256(binary)
+        for role in lab.ROLES:
+            if execute(role,'sha256sum /usr/local/bin/sysbox').split()[0] != expected:
+                raise RuntimeError('deployed binary differs from release: '+role)
+        execute('execution','mkdir -m 755 '+quote(remote))
+        lab.upload(root,manifest,'execution',probe,remote+'/probe')
+        lab.upload(root,manifest,'control',source/'scripts/acceptance/cross_host_run.py','/home/p9/cross_host_run.py')
+        guest_runner = source/'scripts/acceptance/matrix_guest.py'
+        lab.upload(root,manifest,'control',guest_runner,'/home/p9/matrix_guest.py')
+        prefix_ip=str(subnet.network_address).rsplit('.',1)[0]+'.'
+        ips=dict(zip(PROVIDERS,[prefix_ip+n for n in ('10','20','30')]))
+        env={'SYSBOX_CONFIG':'/etc/sysbox-host/sysbox.yaml'}
         def node_command(name, arguments, generation):
-            if name == 'docker':
-                return 'sudo docker exec sysbox-lab-' + topology + '-node-docker ' + arguments
-            if name == 'firecracker':
-                if arguments.startswith('ping '):
-                    return probe_cmd + ' -target ' + arguments.split()[-1] + (' -pattern ' + arguments.split()[arguments.split().index('-p')+1] if '-p' in arguments.split() else '')
-                operation = '-touch ' if arguments.startswith('touch ') else '-check-absent '
-                return probe_cmd + ' ' + operation + quote(arguments.split()[-1])
-            return ('ssh -i ' + quote(remote + '/key') +
-                    ' -o BatchMode=yes -o ConnectTimeout=2 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=' +
-                    quote(remote + '/known-' + generation) + ' sysbox@' + ips[name] + ' ' + quote(arguments))
+            return 'sudo python3 /home/p9/matrix_guest.py '+quote(topology)+' '+quote(name)+' '+quote(json.dumps(shlex.split(arguments)))
         def wait_ssh(generation):
-            deadline = time.monotonic() + 120
-            while time.monotonic() < deadline:
-                result = lab.ssh(root, manifest, 'execution', node_command('libvirt', 'true', generation), timeout=6)
-                if result.returncode == 0:
-                    return
-                time.sleep(1)
-            raise RuntimeError('new guest SSH unavailable')
+            # Public signed guest execution is the readiness check for all providers.
+            execute('control',node_command('libvirt','true',generation),180)
         used_patterns=set()
         def connectivity(generation):
             wait_ssh(generation)
             for sender in PROVIDERS:
                 for receiver in PROVIDERS:
                     if sender != receiver:
-                        execute('execution', node_command(sender, 'ping -c 2 -W 2 ' + ips[receiver], generation), 30)
+                        execute('control', node_command(sender, 'ping -c 2 -W 2 ' + ips[receiver], generation), 30)
             observations = {}
             # One capture per source: no aggregate packet count can hide an untested guest.
             for name in PROVIDERS:
@@ -230,7 +208,7 @@ def main():
                         time.sleep(.1)
                     else:
                         raise RuntimeError('NAT observer not ready')
-                    execute('execution', node_command(name, 'ping -p '+pattern+' -c 2 -W 2 10.77.0.10', generation), 30)
+                    execute('control', node_command(name, 'ping -p '+pattern+' -c 2 -W 2 10.77.0.10', generation), 30)
                     result = future.result()
                 if result.returncode:
                     raise RuntimeError('NAT capture failed: ' + result.stderr)
@@ -240,24 +218,50 @@ def main():
             save()
         report['phase'] = 'apply'
         save()
-        execute('execution', cli + ' apply --auto-approve', 480)
+        lifecycle('apply')
         before = state()
+        unchanged_plan()
+        original = before
         report['before_reset'] = before
+        observed_providers = {r['driver'] for r in before['resources'] if r['resource_type'] == 'sysbox_node'}
+        if observed_providers != set(PROVIDERS):
+            raise RuntimeError('revision must contain all three mixed providers')
         connectivity('before')
         for name in PROVIDERS:
-            execute('execution', node_command(name, 'touch /tmp/sysbox-matrix-marker', 'before'))
-        report['phase'] = 'reset'
-        save()
-        execute('execution', cli + ' reset --auto-approve', 480)
-        after = state()
-        report['after_reset'] = after
-        verify_states(before, after)
-        connectivity('after')
-        for name in PROVIDERS:
-            execute('execution', node_command(name, 'test ! -e /tmp/sysbox-matrix-marker', 'after'))
+            execute('control', node_command(name, 'touch /tmp/sysbox-matrix-marker', 'before'))
+        for cycle in range(args.reset_cycles):
+            report['phase'] = 'reset'
+            save()
+            lifecycle('reset')
+            after = state()
+            report.setdefault('reset_states', []).append(after)
+            report['after_reset'] = after
+            verify_states(before, after)
+            unchanged_plan()
+            connectivity('after-'+str(cycle))
+            for name in PROVIDERS:
+                execute('control', node_command(name, 'test ! -e /tmp/sysbox-matrix-marker', 'after'))
+                if cycle + 1 < args.reset_cycles:
+                    execute('control', node_command(name, 'touch /tmp/sysbox-matrix-marker', 'after'))
+            before = after
+        if args.targeted_reset:
+            for target in PROVIDERS:
+                for name in PROVIDERS:
+                    execute('control', node_command(name, 'touch /tmp/sysbox-target-marker', 'target'))
+                lifecycle('reset', target)
+                after = state()
+                verify_states(before, after, (target,))
+                unchanged_plan()
+                report['reset_states'].append(after)
+                for name in PROVIDERS:
+                    probe_args = 'test ! -e /tmp/sysbox-target-marker' if name == target else 'test -e /tmp/sysbox-target-marker'
+                    execute('control', node_command(name, probe_args, 'target'))
+                connectivity('target-'+target)
+                before = after
+                save()
         report['phase'] = 'destroy'
         save()
-        execute('execution', cli + ' destroy --auto-approve', 300)
+        lifecycle('destroy')
         if state()['resources']:
             raise RuntimeError('state not empty')
         owner = after['topology_uid']
@@ -265,9 +269,25 @@ def main():
                       'sudo docker network ls -q --filter label=sysbox.owner_uid='):
             if execute('execution', query + quote(owner)):
                 raise RuntimeError('owned Docker residue')
+        # The network is retained across resets, so one recorded identity suffices.
+        for resource in original['resources']:
+            if resource['resource_type'] != 'sysbox_network':
+                continue
+            attrs = resource.get('attributes', {})
+            namespace = resource.get('private', {}).get('payload', {}).get('runtime', {}).get('netns', '')
+            if namespace:
+                if '/' in namespace or namespace in ('.', '..'):
+                    raise ValueError('invalid observed namespace')
+                execute('execution', 'sudo test ! -e '+quote('/run/netns/'+namespace))
+            for field in ('libvirt_bridge', 'root_veth'):
+                if attrs.get(field):
+                    query = 'sudo ip -json link show dev ' + quote(attrs[field])
+                    result = lab.ssh(root, manifest, 'execution', query)
+                    if result.returncode != 1 or 'does not exist' not in result.stderr:
+                        raise RuntimeError('network absence not proven: '+field)
         # Preserve and independently check both reset generations using the
         # provider's read-only residue proof (including FC external sockets).
-        for generation, snapshot in (('before',before),('after',after)):
+        for generation, snapshot in [('before', original)] + [(str(i), snapshot) for i, snapshot in enumerate(report['reset_states'])]:
             for item in snapshot['resources']:
                 if item['resource_type'] != 'sysbox_node':
                     continue

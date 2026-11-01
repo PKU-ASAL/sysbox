@@ -11,6 +11,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 )
@@ -40,7 +41,7 @@ func TestSupervisorRejectsCheckpointOnlyRecovery(t *testing.T) {
 		Topology: "mixed",
 		StatePatches: []runtime.StatePatch{{
 			Resource: "sysbox_node.web",
-			Action:   controlplane.PlanActionCreate,
+			Action:   model.PlanActionCreate,
 			Op:       runtime.StatePatchUpsert,
 			State: &runtime.StateResourceLog{
 				Type:     "sysbox_node",
@@ -93,7 +94,7 @@ func TestSupervisorDoesNotReconcileRunningRun(t *testing.T) {
 		Topology: "mixed",
 		StatePatches: []runtime.StatePatch{{
 			Resource: "sysbox_node.web",
-			Action:   controlplane.PlanActionCreate,
+			Action:   model.PlanActionCreate,
 			Op:       runtime.StatePatchUpsert,
 			State: &runtime.StateResourceLog{
 				Type:     "sysbox_node",

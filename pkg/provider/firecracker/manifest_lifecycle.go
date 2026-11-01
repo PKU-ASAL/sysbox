@@ -53,6 +53,9 @@ func recoverLaunch(m *vmManifest) error {
 	if m.Phase == "attaching" {
 		return fmt.Errorf("firecracker unresolved attachment intent; generation retained for inspection")
 	}
+	if m.Phase == "starting" && m.Jail != nil {
+		return recoverJailLaunch(m)
+	}
 	if m.Phase != "starting" || m.Process.PID > 0 {
 		return nil
 	}
@@ -103,6 +106,12 @@ func recoverLaunch(m *vmManifest) error {
 }
 
 func (s *Substrate) startManifestNode(ctx context.Context, h substrate.NodeHandle) error {
+	return s.startManifestProcess(ctx, h, s.prepareJailer)
+}
+
+// Launch is injected by package tests to exercise transition ordering without KVM.
+// The public StartNode entry always supplies the jailed launcher.
+func (s *Substrate) startManifestProcess(ctx context.Context, h substrate.NodeHandle, launch func(context.Context, *vmManifest) (*exec.Cmd, error)) error {
 	vm, m, release, err := s.lockedManifest(ctx, h)
 	if err != nil {
 		return err
@@ -119,12 +128,35 @@ func (s *Substrate) startManifestNode(ctx context.Context, h substrate.NodeHandl
 		return err
 	}
 	if live {
+		if m.Jail != nil {
+			if err := verifyJailedProcess(m, m.Process); err != nil {
+				return err
+			}
+		}
 		return nil
 	}
 	if m.Phase == "starting" {
 		return fmt.Errorf("firecracker launch result unknown")
 	}
-	unlockTargets, err := lockStartAttachments(ctx, m)
+	if m.Jail != nil && m.Process.PID != 0 {
+		// The prior process was freshly proved absent. Publish preparation
+		// before replacing any empty cgroup so an interrupted mkdir is recoverable.
+		m.Process = processIdentity{}
+		m.Phase = "prepared"
+		m.Handle.PID, m.Handle.PIDStart, m.Handle.Ready = 0, "", false
+		if err := saveManifest(m); err != nil {
+			return err
+		}
+	}
+	cmd, err := launch(ctx, m)
+	if err != nil {
+		return err
+	}
+	uid := uint32(0)
+	if m.Jail != nil {
+		uid = m.Jail.UID
+	}
+	unlockTargets, err := lockStartAttachmentsForUID(ctx, m, uid)
 	if err != nil {
 		return err
 	}
@@ -138,36 +170,22 @@ func (s *Substrate) startManifestNode(ctx context.Context, h substrate.NodeHandl
 		return fmt.Errorf("firecracker start already in progress")
 	}
 	defer vm.releaseStart()
-	executable, err := exec.LookPath(s.firecrackerBin)
-	if err != nil {
-		return err
-	}
-	executable, err = filepath.EvalSymlinks(executable)
-	if err != nil {
-		return err
-	}
-	args := []string{"--config-file", m.Handle.ConfigPath, "--api-sock", m.Handle.Socket}
-	var cmd *exec.Cmd
-	if m.Handle.NetnsName != "" {
-		cmd = exec.Command(ipBin, append([]string{"netns", "exec", m.Handle.NetnsName, executable}, args...)...)
-	} else {
-		cmd = exec.Command(executable, args...)
-	}
-	// Short socket parents may live on ephemeral storage and disappear at
-	// reboot. Recreate only validated owner-controlled directories before intent.
-	for _, path := range []string{m.Handle.Socket, m.Handle.VsockUDS} {
-		if path != "" {
-			if err := ensureOwnedSocketDirectory(path); err != nil {
-				return err
-			}
+	var cgroup *os.File
+	if m.Jail != nil {
+		cgroup, err = os.Open(jailCgroup(m.Jail))
+		if err != nil {
+			return err
 		}
+		defer cgroup.Close()
+		cmd.SysProcAttr.UseCgroupFD = true
+		cmd.SysProcAttr.CgroupFD = int(cgroup.Fd())
 	}
 	boot, err := currentBootID()
 	if err != nil {
 		return err
 	}
 	m.Phase = "starting"
-	m.Process = processIdentity{Executable: executable, Argv: append([]string{executable}, args...), BootID: boot}
+	m.Process = processIdentity{Executable: cmd.Path, Argv: cmd.Args, BootID: boot}
 	m.Handle.Ready = false
 	if op, ok := substrate.OperationIdentityFromContext(ctx); ok {
 		m.ActionID = op.ActionID
@@ -193,7 +211,6 @@ func (s *Substrate) startManifestNode(ctx context.Context, h substrate.NodeHandl
 		return err
 	}
 	cmd.Stdout, cmd.Stderr = log, log
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := ctx.Err(); err != nil {
 		log.Close()
 		return err
@@ -230,14 +247,15 @@ func (s *Substrate) startManifestNode(ctx context.Context, h substrate.NodeHandl
 	var anchor processIdentity
 	for attempts := 0; attempts < 100; attempts++ {
 		p, e := captureProcessIdentity(cmd.Process.Pid)
-		if e == nil && p.StartTime == startTime {
+		if e == nil && p.StartTime == startTime && (m.Jail == nil || verifyJailedProcess(m, p) == nil) {
 			if reflect.DeepEqual(p, anchor) {
 				break
 			}
 			anchor = p
 		}
 		if processReaped(vm) {
-			return fmt.Errorf("firecracker exited before anchor commit")
+			state := vm.snapshot()
+			return fmt.Errorf("firecracker exited before anchor commit: %s", state.exitError)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -277,6 +295,12 @@ func (s *Substrate) observeManifest(ctx context.Context, h substrate.NodeHandle,
 	if err != nil {
 		obs.Reason = err.Error()
 		return obs, err
+	}
+	if live && m.Jail != nil {
+		if err := verifyJailedProcess(m, m.Process); err != nil {
+			obs.Reason = err.Error()
+			return obs, err
+		}
 	}
 	obs.PID = m.Process.PID
 	obs.Running = live
@@ -362,6 +386,22 @@ func (s *Substrate) signalManifestNode(ctx context.Context, h substrate.NodeHand
 		return err
 	}
 	defer release()
+	if m.Jail != nil && signal == syscall.SIGTERM {
+		if m.Jail.CgroupInode == 0 && m.Process.PID == 0 && m.Phase != "starting" {
+			if err := recoverUnlaunchedJailObjects(m); err != nil {
+				return err
+			}
+			if m.Jail.CgroupInode == 0 {
+				m.Phase = "stopped"
+				return saveManifest(m)
+			}
+		}
+		if err := stopJail(ctx, m.Jail); err != nil {
+			return err
+		}
+		m.Phase = "stopped"
+		return saveManifest(m)
+	}
 	if err := recoverLaunch(m); err != nil {
 		return err
 	}
@@ -400,6 +440,24 @@ func (s *Substrate) destroyManifestNode(ctx context.Context, h substrate.NodeHan
 		return err
 	}
 	defer release()
+	if m.Jail != nil && m.Jail.CgroupInode != 0 {
+		if _, err := os.Stat(jailCgroup(m.Jail)); err == nil {
+			if err = stopJail(ctx, m.Jail); err != nil {
+				return err
+			}
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+		// at-birth cgroup membership and an empty owned cgroup retire an
+		// interrupted launcher too, without guessing which executable it reached.
+		if m.Phase == "starting" {
+			m.Phase = "stopped"
+			m.Process = processIdentity{}
+			if err := saveManifest(m); err != nil {
+				return err
+			}
+		}
+	}
 	if err := recoverLaunch(m); err != nil {
 		return err
 	}
@@ -444,6 +502,9 @@ func (s *Substrate) destroyManifestNode(ctx context.Context, h substrate.NodeHan
 		return err
 	}
 	if err := s.recordStoppedDeletion(ctx, h, m); err != nil {
+		return err
+	}
+	if err := removeJail(m); err != nil {
 		return err
 	}
 	for _, path := range []string{m.Handle.Socket, m.Handle.VsockUDS} {

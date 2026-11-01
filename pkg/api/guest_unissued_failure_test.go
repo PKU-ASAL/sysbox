@@ -8,12 +8,13 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
 )
 
 func TestUnissuedGuestFailureDoesNotRequireUserCancellation(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		x := controlplane.GuestExecution{ID: "execution", CommandID: "source", AgentID: "agent", Topology: "lab", Node: "node", Status: "queued", Version: 1, CreatedAt: time.Now().UTC()}
 		cmd := controlplane.AgentCommand{ID: x.CommandID, AgentID: x.AgentID, Type: "guest_execution", Execution: &x, ActionID: x.ID, TopologyUID: "topology", ResourceUID: "resource", Generation: 1}
@@ -52,7 +53,7 @@ func TestSupervisorClosesUnissuedGuestFailure(t *testing.T) {
 }
 
 func TestUnissuedGuestFailureKeepsOrderedTimesAcrossAPIClockSkew(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		x := controlplane.GuestExecution{ID: "execution", CommandID: "source", AgentID: "agent", Topology: "lab", Node: "node", Status: "queued", Version: 1, CreatedAt: time.Now().UTC().Add(time.Minute)}
 		cmd := controlplane.AgentCommand{ID: x.CommandID, AgentID: x.AgentID, Type: "guest_execution", Execution: &x, ActionID: x.ID, TopologyUID: "topology", ResourceUID: "resource", Generation: 1}
@@ -74,10 +75,10 @@ func TestGuestFailureRecoverySurvivesMutationWriteFailure(t *testing.T) {
 			name = "issued"
 		}
 		t.Run(name, func(t *testing.T) {
-			eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+			eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 				ctx := context.Background()
 				x, cmd := admitUnissuedGuest(t, store)
-				authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+				authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 				var grant *controlplane.ExecutionGrant
 				if issued {
 					session, err := authority.OpenSession(ctx, x.AgentID, "host", "")
@@ -91,19 +92,19 @@ func TestGuestFailureRecoverySurvivesMutationWriteFailure(t *testing.T) {
 				require.NoError(t, store.DeleteAgentCommand(ctx, x.AgentID, cmd.ID))
 				var restore func()
 				switch dbstore := store.(type) {
-				case *localAPIStore:
+				case *controlstore.Local:
 					if os.Geteuid() == 0 {
 						t.Skip("permission fault requires unprivileged test process")
 					}
-					directory := filepath.Join(dbstore.runsDir, "_guest-executions")
+					directory := filepath.Join(dbstore.RunsDir, "_guest-executions")
 					if issued {
-						directory = filepath.Join(dbstore.runsDir, "_execution-authority")
+						directory = filepath.Join(dbstore.RunsDir, "_execution-authority")
 					}
 					require.NoError(t, os.Chmod(directory, 0500))
 					restore = func() { require.NoError(t, os.Chmod(directory, 0700)) }
 					t.Cleanup(restore)
-				case *sqliteAPIStore:
-					db, err := dbstore.open()
+				case *controlstore.SQLite:
+					db, err := dbstore.OpenDB()
 					require.NoError(t, err)
 					table, when := "sysbox_guest_executions", ""
 					if issued {
@@ -113,8 +114,8 @@ func TestGuestFailureRecoverySurvivesMutationWriteFailure(t *testing.T) {
 					_, err = db.ExecContext(ctx, "CREATE TRIGGER reject_guest_failure BEFORE UPDATE ON "+table+when+" BEGIN SELECT RAISE(ABORT,'injected guest failure'); END")
 					require.NoError(t, err)
 					restore = func() { _, err := db.ExecContext(ctx, "DROP TRIGGER reject_guest_failure"); require.NoError(t, err) }
-				case *postgresAPIStore:
-					pool, err := dbstore.poolFor(ctx)
+				case *controlstore.Postgres:
+					pool, err := dbstore.PoolFor(ctx)
 					require.NoError(t, err)
 					table, check := "sysbox_guest_executions", "TRUE"
 					if issued {
@@ -150,7 +151,7 @@ func TestGuestFailureRecoverySurvivesMutationWriteFailure(t *testing.T) {
 	}
 }
 
-func admitUnissuedGuest(t *testing.T, store apiStore) (controlplane.GuestExecution, controlplane.AgentCommand) {
+func admitUnissuedGuest(t *testing.T, store controlstore.Store) (controlplane.GuestExecution, controlplane.AgentCommand) {
 	t.Helper()
 	x := controlplane.GuestExecution{ID: "execution", CommandID: "source", AgentID: "agent", Topology: "lab", Node: "node", Status: "queued", Version: 1, CreatedAt: time.Now().UTC()}
 	cmd := controlplane.AgentCommand{ID: x.CommandID, AgentID: x.AgentID, Type: "guest_execution", Execution: &x, ActionID: x.ID, TopologyUID: "topology", ResourceUID: "resource", Generation: 1}
@@ -159,7 +160,7 @@ func admitUnissuedGuest(t *testing.T, store apiStore) (controlplane.GuestExecuti
 }
 
 func TestUnissuedGuestFailureRecoversRetirementWindow(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		x, cmd := admitUnissuedGuest(t, store)
 		cmd.Status = "failed"
@@ -182,10 +183,10 @@ func TestUnissuedGuestFailureRecoversRetirementWindow(t *testing.T) {
 func TestGuestDeliveryFailureWithAuthorityWaitsForHost(t *testing.T) {
 	for _, history := range []string{"active", "stopped"} {
 		t.Run(history, func(t *testing.T) {
-			eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+			eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 				ctx := context.Background()
 				x, cmd := admitUnissuedGuest(t, store)
-				authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+				authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 				session, err := authority.OpenSession(ctx, x.AgentID, "host", "")
 				require.NoError(t, err)
 				request := controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: cmd.TopologyUID, ResourceUID: cmd.ResourceUID, Generation: 1}, AgentID: x.AgentID, SessionID: session.ID, CommandID: cmd.ID, ActionID: x.ID, Attempt: 1, Operation: "guest_task", Digest: "digest"}
@@ -221,7 +222,7 @@ func TestGuestDeliveryFailureWithAuthorityWaitsForHost(t *testing.T) {
 }
 
 func TestUnissuedFailureCannotOverrideCancellationOrLiveDelivery(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		x, cmd := admitUnissuedGuest(t, store)
 		require.NoError(t, (&AgentService{store: store}).reconcileUnissuedGuestFailures(ctx))

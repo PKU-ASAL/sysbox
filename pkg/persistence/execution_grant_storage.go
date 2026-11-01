@@ -3,6 +3,7 @@ package persistence
 import (
 	"context"
 	"database/sql"
+
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 

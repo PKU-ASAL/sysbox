@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 )
 
@@ -21,7 +22,7 @@ func (s *Server) finishCommittedRestores(ctx context.Context, topology string) e
 	if err != nil {
 		return err
 	}
-	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
 	var failures []error
 	for _, receipt := range receipts {
 		if err := ctx.Err(); err != nil {

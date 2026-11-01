@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/runtime"
 )
 
@@ -70,7 +71,7 @@ func TestGetRunActions(t *testing.T) {
 		Steps: []runtime.OperationStep{{
 			Index:    0,
 			Resource: "sysbox_node.vm",
-			Action:   controlplane.PlanActionCreate,
+			Action:   model.PlanActionCreate,
 			Kind:     "resource",
 			Status:   runtime.OperationDone,
 		}},
@@ -115,7 +116,7 @@ func TestRunEventsLoadFromPersistedRunAfterServerRestart(t *testing.T) {
 		Steps: []runtime.OperationStep{{
 			Index:     0,
 			Resource:  "sysbox_node.vm",
-			Action:    controlplane.PlanActionCreate,
+			Action:    model.PlanActionCreate,
 			Kind:      "resource",
 			Status:    runtime.OperationDone,
 			StartedAt: time.Now().UTC(),

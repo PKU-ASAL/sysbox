@@ -4,18 +4,17 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"golang.org/x/crypto/ssh"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/ssh"
 
 	"github.com/oslab/sysbox/pkg/address"
-
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
@@ -72,7 +71,7 @@ func TestCreateFirewallPersistsVerifiedObservation(t *testing.T) {
 	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "policy-test", Version: "1", Policy: fake}))
 	st := &state.State{Version: state.SchemaVersion}
 	st.AddResource(state.Resource{Address: address.Resource("sysbox_router", "edge"), OwnerUID: "owner", ResourceUID: "router", Generation: 2, Driver: "policy-test", Attributes: state.MustAttributes(map[string]any{"container_id": "router"}), Attachments: []state.Attachment{{Name: "inside", Observation: state.AttachmentObservation{GuestDevice: "eth1"}}}})
-	exec := NewExecutor(graph.New(), st)
+	exec := NewExecutor(graph.New(), st, driver.DefaultRegistry)
 	n := &graph.Node{Address: address.Resource("sysbox_firewall", "edge"), Data: &config.FirewallConfig{AttachTo: "sysbox_router.edge", Rules: []config.FirewallRule{{Name: "allow", Direction: "forward", Protocol: "all", InputAttachment: "inside", Verdict: "accept"}}}}
 	res, err := exec.createFirewallResource(substrate.WithOperationIdentity(context.Background(), policyOperationFixture()), n)
 	require.NoError(t, err)
@@ -104,7 +103,7 @@ func TestCreateFirewallDelegatesMissingDeviceResolutionToPolicyDriver(t *testing
 	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "policy-test", Version: "1", Policy: fake}))
 	st := &state.State{Version: state.SchemaVersion}
 	st.AddResource(state.Resource{Address: address.Resource("sysbox_router", "edge"), OwnerUID: "owner", ResourceUID: "router", Generation: 2, Driver: "policy-test", Attributes: state.MustAttributes(map[string]any{"container_id": "router"}), Attachments: []state.Attachment{{Name: "uplink", IPPrefixes: []string{"172.31.42.2/24"}}}})
-	exec := NewExecutor(graph.New(), st)
+	exec := NewExecutor(graph.New(), st, driver.DefaultRegistry)
 	n := &graph.Node{Address: address.Resource("sysbox_firewall", "edge"), Data: &config.FirewallConfig{AttachTo: "sysbox_router.edge", Rules: []config.FirewallRule{{Name: "allow", Direction: "forward", Protocol: "all", OutputAttachment: "uplink", Verdict: "accept"}}}}
 
 	res, err := exec.createFirewallResource(substrate.WithOperationIdentity(context.Background(), policyOperationFixture()), n)
@@ -149,7 +148,7 @@ func TestFirewallResourceHandlerPlanDiff(t *testing.T) {
 
 	action, err := p.PlanDiff(n, current)
 	require.NoError(t, err)
-	require.Equal(t, controlplane.PlanActionNoop, action.Action)
+	require.Equal(t, model.PlanActionNoop, action.Action)
 
 	n.Data = &config.FirewallConfig{
 		AttachTo: "sysbox_router.edge.id",
@@ -160,7 +159,7 @@ func TestFirewallResourceHandlerPlanDiff(t *testing.T) {
 	}
 	action, err = p.PlanDiff(n, current)
 	require.NoError(t, err)
-	require.Equal(t, controlplane.PlanActionReplace, action.Action)
+	require.Equal(t, model.PlanActionReplace, action.Action)
 	_, ok := fieldChangeAt(action.Changes, "rules[0].DestinationPorts[0]")
 	require.True(t, ok)
 }
@@ -184,7 +183,7 @@ func TestSSHAccessResourceHandlerPlanDiff(t *testing.T) {
 
 	action, err := p.PlanDiff(n, current)
 	require.NoError(t, err)
-	require.Equal(t, controlplane.PlanActionNoop, action.Action)
+	require.Equal(t, model.PlanActionNoop, action.Action)
 
 	n.Data = &config.SSHAccessConfig{
 		Node:           "sysbox_node.web.id",
@@ -193,7 +192,7 @@ func TestSSHAccessResourceHandlerPlanDiff(t *testing.T) {
 	}
 	action, err = p.PlanDiff(n, current)
 	require.NoError(t, err)
-	require.Equal(t, controlplane.PlanActionReplace, action.Action)
+	require.Equal(t, model.PlanActionReplace, action.Action)
 	change, ok := fieldChangeAt(action.Changes, "authorized_keys[0]")
 	require.True(t, ok)
 	require.True(t, change.Sensitive)
@@ -213,7 +212,7 @@ func TestUnsupportedSSHAccessDeletePreservesState(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st := &state.State{Version: state.SchemaVersion, Resources: []state.Resource{tc.res}}
-			exec := NewExecutor(graph.New(), st)
+			exec := NewExecutor(graph.New(), st, driver.DefaultRegistry)
 			require.ErrorIs(t, tc.p.Delete(context.Background(), &ProviderContext{exec: exec}, tc.res), ErrConvergenceUnsupported)
 			require.NotNil(t, st.FindResource(tc.res.Address))
 		})
@@ -237,14 +236,14 @@ func TestFirewallReadDetectsDigestDrift(t *testing.T) {
 			"policy_target_state": policyTargetFixture(t), "desired_digest": "verified",
 		}),
 	}
-	result, err := (FirewallResourceHandler{}).Read(context.Background(), res)
+	result, err := (FirewallResourceHandler{}).Read(context.Background(), res, driver.DefaultRegistry)
 	require.NoError(t, err)
 	require.Equal(t, state.ResourcePresent, result.Status)
 
 	tampered := &firewallPolicyFake{digest: "tampered"}
 	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "policy-tampered", Version: "1", Policy: tampered}))
 	res.Driver = "policy-tampered"
-	result, err = (FirewallResourceHandler{}).Read(context.Background(), res)
+	result, err = (FirewallResourceHandler{}).Read(context.Background(), res, driver.DefaultRegistry)
 	require.NoError(t, err)
 	require.Equal(t, state.ResourceDrifted, result.Status)
 }
@@ -256,7 +255,7 @@ func TestFirewallIdentityConflictIsUnknown(t *testing.T) {
 	fake := &firewallPolicyFake{observeErr: driver.Wrap(driver.ErrorInvalidState, "policy-conflict", "owner mismatch", nil)}
 	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "policy-conflict", Version: "test", Policy: fake}))
 	res := state.Resource{Address: address.Resource("sysbox_firewall", "edge"), Driver: "policy-conflict", Attributes: state.MustAttributes(map[string]any{"owner": "owner", "attach_to": "sysbox_router.edge", "policy_target_state": policyTargetFixture(t), "desired_digest": "expected"})}
-	observed, err := (FirewallResourceHandler{}).Read(context.Background(), res)
+	observed, err := (FirewallResourceHandler{}).Read(context.Background(), res, driver.DefaultRegistry)
 	require.Error(t, err)
 	require.Equal(t, state.ResourceUnknown, observed.Status)
 }

@@ -8,7 +8,8 @@ import (
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/stretchr/testify/require"
 )
@@ -40,9 +41,9 @@ func TestLifecycleCatalogUsesDatabaseWithoutFakeTopology(t *testing.T) {
 func TestSQLiteMetadataUsesDecodedDatabaseLocation(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state #1.db")
 	u := url.URL{Scheme: "sqlite", Path: path, RawQuery: "topology=lab"}
-	s, err := newAPIStore(t.TempDir(), u.String())
+	s, err := controlstore.New(t.TempDir(), u.String())
 	require.NoError(t, err)
-	require.Equal(t, path, s.(*sqliteAPIStore).dbPath)
+	require.Equal(t, path, s.(*controlstore.SQLite).DbPath)
 }
 
 func TestLifecycleCatalogIncludesUnresolvedFirstCreate(t *testing.T) {
@@ -52,7 +53,7 @@ func TestLifecycleCatalogIncludesUnresolvedFirstCreate(t *testing.T) {
 	require.NoError(t, err)
 	st, err := repo.LoadState(ctx, "lab")
 	require.NoError(t, err)
-	require.NoError(t, repo.CommitActionIntent(ctx, runtime.ActionRecord{ID: "pending", RunID: "run", Topology: "lab", Resource: address.Resource("sysbox_node", "web"), Action: controlplane.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: st.TopologyUID, ResourceUID: "web-uid", Generation: 1}))
+	require.NoError(t, repo.CommitActionIntent(ctx, runtime.ActionRecord{ID: "pending", RunID: "run", Topology: "lab", Resource: address.Resource("sysbox_node", "web"), Action: model.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: st.TopologyUID, ResourceUID: "web-uid", Generation: 1}))
 	listed, err := s.workspaceService().List(ctx)
 	require.NoError(t, err)
 	require.Len(t, listed, 1)

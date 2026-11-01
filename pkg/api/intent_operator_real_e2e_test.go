@@ -9,17 +9,6 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/oslab/sysbox/pkg/address"
-	"github.com/oslab/sysbox/pkg/agent"
-	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/persistence"
-	dockerprovider "github.com/oslab/sysbox/pkg/provider/docker"
-	"github.com/oslab/sysbox/pkg/runtime"
-	"github.com/oslab/sysbox/pkg/state"
-	"github.com/stretchr/testify/require"
 	"io"
 	"net"
 	"net/http"
@@ -30,6 +19,21 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/oslab/sysbox/pkg/address"
+	"github.com/oslab/sysbox/pkg/agent"
+	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/model"
+	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/stretchr/testify/require"
+
+	dockerprovider "github.com/oslab/sysbox/pkg/provider/docker"
+	"github.com/oslab/sysbox/pkg/runtime"
+	"github.com/oslab/sysbox/pkg/state"
 )
 
 // Only initial interrupted records are fixture setup. Recovery and subsequent
@@ -215,7 +219,7 @@ resource "sysbox_node" "node" {
 	require.NoError(t, s.apiStore.SaveRun(ctx, original))
 	command := controlplane.AgentCommand{ID: "old-command-" + suffix, AgentID: agentID, Type: "run_assigned", Run: &original, ActionID: original.ID, TopologyUID: st.TopologyUID, ExpectedSerial: st.Meta.Serial, Attempt: 1, LeaseOwner: "interrupted", LeaseUntil: time.Now().Add(10 * time.Minute), Status: controlplane.AgentCommandStatusLeased}
 	require.NoError(t, s.apiStore.SaveAgentCommand(ctx, command))
-	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
 	session, err := authority.OpenSession(ctx, agentID, "original-process", "")
 	require.NoError(t, err)
 	grantSource, err := s.sourceGrant(ctx, agentID, ExecutionGrantRequest{SessionID: session.ID, Attempt: 1, LeaseOwner: "interrupted", BootID: oldBoot}, &persistence.CommandRecord{Command: command})
@@ -238,7 +242,7 @@ resource "sysbox_node" "node" {
 			t.Errorf("test-owned container remains: %s", remaining)
 		}
 	})
-	action := runtime.ActionRecord{ID: "unknown-create", Topology: topology, RunID: original.ID, RunQueuedAt: original.QueuedAt, RunRevision: original.Revision, Resource: candidate.Address, Action: controlplane.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: st.TopologyUID, ResourceUID: "node", Generation: 1, ExpectedSerial: st.Meta.Serial, StateSerial: st.Meta.Serial, Candidate: &candidate, ReplayForbidden: true}
+	action := runtime.ActionRecord{ID: "unknown-create", Topology: topology, RunID: original.ID, RunQueuedAt: original.QueuedAt, RunRevision: original.Revision, Resource: candidate.Address, Action: model.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: st.TopologyUID, ResourceUID: "node", Generation: 1, ExpectedSerial: st.Meta.Serial, StateSerial: st.Meta.Serial, Candidate: &candidate, ReplayForbidden: true}
 	require.NoError(t, repo.CommitActionIntent(ctx, action))
 	status, data = request("POST", "/v1/topologies/"+topology+"/host-fences", map[string]any{"run_id": original.ID, "grant": grant}, "operator-fence")
 	require.Equal(t, 202, status, string(data))

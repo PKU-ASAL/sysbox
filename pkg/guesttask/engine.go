@@ -144,6 +144,9 @@ func (e *Engine) Start(ctx context.Context, req Request) (Record, error) {
 		return Record{}, err
 	}
 	if len(req.Args) > 0 && req.Args[0] == PolicyProgram {
+		if req.Terminal != nil {
+			return Record{}, ErrUnauthorized
+		}
 		policy, err := PolicyBuiltin(req)
 		if err != nil {
 			return Record{}, err
@@ -193,7 +196,7 @@ func (e *Engine) Start(ctx context.Context, req Request) (Record, error) {
 	if err = atomicJSON(epochPath, epoch); err != nil {
 		return Record{}, err
 	}
-	record := Record{Version: RecordVersion, ID: req.ID, Digest: digest, Grant: req.Grant, BootID: boot, Status: "prepared"}
+	record := Record{Version: RecordVersion, ID: req.ID, Digest: digest, Grant: req.Grant, BootID: boot, Status: "prepared", Terminal: req.Terminal}
 	budget, err := controlplane.ExecutionGrantBudget(req.Grant, time.Now())
 	if err != nil {
 		return Record{}, err
@@ -262,6 +265,18 @@ func (e *Engine) verifyCgroupRoot() error {
 	}
 	if _, err := os.Stat(filepath.Join(e.CgroupRoot, "cgroup.procs")); err != nil {
 		return err
+	}
+	kind, err := os.ReadFile(filepath.Join(e.CgroupRoot, "cgroup.type"))
+	// The hierarchy root is a domain and has no cgroup.type file. Every
+	// non-root cgroup exposes its explicit type through cgroupfs.
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(string(kind)) != "domain" {
+		return fmt.Errorf("task isolation requires a cgroup domain; got %q", strings.TrimSpace(string(kind)))
 	}
 	return nil
 }

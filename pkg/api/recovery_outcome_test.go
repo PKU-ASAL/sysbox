@@ -3,15 +3,17 @@ package api
 import (
 	"context"
 	"errors"
-	"github.com/gofrs/flock"
-	"github.com/jackc/pgx/v5/pgconn"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/gofrs/flock"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
@@ -19,10 +21,10 @@ import (
 )
 
 func TestRecoveryOutcomeRevalidatesLeaseInsideCommit(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		scenarios := []string{"live", "revoked", "wrong_owner", "wrong_attempt", "blocked_agent", "active_successor", "foreign_run", "expired", "maintenance"}
 		switch store.(type) {
-		case *localAPIStore, *postgresAPIStore:
+		case *controlstore.Local, *controlstore.Postgres:
 			scenarios = append(scenarios, "serialized_revoke", "expired_after_wait", "serialized_freeze")
 		}
 		for _, scenario := range scenarios {
@@ -31,12 +33,12 @@ func TestRecoveryOutcomeRevalidatesLeaseInsideCommit(t *testing.T) {
 				s := NewServer(t.TempDir(), t.TempDir())
 				s.apiStore = store
 				switch typed := store.(type) {
-				case *localAPIStore:
-					s.runsDir = typed.runsDir
-				case *sqliteAPIStore:
-					s.stateBackend = "sqlite://" + typed.dbPath
-				case *postgresAPIStore:
-					s.stateBackend = typed.dsn
+				case *controlstore.Local:
+					s.runsDir = typed.RunsDir
+				case *controlstore.SQLite:
+					s.stateBackend = "sqlite://" + typed.DbPath
+				case *controlstore.Postgres:
+					s.stateBackend = typed.DSN
 				}
 				topology := scenario
 				agentID := "agent-" + topology
@@ -61,24 +63,24 @@ func TestRecoveryOutcomeRevalidatesLeaseInsideCommit(t *testing.T) {
 				lease, ok, err := store.AcquireAgentCommandLease(ctx, agentID, command.ID, "worker", ttl)
 				require.NoError(t, err)
 				require.True(t, ok)
-				a := runtime.ActionRecord{ID: "action", Topology: topology, RunID: run.ID, RunQueuedAt: run.QueuedAt, RunRevision: run.Revision, Resource: address.Resource("sysbox_node", "web"), Action: controlplane.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: st.TopologyUID, ResourceUID: "node", Generation: 1}
+				a := runtime.ActionRecord{ID: "action", Topology: topology, RunID: run.ID, RunQueuedAt: run.QueuedAt, RunRevision: run.Revision, Resource: address.Resource("sysbox_node", "web"), Action: model.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: st.TopologyUID, ResourceUID: "node", Generation: 1}
 				require.NoError(t, repo.CommitActionIntent(ctx, a))
 				a.Revision, a.Status, a.EffectComplete = 1, runtime.ActionSucceeded, true
 				a.Candidate = &state.Resource{Address: a.Resource, OwnerUID: a.OwnerUID, ResourceUID: a.ResourceUID, Generation: a.Generation, ExternalID: "vm"}
 				proof := hostsupervisor.RunRecoveryRequest{CommandID: lease.ID, LeaseOwner: lease.LeaseOwner, Attempt: lease.Attempt}
-				bound := &recoveryActionRepository{ActionRepository: repo, server: s, proof: proof, run: run}
+				bound := &controlstore.RecoveryRepository{ActionRepository: repo, Store: s.apiStore, Proof: proof, Run: run}
 				switch scenario {
 				case "maintenance":
-					authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+					authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 					_, err := authority.BeginMaintenance(ctx, "restore", st.TopologyUID, "snapshot-digest")
 					require.NoError(t, err)
 				case "revoked":
 					// Retirement happens after observation, before outcome commit.
 					require.NoError(t, store.DeleteAgentCommand(ctx, agentID, lease.ID))
 				case "wrong_owner":
-					bound.proof.LeaseOwner = "different-worker"
+					bound.Proof.LeaseOwner = "different-worker"
 				case "wrong_attempt":
-					bound.proof.Attempt++
+					bound.Proof.Attempt++
 				case "blocked_agent":
 					owner, err := store.GetAgent(ctx, agentID)
 					require.NoError(t, err)
@@ -87,7 +89,7 @@ func TestRecoveryOutcomeRevalidatesLeaseInsideCommit(t *testing.T) {
 				case "active_successor":
 					require.NoError(t, store.SaveRun(ctx, controlplane.Run{ID: topology + "-next", Topology: topology, AgentID: agentID, Status: controlplane.RunAssigned}))
 				case "foreign_run":
-					bound.run.LeaseOwner = "other-incarnation"
+					bound.Run.LeaseOwner = "other-incarnation"
 				}
 				patch := &runtime.StatePatch{Op: runtime.StatePatchUpsert, Resource: a.Resource.String(), Action: a.Action}
 				if scenario == "serialized_revoke" || scenario == "expired_after_wait" || scenario == "serialized_freeze" {
@@ -107,8 +109,8 @@ func TestRecoveryOutcomeRevalidatesLeaseInsideCommit(t *testing.T) {
 					go func() { committed <- bound.CommitActionOutcome(ctx, a, patch) }()
 					// Wait for the actual source lock, not a scheduling sleep.
 					switch typed := store.(type) {
-					case *localAPIStore:
-						probe := flock.New(filepath.Join(typed.runsDir, ".run-locks", "records.lock"))
+					case *controlstore.Local:
+						probe := flock.New(filepath.Join(typed.RunsDir, ".run-locks", "records.lock"))
 						require.Eventually(t, func() bool {
 							locked, err := probe.TryLock()
 							if err != nil {
@@ -120,8 +122,8 @@ func TestRecoveryOutcomeRevalidatesLeaseInsideCommit(t *testing.T) {
 							return !locked
 						}, time.Second, time.Millisecond)
 						require.NoError(t, probe.Close())
-					case *postgresAPIStore:
-						pool, err := typed.poolFor(ctx)
+					case *controlstore.Postgres:
+						pool, err := typed.PoolFor(ctx)
 						require.NoError(t, err)
 						require.Eventually(t, func() bool {
 							tx, err := pool.Begin(ctx)
@@ -136,7 +138,7 @@ func TestRecoveryOutcomeRevalidatesLeaseInsideCommit(t *testing.T) {
 					}
 					if scenario == "serialized_freeze" {
 						limited, cancel := context.WithTimeout(ctx, 30*time.Millisecond)
-						_, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store}).BeginMaintenance(limited, "blocked-freeze", st.TopologyUID, "snapshot-digest")
+						_, err := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store}).BeginMaintenance(limited, "blocked-freeze", st.TopologyUID, "snapshot-digest")
 						cancel()
 						require.Error(t, err, "maintenance cannot pass in-flight recovery commit")
 					} else if scenario == "serialized_revoke" {

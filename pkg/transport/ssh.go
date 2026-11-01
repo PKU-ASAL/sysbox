@@ -88,13 +88,6 @@ func (c *SSHConnection) hostKeyArgs() []string {
 	return args
 }
 
-func (c *SSHConnection) OpenConsole(ctx context.Context, req ConsoleRequest) (substrate.ConsoleSession, error) {
-	if c.netns == "" {
-		return NewSSHConsoleSession(ctx, c.sshArgs(), req)
-	}
-	return NewSSHConsoleSessionWithRunner(ctx, "ip", append([]string{"netns", "exec", c.netns, resolveSSHBin()}, c.sshArgs()...), req)
-}
-
 func (c *SSHConnection) Exec(ctx context.Context, req substrate.ExecRequest, stdout, stderr io.Writer) (result substrate.ExecResult, err error) {
 	ctx, cancel := req.Context(ctx)
 	defer cancel()

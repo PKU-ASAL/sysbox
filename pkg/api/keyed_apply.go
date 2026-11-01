@@ -3,25 +3,25 @@ package api
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/oslab/sysbox/pkg/workspace"
 )
 
-var errActiveOperation = fmt.Errorf("%w: topology has an active operation", persistence.ErrConflict)
 var errApplyInputsRequired = errors.New("apply inputs unavailable; resubmit the original request to this API")
 
-func (s *RunService) startKeyedApply(ctx context.Context, topology string, req RunStartRequest) (*controlplane.Run, error) {
+func (s *RunService) startKeyedRevisionRun(ctx context.Context, topology, operation string, req RunStartRequest) (*controlplane.Run, error) {
 	if err := validateOperationKey(req.OperationKey); err != nil {
 		return nil, runError(runServiceBadRequest, err)
 	}
-	if !globalRevisionPattern.MatchString(req.Revision) {
-		return nil, runError(runServiceBadRequest, errors.New("keyed apply requires an immutable global revision"))
+	if !controlstore.GlobalRevisionPattern.MatchString(req.Revision) {
+		return nil, runError(runServiceBadRequest, errors.New("keyed lifecycle operation requires an immutable global revision"))
 	}
 	unlock := s.jobs.lockTopology(topology)
 	defer unlock()
@@ -32,16 +32,10 @@ func (s *RunService) startKeyedApply(ctx context.Context, topology string, req R
 	if len(req.Inputs) == 0 {
 		req.Inputs = nil
 	}
-	raw, _ := json.Marshal(struct {
-		Topology, Revision, Agent string
-		Unsafe                    bool
-		Inputs                    map[string]string
-		Deadline                  time.Time
-	}{topology, req.Revision, req.AgentID, req.AllowUnsafeState, req.Inputs, deadline})
-	fingerprint := fmt.Sprintf("apply-request:%x", sha256.Sum256(raw))
-	run := newRun(topology, "apply", runStartOptions{Revision: req.Revision, AgentID: req.AgentID, UnsafeState: req.AllowUnsafeState, OperationKey: req.OperationKey, DeadlineAt: deadline})
+	fingerprint := controlplane.RunRequestFingerprint(operation, topology, req.Revision, req.AgentID, req.Target, req.AllowUnsafeState, req.Inputs, deadline)
+	run := newRun(topology, operation, runStartOptions{Target: req.Target, Revision: req.Revision, AgentID: req.AgentID, UnsafeState: req.AllowUnsafeState, OperationKey: req.OperationKey, DeadlineAt: deadline})
 	// Explicit request keys cannot alias restartable, content-derived run IDs.
-	run.ID = fmt.Sprintf("request-%x", sha256.Sum256([]byte(topology+"\x00apply\x00"+req.OperationKey)))
+	run.ID = fmt.Sprintf("request-%x", sha256.Sum256([]byte(topology+"\x00"+operation+"\x00"+req.OperationKey)))
 	run.RequestFingerprint = fingerprint
 	existing, found, err := s.jobs.store.GetRunDispatch(ctx, run.ID, fingerprint)
 	if err != nil {
@@ -52,7 +46,7 @@ func (s *RunService) startKeyedApply(ctx context.Context, topology string, req R
 	}
 	revision, err := s.revisions.GetGlobalRevision(ctx, req.Revision)
 	if err != nil {
-		if errors.Is(err, errGlobalRevisionNotFound) {
+		if errors.Is(err, controlstore.ErrRevisionNotFound) {
 			return nil, runError(runServiceNotFound, err)
 		}
 		return nil, runError(runServiceInternal, err)
@@ -63,24 +57,29 @@ func (s *RunService) startKeyedApply(ctx context.Context, topology string, req R
 		return nil, runError(runServiceInternal, err)
 	}
 	run.SnapshotPath = snapshot
-	required, err := s.requiredForTopo(snapshot)
+	return s.dispatchKeyedRun(ctx, run, fingerprint, req.Inputs)
+}
+
+// The request mapping, canonical Run and command outbox are committed together.
+func (s *RunService) dispatchKeyedRun(ctx context.Context, run *controlplane.Run, fingerprint string, inputs map[string]string) (*controlplane.Run, error) {
+	required, err := s.requiredForTopo(run.SnapshotPath)
 	if err != nil {
 		return nil, runError(runServiceBadRequest, err)
 	}
-	agent, err := s.scheduler.SelectAgentForTopology(ctx, topology, required, req.AgentID)
+	agent, err := s.scheduler.SelectAgentForTopology(ctx, run.Topology, required, run.AgentID)
 	if err != nil {
 		return nil, runError(runServiceConflict, err)
 	}
 	run.MarkAssigned(agent.ID, time.Now().UTC())
-	command, err := s.workspaces.runAssignedCommand(ctx, run)
+	command, err := s.workspaces.RunAssignedCommand(ctx, run)
 	if err != nil {
-		return nil, runError(runServiceInternal, err)
+		return nil, runError(runServiceConflict, err)
 	}
-	stored, created, err := s.jobs.store.CreateRunDispatch(ctx, RunDispatchRequest{Run: *run, Command: command, Fingerprint: fingerprint})
+	stored, created, err := s.jobs.store.CreateRunDispatch(ctx, controlstore.RunDispatchRequest{Run: *run, Command: command, Fingerprint: fingerprint})
 	if err != nil {
 		return nil, dispatchError(err)
 	}
-	hydrated := s.hydrateApply(stored, req.Inputs)
+	hydrated := s.hydrateApply(stored, inputs)
 	if created && s.scheduler.agents.registry != nil {
 		_ = s.scheduler.agents.registry.PublishCommand(command.AgentID, command)
 	}
@@ -88,7 +87,7 @@ func (s *RunService) startKeyedApply(ctx context.Context, topology string, req R
 }
 
 func dispatchError(err error) error {
-	if errors.Is(err, errIdempotencyConflict) || errors.Is(err, persistence.ErrConflict) {
+	if errors.Is(err, controlstore.ErrIdempotencyConflict) || errors.Is(err, persistence.ErrConflict) {
 		return runError(runServiceConflict, err)
 	}
 	return runError(runServiceInternal, err)
@@ -98,9 +97,9 @@ func dispatchError(err error) error {
 // Only the already fingerprint-validated caller may supply these inputs.
 func (s *RunService) hydrateApply(run *controlplane.Run, inputs map[string]string) *controlplane.Run {
 	s.jobs.mu.Lock()
-	snapshot := runRecord(*run)
+	snapshot := workspace.RunRecord(*run)
 	if current := s.jobs.runs[run.ID]; current != nil && preferRun(current, &snapshot) {
-		snapshot = runRecord(*current)
+		snapshot = workspace.RunRecord(*current)
 	}
 	snapshot.Inputs = nil
 	if !snapshot.Status.IsTerminal() || (snapshot.Status == controlplane.RunFailed && snapshot.Recoverable) {
@@ -130,18 +129,6 @@ func keyedInputsRequired(run *controlplane.Run, inputs map[string]string) bool {
 	return run != nil && (run.Status.IsActive() || (run.Status == controlplane.RunFailed && run.Recoverable)) && strings.HasPrefix(run.RequestFingerprint, "apply-request:") && inputs == nil
 }
 
-func validateTopologyAdmission(runs []controlplane.Run, next controlplane.Run) error {
-	if !next.Status.IsActive() {
-		return nil
-	}
-	for _, run := range latestRunsByID(runs) {
-		if run.Topology == next.Topology && run.ID != next.ID && run.Status.IsActive() {
-			return errActiveOperation
-		}
-	}
-	return nil
-}
-
 // Failed recoverable Runs may receive an explicit, fingerprint-checked
 // resubmission. Ordinary claims still use inputsForRun and reject terminal Runs.
 func inputsForRecovery(cached, current *controlplane.Run) map[string]string {
@@ -151,7 +138,7 @@ func inputsForRecovery(cached, current *controlplane.Run) map[string]string {
 	if current.Status != controlplane.RunFailed || !current.Recoverable {
 		return inputsForRun(cached, current)
 	}
-	if cached == nil || !persistence.SameRunIncarnation(*cached, *current) {
+	if cached == nil || !controlplane.SameRunIncarnation(*cached, *current) {
 		return nil
 	}
 	return cloneInputs(cached.Inputs)

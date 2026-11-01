@@ -30,6 +30,12 @@ def unit(command, user, config):
             "\nRestart=on-failure\nRestartSec=2\n[Install]\nWantedBy=multi-user.target\n")
 
 
+def deployment_unit(name):
+    if name not in ("host", "agent"):
+        raise ValueError("unsupported deployment unit")
+    return (Path(__file__).resolve().parents[2] / "deploy/systemd" / ("sysbox-" + name + ".service")).read_text()
+
+
 def database_config(database, password):
     if not re.fullmatch(r"[a-z][a-z0-9_]{0,39}", database):
         raise ValueError("database must be a simple lowercase SQL identifier")
@@ -42,7 +48,7 @@ def database_config(database, password):
 
 
 def release_files(binary, metadata_path):
-    target, = [row for row in json.loads(Path(metadata_path).read_text())['targets'] if row['architecture']=='amd64']
+    target, = [row for row in json.loads(Path(metadata_path).read_text())['targets'] if row['os']=='linux' and row['architecture']=='amd64']
     files = {}
     for name in ('sysbox','sysbox-init','sysbox-netns'):
         path=Path(binary) if name=='sysbox' else Path(binary).parent/name
@@ -53,7 +59,9 @@ def release_files(binary, metadata_path):
 
 
 def deploy(root, binary, database="sysboxp9", deployment="deployment", release_metadata=None):
-    binaries=release_files(binary,release_metadata) if release_metadata else {"sysbox":binary}
+    if release_metadata is None:
+        raise ValueError("verified release metadata is required for deployment")
+    binaries=release_files(binary,release_metadata)
     if not re.fullmatch(r"[a-z][a-z0-9_-]{0,39}", deployment):
         raise ValueError("deployment must be a simple directory name")
     database_config(database, "validation")
@@ -92,12 +100,12 @@ def deploy(root, binary, database="sysboxp9", deployment="deployment", release_m
             "api": {"listen": f"10.77.0.10:{19870 + index}", "token": private["api_token"],
                     "execution_grant": {"signing_key_file": "/etc/sysbox-api/issuer.key", "host_public_key_files": {"execution-p9": "/etc/sysbox-api/host.pub"}}}}
     configs["supervisor"] = {
-        "version": 1, "paths": {"home": "/var/lib/sysbox-supervisor", "runs_dir": "/var/lib/sysbox-supervisor/runs", "workspaces_dir": "/var/lib/sysbox-supervisor/workspaces", "cache": "/var/lib/sysbox-supervisor/cache"},
-        "state": {"backend": dsn}, "agent": {"execution_grant_public_key_file": "/etc/sysbox/issuer.pub"},
-        "host_supervisor": {"socket": "/run/sysbox-supervisor/host.sock", "root": "/var/lib/sysbox-supervisor/journal", "signing_key_file": "/etc/sysbox/host.key", "worker_group_id": 2000}}
+        "version": 1, "paths": {"home": "/var/lib/sysbox-host", "runs_dir": "/var/lib/sysbox-host/runs", "workspaces_dir": "/var/lib/sysbox-host/workspaces", "cache": "/var/lib/sysbox-host/cache"},
+        "state": {"backend": dsn}, "agent": {"execution_grant_public_key_file": "/etc/sysbox-worker/issuer.pub"},
+        "host_supervisor": {"socket": "/run/sysbox-host/host.sock", "root": "/var/lib/sysbox-host/journal", "signing_key_file": "/etc/sysbox-host/host.key", "worker_group_id": 32000}}
     configs["agent"] = {
         "version": 1, "paths": {"home": "/var/lib/sysbox-agent", "runs_dir": "/var/lib/sysbox-agent/runs", "workspaces_dir": "/var/lib/sysbox-agent/workspaces", "cache": "/var/lib/sysbox-agent/cache"},
-        "agent": {"host_supervisor_socket": "/run/sysbox-supervisor/host.sock", "execution_session_file": "/var/lib/sysbox-agent/session.json", "execution_grant_public_key_file": "/etc/sysbox/issuer.pub"}}
+        "agent": {"host_supervisor_socket": "/run/sysbox-host/host.sock", "execution_session_file": "/var/lib/sysbox-agent/session.json", "execution_grant_public_key_file": "/etc/sysbox-worker/issuer.pub", "host_public_key_file": "/etc/sysbox-worker/host.pub"}}
 
     def stage(role, name, content):
         source = secret_dir / name
@@ -133,30 +141,30 @@ def deploy(root, binary, database="sysboxp9", deployment="deployment", release_m
     stage("control", "p9-proxy.cfg", proxy)
     remote(root, manifest, "control", "sudo install -m 0644 /home/p9/p9-proxy.cfg /etc/haproxy/haproxy.cfg && sudo systemctl restart haproxy && sudo systemctl is-active sysbox-api1 sysbox-api2 haproxy")
 
-    remote(root, manifest, "execution", "getent group sysboxagent >/dev/null || sudo groupadd -g 2000 sysboxagent; id sysboxagent >/dev/null 2>&1 || sudo useradd --system -g sysboxagent --home-dir /var/lib/sysbox-agent sysboxagent; "
-           "sudo install -d -m 0700 -o sysboxagent -g sysboxagent /var/lib/sysbox-agent; sudo install -d -m 0755 /etc/sysbox; sudo install -d -m 0700 /var/lib/sysbox-supervisor")
-    for name in ("issuer.pub", "host.key"):
+    configs["supervisor"]["providers"] = {"docker":{"enabled":True}, "network":{"enabled":True}, "firecracker":{"enabled":False}, "libvirt":{"enabled":False}}
+    remote(root, manifest, "execution", "getent group sysbox-agent >/dev/null || sudo groupadd -g 32000 sysbox-agent; id sysbox-agent >/dev/null 2>&1 || sudo useradd --system -u 32000 -g sysbox-agent --home-dir /var/lib/sysbox-agent sysbox-agent; "
+           "sudo install -d -m 0700 -o sysbox-agent -g sysbox-agent /var/lib/sysbox-agent; sudo install -d -m 0755 /etc/sysbox-worker; sudo install -d -m 0700 /etc/sysbox-host /var/lib/sysbox-host; sudo apt-get install -y -qq nftables >/tmp/p9-host-tools.log 2>&1")
+    for name in ("issuer.pub", "host.pub", "host.key"):
         stage("execution", name, None)
-        mode = "0644" if name.endswith("pub") else "0600"
-        remote(root, manifest, "execution", f"sudo install -m {mode} /home/p9/{name} /etc/sysbox/{name}")
-    for name in ("supervisor", "agent"):
+        destination = "/etc/sysbox-host/" if name == "host.key" else "/etc/sysbox-worker/"
+        mode = "0600" if name == "host.key" else "0644"
+        remote(root, manifest, "execution", f"sudo install -m {mode} /home/p9/{name} {destination}{name}")
+    for name, destination, mode in (("supervisor", "/etc/sysbox-host/sysbox.yaml", "0600"), ("agent", "/etc/sysbox-worker/agent.yaml", "0644")):
         stage("execution", name + ".json", json.dumps(configs[name]))
-        mode = "0600" if name == "supervisor" else "0644"
-        remote(root, manifest, "execution", f"sudo install -m {mode} /home/p9/{name}.json /etc/sysbox/{name}.json")
-    registration = ("#!/bin/sh\nset -eu\nif ! sudo test -f /var/lib/sysbox-agent/identity.json; then\n"
+        remote(root, manifest, "execution", f"sudo install -m {mode} /home/p9/{name}.json {destination}")
+    registration = ("#!/bin/sh\nset -eu\nsudo test ! -e /var/lib/sysbox-agent/identity.json\n"
                     "sudo /usr/local/bin/sysbox agent register --api http://10.77.0.10:19870 --id execution-p9 --name execution-p9 --substrates docker "
-                    "--identity /var/lib/sysbox-agent/identity.json --token " + shlex.quote(private["api_token"]) + "\nfi\n"
-                    "sudo install -m 0600 /var/lib/sysbox-agent/identity.json /etc/sysbox/host-identity.json\n"
-                    "sudo chown sysboxagent:sysboxagent /var/lib/sysbox-agent/identity.json\n")
+                    "--identity /var/lib/sysbox-agent/identity.json --token " + shlex.quote(private["api_token"]) + "\n"
+                    "sudo install -m 0600 /var/lib/sysbox-agent/identity.json /etc/sysbox-host/identity.json\n"
+                    "sudo chown sysbox-agent:sysbox-agent /var/lib/sysbox-agent/identity.json\n")
     stage("execution", "register.sh", registration)
-    remote(root, manifest, "execution", "sh /home/p9/register.sh")
-    for name, user, command in (
-        ("supervisor", "root", "host-supervisor --config /etc/sysbox/supervisor.json --identity /etc/sysbox/host-identity.json"),
-        ("agent", "sysboxagent", "agent start --config /etc/sysbox/agent.json --identity /var/lib/sysbox-agent/identity.json"),
-    ):
-        stage("execution", name + ".service", unit(command, user, f"/etc/sysbox/{name}.json"))
-        remote(root, manifest, "execution", f"sudo install -m 0644 /home/p9/{name}.service /etc/systemd/system/sysbox-{name}.service && sudo systemctl daemon-reload && sudo systemctl restart sysbox-{name}")
-    remote(root, manifest, "execution", "sudo systemctl is-active sysbox-agent sysbox-supervisor")
+    remote(root, manifest, "execution", "sh /home/p9/register.sh && rm /home/p9/register.sh")
+    for name in ("host", "agent"):
+        stage("execution", name + ".service", deployment_unit(name))
+        remote(root, manifest, "execution", f"sudo install -m 0644 /home/p9/{name}.service /etc/systemd/system/sysbox-{name}.service")
+    stage("execution", "acceptance-lab.json", json.dumps({"agent_id":"execution-p9", "lab_id":manifest["id"], "disposable":True}))
+    remote(root, manifest, "execution", "sudo install -m 0600 /home/p9/acceptance-lab.json /etc/sysbox-host/acceptance-lab.json")
+    remote(root, manifest, "execution", "sudo systemctl daemon-reload && sudo systemctl enable --now sysbox-host && sudo systemctl enable sysbox-agent && sudo systemctl start sysbox-agent && sudo systemctl is-active sysbox-agent sysbox-host")
     binary_digest = lab.file_sha256(binary)
     services = {"executables": {name: lab.file_sha256(path) for name,path in binaries.items()}, "lab_id": manifest["id"], "binary_sha256": binary_digest, "database": database,
              "api_url": "http://10.77.0.10:19870", "agent_id": "execution-p9",
@@ -172,6 +180,6 @@ if __name__ == "__main__":
     parser.add_argument("--binary", required=True)
     parser.add_argument("--database", default="sysboxp9")
     parser.add_argument("--deployment", default="deployment")
-    parser.add_argument("--release-metadata", type=Path)
+    parser.add_argument("--release-metadata", type=Path, required=True)
     args = parser.parse_args()
     deploy(args.root, Path(args.binary).resolve(strict=True), args.database, args.deployment, args.release_metadata)

@@ -5,12 +5,13 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/oslab/sysbox/pkg/address"
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
-	"github.com/stretchr/testify/require"
 )
 
 type routeObservationProbe struct {
@@ -45,14 +46,14 @@ func TestRouteObservationPreservesUnknownAndProvenAbsence(t *testing.T) {
 			node := &portTestSubstrate{name: "route-test"}
 			require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: node.name, Version: "test", Node: node, NodeState: node, GuestNetwork: routeObservationProbe{exists: tc.exists, err: tc.err}}))
 			resource := state.Resource{Address: address.Resource("sysbox_node", "web"), Driver: node.name, ExternalID: "node-id", Attributes: state.MustAttributes(map[string]any{"routes": []any{map[string]any{"dst": "10.0.0.0/24", "via": "192.0.2.1"}}})}
-			result, err := readNodeLikeResource(context.Background(), resource)
+			result, err := readNodeLikeResource(context.Background(), resource, driver.DefaultRegistry)
 			require.Equal(t, tc.want, result.Status)
 			if tc.err != nil {
 				require.ErrorIs(t, err, tc.err)
-				require.Equal(t, controlplane.RecoveryDecisionUnknown, result.Decision)
+				require.Equal(t, model.RecoveryDecisionUnknown, result.Decision)
 				action, dictates := planActionForObservedStatus(result.Status)
 				require.True(t, dictates)
-				require.Equal(t, controlplane.PlanActionUnknown, action)
+				require.Equal(t, model.PlanActionUnknown, action)
 			} else {
 				require.NoError(t, err)
 			}

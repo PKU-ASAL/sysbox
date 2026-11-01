@@ -16,7 +16,6 @@ const (
 	CapabilityNode              Capability = "node"
 	CapabilityNIC               Capability = "nic"
 	CapabilitySnapshot          Capability = "snapshot"
-	CapabilityConsole           Capability = "console"
 	CapabilityGuestExec         Capability = "guest-exec"
 	CapabilityGuestFiles        Capability = "guest-files"
 	CapabilityNetwork           Capability = "network"
@@ -84,10 +83,6 @@ type Snapshot interface {
 	CreateSnapshot(context.Context, substrate.NodeHandle, string) (string, error)
 	RestoreSnapshot(context.Context, substrate.NodeHandle, string) error
 	DeleteSnapshot(context.Context, string) error
-}
-
-type Console interface {
-	OpenConsole(context.Context, substrate.NodeHandle, substrate.ConsoleRequest) (substrate.ConsoleSession, error)
 }
 
 type GuestExec interface {
@@ -200,7 +195,6 @@ type Descriptor struct {
 	Node              Node
 	NIC               NIC
 	Snapshot          Snapshot
-	Console           Console
 	GuestExec         GuestExec
 	GuestFiles        GuestFiles
 	Network           Network
@@ -225,8 +219,6 @@ func (d Descriptor) capability(capability Capability) any {
 		return d.NIC
 	case CapabilitySnapshot:
 		return d.Snapshot
-	case CapabilityConsole:
-		return d.Console
 	case CapabilityGuestExec:
 		return d.GuestExec
 	case CapabilityGuestFiles:

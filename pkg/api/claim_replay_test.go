@@ -4,18 +4,20 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"github.com/oslab/sysbox/pkg/agent"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/stretchr/testify/require"
 	"io"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/agent"
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDurableClaimReceiptReplayAcrossJobsRestart(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		original := controlplane.Run{ID: "claim-replay", Topology: "lab", AgentID: "agent", Status: controlplane.RunAssigned, QueuedAt: time.Now().UTC()}
 		require.NoError(t, store.SaveRun(context.Background(), original))
 		expected := controlplane.RunClaim{QueuedAt: original.QueuedAt, ClaimID: "8e552a37-152b-4567-bb41-196fa8c81a27"}
@@ -76,8 +78,8 @@ func TestClaimBodyBoundedBeforeSignature(t *testing.T) {
 	require.NotEqual(t, 200, rec.Code)
 }
 
-func TestDispatchCannotInjectCompletionProjection(t *testing.T) {
-	proof := &controlplane.Projection{Serial: 999}
-	require.Error(t, validateRunDispatchPayload(RunDispatchRequest{Run: controlplane.Run{CompletionProjection: proof}}))
-	require.Error(t, validateRunDispatchPayload(RunDispatchRequest{Command: controlplane.AgentCommand{Run: &controlplane.Run{CompletionProjection: proof}}}))
+func TestDispatchCannotInjectHostCompletionProof(t *testing.T) {
+	proof := &controlplane.RunHostCompletionProof{}
+	require.Error(t, controlstore.ValidateRunDispatchPayload(controlstore.RunDispatchRequest{Run: controlplane.Run{HostCompletion: proof}}))
+	require.Error(t, controlstore.ValidateRunDispatchPayload(controlstore.RunDispatchRequest{Command: controlplane.AgentCommand{Run: &controlplane.Run{HostCompletion: proof}}}))
 }

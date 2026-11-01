@@ -19,7 +19,7 @@ func (NetworkResourceHandler) Discover(ctx context.Context, pc *ProviderContext,
 	if !cfg.NAT {
 		return discoverIsolatedNetwork(ctx, pc, n, cfg)
 	}
-	networkDriver, err := driver.DefaultRegistry.RequireNetwork("docker")
+	networkDriver, err := pc.exec.providers.RequireNetwork("docker")
 	if err != nil {
 		return ResourceReadResult{}, err
 	}
@@ -72,7 +72,7 @@ func discoverIsolatedNetwork(ctx context.Context, pc *ProviderContext, n *graph.
 		return ResourceReadResult{}, err
 	}
 	candidate := state.Resource{Address: n.Address, Driver: "network", ExternalID: "sysbox-net-" + name, Attributes: state.MustAttributes(attrs), OwnerUID: id.OwnerUID, ResourceUID: id.ResourceUID, Generation: id.Generation}
-	return (NetworkResourceHandler{}).Read(ctx, candidate)
+	return (NetworkResourceHandler{}).Read(ctx, candidate, pc.exec.providers)
 }
 
 func (NodeResourceHandler) Discover(ctx context.Context, pc *ProviderContext, n *graph.Node) (ResourceReadResult, error) {
@@ -101,7 +101,7 @@ func discoverNodeIdentity(ctx context.Context, pc *ProviderContext, n *graph.Nod
 	if err != nil {
 		return ResourceReadResult{}, err
 	}
-	nodeDriver, err := driver.DefaultRegistry.RequireNode(provider)
+	nodeDriver, err := pc.exec.providers.RequireNode(provider)
 	if err != nil {
 		return ResourceReadResult{}, err
 	}
@@ -120,7 +120,7 @@ func discoverNodeIdentity(ctx context.Context, pc *ProviderContext, n *graph.Nod
 	if err != nil {
 		return ResourceReadResult{Status: state.ResourceUnknown}, err
 	}
-	stateDriver, err := driver.DefaultRegistry.RequireNodeState(provider)
+	stateDriver, err := pc.exec.providers.RequireNodeState(provider)
 	if err != nil {
 		return ResourceReadResult{}, err
 	}
@@ -153,5 +153,5 @@ func discoverNodeIdentity(ctx context.Context, pc *ProviderContext, n *graph.Nod
 			return ResourceReadResult{}, err
 		}
 	}
-	return checkedRead(ctx, NodeResourceHandler{}, r, pc.exec.state)
+	return checkedRead(ctx, NodeResourceHandler{}, r, pc.exec.state, pc.exec.providers)
 }

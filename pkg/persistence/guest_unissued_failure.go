@@ -2,9 +2,10 @@ package persistence
 
 import (
 	"encoding/json"
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"math"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
 )
 
 // A failed delivery is not execution evidence. Once retired, no later grant

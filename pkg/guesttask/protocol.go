@@ -46,6 +46,7 @@ type Request = taskprotocol.Request
 type Record = taskprotocol.Record
 
 type Call struct {
+	Control      *substrate.TerminalControl                `json:"control,omitempty"`
 	PolicyQuery  *network.GuestPolicyRequest               `json:"policy_query,omitempty"`
 	SSHQuery     *substrate.SSHAccessQuery                 `json:"ssh_query,omitempty"`
 	Cancellation *controlplane.SignedExecutionCancellation `json:"cancellation,omitempty"`

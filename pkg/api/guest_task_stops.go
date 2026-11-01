@@ -8,6 +8,7 @@ import (
 	"sort"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/guesttask"
 	"github.com/oslab/sysbox/pkg/persistence"
 )
@@ -32,7 +33,7 @@ func (s *Server) handleGuestTaskStops(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, persistence.ErrInvalidRecord)
 		return
 	}
-	grants, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).ListActiveGrants(r.Context())
+	grants, err := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore}).ListActiveGrants(r.Context())
 	if err != nil {
 		writeError(w, agentRepositoryErrorStatus(err), err)
 		return
@@ -75,8 +76,18 @@ func (s *Server) handleGuestTaskStops(w http.ResponseWriter, r *http.Request) {
 			}
 			continue
 		}
+		command, err := readFailureCommand(r.Context(), s.apiStore, g.CommandID)
+		if err == nil && command != nil && command.Command.Type == "session_open" {
+			stop, err := s.consoleTaskStop(r.Context(), command.Command, g)
+			if err != nil {
+				page.Issues = append(page.Issues, controlplane.GuestTaskStopIssue{Epoch: g.Epoch, ActionID: g.ActionID})
+			} else {
+				page.Stops = append(page.Stops, stop)
+			}
+			continue
+		}
 		x, err := s.apiStore.GetGuestExecution(r.Context(), g.ActionID)
-		if err != nil || x.AgentID != id || x.CommandID != g.CommandID || validatePathSegment(x.Topology, "topology") != nil || validatePathSegment(x.Node, "node") != nil {
+		if err != nil || x.AgentID != id || x.CommandID != g.CommandID || controlstore.ValidatePathSegment(x.Topology, "topology") != nil || controlstore.ValidatePathSegment(x.Node, "node") != nil {
 			page.Issues = append(page.Issues, controlplane.GuestTaskStopIssue{Epoch: g.Epoch, ActionID: g.ActionID})
 			continue
 		}
@@ -85,7 +96,7 @@ func (s *Server) handleGuestTaskStops(w http.ResponseWriter, r *http.Request) {
 		if guestExecutionTerminal(x.Status) {
 			continue
 		}
-		command, err := readFailureCommand(r.Context(), s.apiStore, g.CommandID)
+		command, err = readFailureCommand(r.Context(), s.apiStore, g.CommandID)
 		if err != nil || command == nil || command.Command.AgentID != id || command.Command.Type != "guest_execution" || command.Command.TopologyUID != g.Scope.TopologyUID || command.Command.ResourceUID != g.Scope.ResourceUID || command.Command.Generation != g.Scope.Generation {
 			page.Issues = append(page.Issues, controlplane.GuestTaskStopIssue{Epoch: g.Epoch, ActionID: g.ActionID})
 			continue

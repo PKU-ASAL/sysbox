@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/driver"
@@ -12,7 +14,6 @@ import (
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
-	"github.com/stretchr/testify/require"
 )
 
 type resetSSHRecoveryDriver struct {
@@ -95,7 +96,7 @@ func TestResetSSHRealRepositoryColdRecoveryDoesNotRepeatEffects(t *testing.T) {
 			require.NoError(t, err)
 			plan, err := runtime.BuildResetPlan(g, st, node.String())
 			require.NoError(t, err)
-			executor := runtime.NewExecutor(g, st)
+			executor := runtime.NewExecutor(g, st, driver.DefaultRegistry)
 			executor.SetRunContext("lab", "original")
 			executor.SetActionRepository(r)
 			require.ErrorContains(t, executor.Reset(ctx, plan), "reply lost")
@@ -106,7 +107,7 @@ func TestResetSSHRealRepositoryColdRecoveryDoesNotRepeatEffects(t *testing.T) {
 			require.NoError(t, err)
 			require.EqualValues(t, 1, before.FindResource(node).Generation)
 			require.EqualValues(t, 1, before.FindResource(access).Generation)
-			cold := runtime.NewExecutor(g, before)
+			cold := runtime.NewExecutor(g, before, driver.DefaultRegistry)
 			cold.SetRunContext("lab", "recovery")
 			cold.SetActionRepository(r)
 			require.NoError(t, cold.RecoverRunActions(ctx, "original"))

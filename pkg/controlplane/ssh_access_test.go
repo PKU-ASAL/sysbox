@@ -2,10 +2,11 @@ package controlplane
 
 import (
 	"crypto/ed25519"
-	"github.com/stretchr/testify/require"
-	"golang.org/x/crypto/ssh"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/ssh"
 )
 
 func sshAccessTestKey(t *testing.T) string {

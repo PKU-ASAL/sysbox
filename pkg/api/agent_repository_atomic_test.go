@@ -12,25 +12,26 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
 )
 
 func TestAgentRepositoryReopensWithoutRegistryAuthority(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, s controlstore.Store) {
 		ctx := context.Background()
 		created := time.Now().Add(-time.Hour).UTC()
 		require.NoError(t, s.SaveAgent(ctx, controlplane.Agent{ID: "agent", Status: controlplane.AgentStatusOnline, CreatedAt: created, AuthSecret: "original", Name: "stable"}))
 		yes := true
 		_, err := s.UpdateAgentPolicy(ctx, "agent", persistence.AgentPolicy{Disabled: &yes, Reason: "admin"})
 		require.NoError(t, err)
-		var reopened apiStore
+		var reopened controlstore.Store
 		switch store := s.(type) {
-		case *localAPIStore:
-			reopened = &localAPIStore{runsDir: store.runsDir}
-		case *sqliteAPIStore:
-			next := &sqliteAPIStore{dbPath: store.dbPath, runsDir: store.runsDir}
-			db, err := next.open()
+		case *controlstore.Local:
+			reopened = &controlstore.Local{RunsDir: store.RunsDir}
+		case *controlstore.SQLite:
+			next := &controlstore.SQLite{DbPath: store.DbPath, RunsDir: store.RunsDir}
+			db, err := next.OpenDB()
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = db.Close() })
 			reopened = next
@@ -47,7 +48,7 @@ func TestAgentRepositoryReopensWithoutRegistryAuthority(t *testing.T) {
 	})
 }
 func TestAgentEmptyRepositoryDoesNotReviveCachedAgent(t *testing.T) {
-	svc := &AgentService{store: &localAPIStore{runsDir: t.TempDir()}, registry: newAgentRegistry()}
+	svc := &AgentService{store: &controlstore.Local{RunsDir: t.TempDir()}, registry: newAgentRegistry()}
 	svc.registry.Save(controlplane.Agent{ID: "obsolete", Status: controlplane.AgentStatusOnline})
 	got, err := svc.List(context.Background())
 	require.NoError(t, err)
@@ -56,7 +57,7 @@ func TestAgentEmptyRepositoryDoesNotReviveCachedAgent(t *testing.T) {
 	require.ErrorIs(t, err, persistence.ErrNotFound)
 }
 func TestAgentReregistrationRejectsCredentialReplacement(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, s controlstore.Store) {
 		ctx := context.Background()
 		original := controlplane.Agent{ID: "agent", AuthSecret: "known", SecretHash: "known-hash"}
 		_, err := s.RegisterAgent(ctx, original)
@@ -74,10 +75,10 @@ func TestAgentReregistrationRejectsCredentialReplacement(t *testing.T) {
 }
 func TestSQLiteAgentCommitFailureDoesNotAdvanceRegistry(t *testing.T) {
 	ctx := context.Background()
-	s := &sqliteAPIStore{dbPath: filepath.Join(t.TempDir(), "agents.db")}
+	s := &controlstore.SQLite{DbPath: filepath.Join(t.TempDir(), "agents.db")}
 	svc := &AgentService{store: s, registry: newAgentRegistry()}
 	require.NoError(t, svc.Save(ctx, controlplane.Agent{ID: "agent", Version: "before", Status: controlplane.AgentStatusOnline}))
-	db, err := s.open()
+	db, err := s.OpenDB()
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 	_, err = db.ExecContext(ctx, "CREATE TRIGGER reject_agent_update BEFORE UPDATE ON sysbox_agents BEGIN SELECT RAISE(ABORT, 'injected write failure'); END")
@@ -95,7 +96,7 @@ func TestSQLiteAgentCommitFailureDoesNotAdvanceRegistry(t *testing.T) {
 }
 
 func TestAgentRepositoryConcurrentPolicyAndHeartbeatPreserveBothFlags(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, s controlstore.Store) {
 		ctx := context.Background()
 		require.NoError(t, s.SaveAgent(ctx, controlplane.Agent{ID: "agent", Status: controlplane.AgentStatusOnline, Name: "stable", AuthSecret: "original"}))
 		start := make(chan struct{})
@@ -131,7 +132,7 @@ func TestAgentRepositoryConcurrentPolicyAndHeartbeatPreserveBothFlags(t *testing
 	})
 }
 func TestAgentRepositoryKeepsPolicyDuringOfflineExpiry(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, s controlstore.Store) {
 		ctx := context.Background()
 		now := time.Now().UTC()
 		old := controlplane.Agent{ID: "agent", Status: controlplane.AgentStatusOnline, LastHeartbeat: now.Add(-time.Hour)}
@@ -151,7 +152,7 @@ func TestAgentRepositoryKeepsPolicyDuringOfflineExpiry(t *testing.T) {
 	})
 }
 func TestAgentRepositoryRejectsInvalidAndMissingIdentities(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, s controlstore.Store) {
 		ctx := context.Background()
 		_, err := s.GetAgent(ctx, "missing")
 		require.ErrorIs(t, err, persistence.ErrNotFound)
@@ -166,8 +167,8 @@ func TestAgentRepositoryRejectsInvalidAndMissingIdentities(t *testing.T) {
 func TestAgentRepositoryCorruptionCannotBeReplacedOrCached(t *testing.T) {
 	for _, raw := range []string{"null", "{}", `{"id":"agent","protocol":"agent.v1"}`, `{"id":"agent","status":"online"}`, `{"id":"different","status":"online","protocol":"agent.v1"}`, `{"id":"agent","status":"online","protocol":"agent.v1","last_heartbeat":"private-value"}`} {
 		t.Run(raw, func(t *testing.T) {
-			s := &localAPIStore{runsDir: t.TempDir()}
-			path := filepath.Join(s.runsDir, "_agents", "agent", "agent.json")
+			s := &controlstore.Local{RunsDir: t.TempDir()}
+			path := filepath.Join(s.RunsDir, "_agents", "agent", "agent.json")
 			require.NoError(t, os.MkdirAll(filepath.Dir(path), 0700))
 			require.NoError(t, os.WriteFile(path, []byte(raw), 0600))
 			_, err := s.GetAgent(context.Background(), "agent")
@@ -183,10 +184,10 @@ func TestAgentRepositoryCorruptionCannotBeReplacedOrCached(t *testing.T) {
 func TestSQLiteAgentRepositoryRejectsMalformedMetadata(t *testing.T) {
 	for _, mutation := range []string{"capabilities='not-json'", "labels='[]'", "last_heartbeat='private-value'", "disabled=2", "protocol='unsupported'", "protocol=''", "status=''"} {
 		t.Run(mutation, func(t *testing.T) {
-			s := &sqliteAPIStore{dbPath: filepath.Join(t.TempDir(), "agents.db")}
+			s := &controlstore.SQLite{DbPath: filepath.Join(t.TempDir(), "agents.db")}
 			ctx := context.Background()
 			require.NoError(t, s.SaveAgent(ctx, controlplane.Agent{ID: "agent"}))
-			db, err := s.open()
+			db, err := s.OpenDB()
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = db.Close() })
 			_, err = db.ExecContext(ctx, "UPDATE sysbox_agents SET "+mutation+" WHERE id='agent'")
@@ -202,7 +203,7 @@ func TestSQLiteAgentRepositoryRejectsMalformedMetadata(t *testing.T) {
 func TestAgentHTTPReportsStorageFailuresWithoutCachedFallback(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
 	s.agents.Save(controlplane.Agent{ID: "cached", Status: controlplane.AgentStatusOnline})
-	s.apiStore = failingAgentReads{apiStore: s.apiStore, failure: errors.New("storage unavailable")}
+	s.apiStore = failingAgentReads{Store: s.apiStore, failure: errors.New("storage unavailable")}
 	s.agentService().store = s.apiStore
 	for _, path := range []string{"/v1/agents", "/v1/agents/cached"} {
 		rec := httptest.NewRecorder()

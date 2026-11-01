@@ -13,8 +13,10 @@ import (
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/persistence"
+
 	libvirtprovider "github.com/oslab/sysbox/pkg/provider/libvirt"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -27,7 +29,7 @@ func TestOwnershipTransferPublicPreparationAndSubmission(t *testing.T) {
 	driver.DefaultRegistry = driver.NewRegistry()
 	defer func() { driver.DefaultRegistry = previous }()
 	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "libvirt", Version: "test", OwnershipAdoption: libvirtprovider.New(t.TempDir())}))
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		s.nodeOps = newNodeOperationStore(store)
@@ -40,7 +42,7 @@ func TestOwnershipTransferPublicPreparationAndSubmission(t *testing.T) {
 		s.grantHostKeys = map[string]ed25519.PublicKey{"host": host}
 		require.NoError(t, s.agentService().Save(ctx, controlplane.Agent{ID: "host", Protocol: controlplane.AgentProtocolVersion, Status: controlplane.AgentStatusOnline, Capabilities: []string{"libvirt"}, LastHeartbeat: time.Now().UTC()}))
 		for _, name := range []string{"source", "target"} {
-			require.NoError(t, s.workspaceService().bindPlacement(name, "host", controlplane.AgentProtocolVersion))
+			require.NoError(t, s.workspaceService().BindPlacement(name, "host", controlplane.AgentProtocolVersion))
 		}
 		sourceRepo, err := s.actionRepository("source")
 		require.NoError(t, err)
@@ -76,7 +78,7 @@ func TestOwnershipTransferPublicPreparationAndSubmission(t *testing.T) {
 		still, err := sourceRepo.LoadState(ctx, "source")
 		require.NoError(t, err)
 		require.Len(t, still.Resources, 1)
-		barrier, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store}).InspectMaintenance(ctx, plan.ID)
+		barrier, err := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store}).InspectMaintenance(ctx, plan.ID)
 		require.NoError(t, err)
 		proof, err := controlplane.SignOwnershipPreparation(hostKey, controlplane.OwnershipPreparation{Plan: plan, SourceEpoch: barrier.Epoch, HostBootID: "boot", ObservedAt: time.Now().UTC()})
 		require.NoError(t, err)

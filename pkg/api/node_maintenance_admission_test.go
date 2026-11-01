@@ -7,19 +7,20 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
 )
 
 func TestRawNodeOperationCannotEnterMaintenance(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		uid := grantTestTopologyUID(t, s, "lab")
 		grantTestTopologyUID(t, s, "other")
 		op := controlplane.NodeOperation{ID: "operation", Topology: "lab", Node: "node", AgentID: "agent", Operation: "pause", Status: "queued", CreatedAt: time.Now().UTC()}
 		require.NoError(t, store.CreateNodeOperation(ctx, op))
-		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		barrier, err := authority.BeginMaintenance(ctx, "freeze", uid, "plan")
 		require.NoError(t, err)
 		fresh := op
@@ -44,13 +45,13 @@ func TestRawNodeOperationCannotEnterMaintenance(t *testing.T) {
 }
 
 func TestRawNodePublicationWaitsForAuthorityTransaction(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
-		var authority persistence.ExecutionGrantStorage = apiExecutionGrantStorage{store: store}
-		if local, ok := store.(*localAPIStore); ok {
+		var authority persistence.ExecutionGrantStorage = controlstore.AuthorityStorage{Store: store}
+		if local, ok := store.(*controlstore.Local); ok {
 			// Hold authority alone, proving raw node writers do not depend on
 			// an incidental API record lock to serialize with deletion.
-			authority = persistence.FilesystemExecutionGrantStorage(local.runsDir)
+			authority = persistence.FilesystemExecutionGrantStorage(local.RunsDir)
 		}
 		entered, release := make(chan struct{}), make(chan struct{})
 		var once sync.Once
@@ -59,11 +60,11 @@ func TestRawNodePublicationWaitsForAuthorityTransaction(t *testing.T) {
 		done := make(chan error, 1)
 		go func() {
 			done <- authority.UpdateExecutionAuthority(ctx, func(raw []byte) ([]byte, error) {
-				memory := &grantTransaction{raw: raw}
+				memory := &controlstore.GrantTransaction{Raw: raw}
 				err := persistence.NewExecutionGrantRepository(memory).ObserveTime(ctx)
 				close(entered)
 				<-release
-				return memory.raw, err
+				return memory.Raw, err
 			})
 		}()
 		select {
@@ -87,14 +88,14 @@ func TestRawNodePublicationWaitsForAuthorityTransaction(t *testing.T) {
 }
 
 func TestMetadataDeleteRechecksNodeOperationsInsideCommit(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		repo, err := s.actionRepository("lab")
 		require.NoError(t, err)
 		before, err := repo.LoadState(ctx, "lab")
 		require.NoError(t, err)
-		require.NoError(t, s.workspaceService().ensureTopologyQuiescent(ctx, "lab"))
+		require.NoError(t, s.workspaceService().EnsureTopologyQuiescent(ctx, "lab"))
 		op := controlplane.NodeOperation{ID: "late", Topology: "lab", Workspace: "other-workspace", AgentID: "agent", Node: "node", Operation: "pause", Status: "queued", CreatedAt: time.Now().UTC()}
 		require.NoError(t, store.CreateNodeOperation(ctx, op))
 		require.ErrorIs(t, s.deleteStateWithAuthority(ctx, "lab", before.Meta.Serial, before.TopologyUID), persistence.ErrConflict)

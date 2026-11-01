@@ -3,28 +3,30 @@ package api
 import (
 	"context"
 	"errors"
-	"github.com/gofrs/flock"
-	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/oslab/sysbox/pkg/persistence"
-	"github.com/oslab/sysbox/pkg/state"
-	"github.com/stretchr/testify/require"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/gofrs/flock"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/oslab/sysbox/pkg/state"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSnapshotRestoreTransactionRequiresBarrierAndReplaysReceipt(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := NewServer(t.TempDir(), t.TempDir())
 		s.apiStore = store
 		switch typed := store.(type) {
-		case *localAPIStore:
-			s.runsDir = typed.runsDir
-		case *sqliteAPIStore:
-			s.stateBackend = "sqlite://" + typed.dbPath
-		case *postgresAPIStore:
-			s.stateBackend = typed.dsn
+		case *controlstore.Local:
+			s.runsDir = typed.RunsDir
+		case *controlstore.SQLite:
+			s.stateBackend = "sqlite://" + typed.DbPath
+		case *controlstore.Postgres:
+			s.stateBackend = typed.DSN
 		}
 		repo, err := s.actionRepository("lab")
 		require.NoError(t, err)
@@ -32,7 +34,7 @@ func TestSnapshotRestoreTransactionRequiresBarrierAndReplaysReceipt(t *testing.T
 		require.NoError(t, err)
 		request, err := repo.PlanSnapshotRestore(ctx, "lab", snapshot.ID, "restore", 0)
 		require.NoError(t, err)
-		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		digest, err := request.Digest()
 		require.NoError(t, err)
 		barrier, err := authority.BeginMaintenance(ctx, request.ID, request.TopologyUID, digest)
@@ -44,8 +46,8 @@ func TestSnapshotRestoreTransactionRequiresBarrierAndReplaysReceipt(t *testing.T
 		require.Error(t, err)
 		var first persistence.SnapshotRestoreReceipt
 		var commitErr error
-		if local, ok := store.(*localAPIStore); ok {
-			aggregateLock := flock.New(filepath.Join(local.runsDir, "lab", "state.json.lifecycle", "lab.lock"))
+		if local, ok := store.(*controlstore.Local); ok {
+			aggregateLock := flock.New(filepath.Join(local.RunsDir, "lab", "state.json.lifecycle", "lab.lock"))
 			require.NoError(t, aggregateLock.Lock())
 			defer aggregateLock.Close()
 			type result struct {
@@ -54,7 +56,7 @@ func TestSnapshotRestoreTransactionRequiresBarrierAndReplaysReceipt(t *testing.T
 			}
 			done := make(chan result, 1)
 			go func() { receipt, err := s.commitSnapshotRestore(ctx, "lab", request); done <- result{receipt, err} }()
-			probe := flock.New(filepath.Join(local.runsDir, ".run-locks", "records.lock"))
+			probe := flock.New(filepath.Join(local.RunsDir, ".run-locks", "records.lock"))
 			require.Eventually(t, func() bool {
 				held, err := probe.TryLock()
 				if err != nil {
@@ -73,8 +75,8 @@ func TestSnapshotRestoreTransactionRequiresBarrierAndReplaysReceipt(t *testing.T
 			require.NoError(t, aggregateLock.Unlock())
 			finished := <-done
 			first, commitErr = finished.receipt, finished.err
-		} else if postgres, ok := store.(*postgresAPIStore); ok {
-			pool, err := postgres.poolFor(ctx)
+		} else if postgres, ok := store.(*controlstore.Postgres); ok {
+			pool, err := postgres.PoolFor(ctx)
 			require.NoError(t, err)
 			blocker, err := pool.Begin(ctx)
 			require.NoError(t, err)

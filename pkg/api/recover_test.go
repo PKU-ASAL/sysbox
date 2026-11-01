@@ -2,15 +2,15 @@ package api
 
 import (
 	"context"
-	"github.com/oslab/sysbox/pkg/address"
 	"path/filepath"
 	"testing"
 
-	"github.com/stretchr/testify/require"
-
-	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/address"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRecoverCheckpointRejectsBlindStatePatchReplay(t *testing.T) {
@@ -20,7 +20,7 @@ func TestRecoverCheckpointRejectsBlindStatePatchReplay(t *testing.T) {
 		Topology: "mixed",
 		StatePatches: []runtime.StatePatch{{
 			Resource: "sysbox_node.web",
-			Action:   controlplane.PlanActionCreate,
+			Action:   model.PlanActionCreate,
 			Op:       runtime.StatePatchUpsert,
 			State: &runtime.StateResourceLog{
 				Type: "sysbox_node", Name: "web",
@@ -30,7 +30,7 @@ func TestRecoverCheckpointRejectsBlindStatePatchReplay(t *testing.T) {
 		}},
 	}
 	mgr := state.NewManager(filepath.Join(dir, "state.json"))
-	store := &localAPIStore{runsDir: dir}
+	store := &controlstore.Local{RunsDir: dir}
 	require.NoError(t, store.SaveCheckpoint(context.Background(), "mixed", "run-1", cp))
 	report, err := reconcileCheckpointJournal(context.Background(), store, "mixed", "run-1", mgr, "test")
 	require.ErrorIs(t, err, runtime.ErrConvergenceUnsupported)

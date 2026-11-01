@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 )
 
-type PlanFingerprint = controlplane.PlanFingerprint
+type PlanFingerprint = model.PlanFingerprint
 
 type PlanInputs struct {
 	Config          []byte

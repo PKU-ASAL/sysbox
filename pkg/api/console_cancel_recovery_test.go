@@ -6,12 +6,13 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
 )
 
 func TestConsoleCancelIntentRecoversOutboxAfterRestart(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		hub := newConsoleSessionHub(store)
 		sess, err := hub.Create(ctx, "lab", "node", "agent", controlplane.ConsoleRequest{})
@@ -54,7 +55,7 @@ func TestConsoleCancelIntentRecoversOutboxAfterRestart(t *testing.T) {
 
 func TestConsoleCancelRecoveryIgnoresLossAndRejectsChangedBinding(t *testing.T) {
 	ctx := context.Background()
-	store := &localAPIStore{runsDir: t.TempDir()}
+	store := &controlstore.Local{RunsDir: t.TempDir()}
 	hub := newConsoleSessionHub(store)
 	sess := createConsoleForTest(t, hub)
 	svc := &AgentService{store: store, consoles: newConsoleSessionHub(store)}

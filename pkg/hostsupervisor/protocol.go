@@ -15,6 +15,9 @@ type TargetRef struct {
 	Scope    controlplane.ExecutionScope `json:"scope"`
 }
 type Request struct {
+	Observation        *ObservationRequest                     `json:"observation,omitempty"`
+	Control            *substrate.TerminalControl              `json:"control,omitempty"`
+	RunInputs          map[string]string                       `json:"run_inputs,omitempty"`
 	AdoptionCancel     bool                                    `json:"adoption_cancel,omitempty"`
 	AdoptionFenceID    string                                  `json:"adoption_fence_id,omitempty"`
 	OwnershipPlan      *controlplane.OwnershipTransferPlan     `json:"ownership_plan,omitempty"`
@@ -40,6 +43,7 @@ type Request struct {
 	Limit              int                                     `json:"limit,omitempty"`
 }
 type Response struct {
+	Observation          *controlplane.HostObservation          `json:"observation,omitempty"`
 	AdoptionDisposition  *controlplane.AdoptionDispositionProof `json:"adoption_disposition,omitempty"`
 	OwnershipPreparation *controlplane.OwnershipPreparation     `json:"ownership_preparation,omitempty"`
 	GCDisposition        *controlplane.GCDispositionProof       `json:"gc_disposition,omitempty"`

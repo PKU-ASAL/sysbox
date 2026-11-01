@@ -3,9 +3,10 @@ package persistence
 import (
 	"context"
 	"encoding/json"
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"sort"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
 )
 
 // GuestActivity excludes request/output contents: cleanup only needs durable

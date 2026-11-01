@@ -320,7 +320,7 @@ func (d *Dispatcher) Start(ctx context.Context, ref TargetRef, req guesttask.Req
 	if !ok {
 		return r, substrate.ErrNotSupported
 	}
-	request := substrate.ExecRequest{Program: req.Args[0], Args: req.Args[1:], Environment: req.Environment, WorkingDir: req.WorkingDir, Shell: substrate.ShellNone, Stdin: bytes.NewReader(req.Input), OutputLimitBytes: req.OutputLimit}
+	request := substrate.ExecRequest{Program: req.Args[0], Args: req.Args[1:], Environment: req.Environment, WorkingDir: req.WorkingDir, Shell: substrate.ShellNone, Stdin: bytes.NewReader(req.Input), OutputLimitBytes: req.OutputLimit, Terminal: req.Terminal}
 	startTime := time.Now()
 	handle, err := starter.Start(transport.WithTaskGrant(ctx, req.ID, g), request)
 	if elapsed := time.Since(startTime); elapsed > recoveryTaskBudget {

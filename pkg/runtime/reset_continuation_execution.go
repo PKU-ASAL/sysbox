@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/state"
 )
 
@@ -32,13 +32,13 @@ func (e *Executor) validateResetContinuationPlan(ctx context.Context, cp *Operat
 }
 
 func (e *Executor) validateContinuationConfig(cp *OperationCheckpoint, members []ActionRecord) error {
-	changes := map[string]controlplane.PlannedChange{}
+	changes := map[string]model.PlannedChange{}
 	for _, change := range cp.Plan {
 		changes[change.Address.String()] = change
 	}
 	for _, action := range members {
 		change, exists := changes[action.Resource.String()]
-		if !exists || action.Action != controlplane.PlanActionReset || action.OwnerUID != e.state.TopologyUID || action.RunID != cp.RunID || action.Topology != e.topology || action.Candidate == nil {
+		if !exists || action.Action != model.PlanActionReset || action.OwnerUID != e.state.TopologyUID || action.RunID != cp.RunID || action.Topology != e.topology || action.Candidate == nil {
 			return fmt.Errorf("%w: continuation action identity mismatch", ErrPlanStale)
 		}
 		digest, err := desiredActionDigest(e.graph.Get(action.Resource), change)

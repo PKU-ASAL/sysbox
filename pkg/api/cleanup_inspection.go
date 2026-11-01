@@ -8,8 +8,10 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
+	"github.com/oslab/sysbox/pkg/workspace"
 )
 
 // GET inspection reports durable evidence only. Lists from the operation store
@@ -17,7 +19,7 @@ import (
 // response nor an empty list authorizes metadata deletion or proves absence.
 func (s *Server) handleCleanupInspection(w http.ResponseWriter, r *http.Request) {
 	topology := r.PathValue("topology")
-	if err := validatePathSegment(topology, "topology"); err != nil {
+	if err := controlstore.ValidatePathSegment(topology, "topology"); err != nil {
 		writeError(w, 400, err)
 		return
 	}
@@ -57,12 +59,12 @@ func (s *Server) handleCleanupInspection(w http.ResponseWriter, r *http.Request)
 		unavailable()
 		return
 	}
-	grants, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).ListActiveGrants(r.Context())
+	grants, err := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore}).ListActiveGrants(r.Context())
 	if err != nil {
 		unavailable()
 		return
 	}
-	placement, err := s.workspaceService().loadPlacement(topology)
+	placement, err := s.workspaceService().LoadPlacement(topology)
 	if err != nil {
 		unavailable()
 		return
@@ -100,7 +102,7 @@ func (s *Server) handleCleanupInspection(w http.ResponseWriter, r *http.Request)
 		active = append(active, map[string]any{"kind": "console_session", "id": sess.ID, "status": sess.Status, "agent_id": sess.AgentID})
 	}
 	for _, command := range commands {
-		if !commandBlocksTopology(command, topology, snapshot.State.TopologyUID) {
+		if !controlstore.CommandBlocksTopology(command, topology, snapshot.State.TopologyUID) {
 			continue
 		}
 		pendingCommand = true
@@ -128,7 +130,7 @@ func (s *Server) handleCleanupInspection(w http.ResponseWriter, r *http.Request)
 	if placement != nil {
 		agents[placement.AgentID] = true
 	}
-	for _, run := range latestRunsByID(runs) {
+	for _, run := range controlstore.LatestRunsByID(runs) {
 		if run.Topology != topology {
 			continue
 		}
@@ -168,8 +170,8 @@ func (s *Server) handleCleanupInspection(w http.ResponseWriter, r *http.Request)
 		result["agent_id"] = placement.AgentID
 	}
 	result["active_operation_kinds"] = []string{"run", "node_operation", "guest_execution", "guest_file", "execution_grant", "console_session", "agent_command"}
-	receipt, reason := currentCleanupReceipt(topology, placement, runs, nodes)
-	if receipt != nil && guestActivityBeforeReceipt(guestActivity, receipt) != nil {
+	receipt, reason := workspace.CurrentCleanupReceipt(topology, placement, runs, nodes)
+	if receipt != nil && workspace.GuestActivityBeforeReceipt(guestActivity, receipt) != nil {
 		receipt = nil
 		reason = "guest_operation_invalidates_receipt"
 	}

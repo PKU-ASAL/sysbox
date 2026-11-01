@@ -23,7 +23,7 @@ def archive_commands(destination, database='sysboxp9_final_1018'):
 
 def pending_journal_command():
     code = '''import pathlib,json
-root=pathlib.Path('/var/lib/sysbox-supervisor/journal')
+root=pathlib.Path('/var/lib/sysbox-host/journal')
 if not root.is_dir(): raise RuntimeError('journal directory missing')
 for path in root.rglob('*.json'):
     record=json.loads(path.read_text())
@@ -44,7 +44,7 @@ def require_offline(states):
 def restore_services(execute, evidence, save):
     errors = {}
     for role, services in (('control','sysbox-api1 sysbox-api2'),
-                           ('execution','sysbox-supervisor sysbox-agent')):
+                           ('execution','sysbox-host sysbox-agent')):
         try:
             execute(role,'sudo systemctl start '+services+' && sudo systemctl is-active --quiet '+services)
         except BaseException as error:
@@ -91,7 +91,7 @@ def run(root, deployment_name='final-1018', archive_only=False):
     try:
         if archive_only:
             states={role:execute(role,'sudo systemctl is-active '+services,(0,3)) for role,services in
-                    (('control','sysbox-api1 sysbox-api2'),('execution','sysbox-supervisor sysbox-agent'))}
+                    (('control','sysbox-api1 sysbox-api2'),('execution','sysbox-host sysbox-agent'))}
             require_offline(states)
             evidence['writer_states']=states
         elif execute('execution','sudo docker ps -aq --filter label=sysbox.owner_uid'):
@@ -103,13 +103,13 @@ def run(root, deployment_name='final-1018', archive_only=False):
             raise RuntimeError('unresolved host journal prevents service upgrade; offline archive-only is available')
         if not archive_only:
             restore=True
-            execute('execution','sudo systemctl stop sysbox-agent sysbox-supervisor')
+            execute('execution','sudo systemctl stop sysbox-agent sysbox-host')
         for command in archive_commands(target,deployment['database']):
             if archive_only and 'systemctl stop' in command: continue
             output=execute('control',command)
             if 'sha256sum' in command:evidence['control_archives']=output
         execute('execution','sudo test ! -e '+target+' && sudo install -d -m 0700 '+target)
-        execute('execution','sudo tar -C / -cf '+target+'/execution.tar etc/sysbox var/lib/sysbox-agent var/lib/sysbox-supervisor')
+        execute('execution','sudo tar -C / -cf '+target+'/execution.tar etc/sysbox-host etc/sysbox-worker var/lib/sysbox-agent var/lib/sysbox-host')
         evidence['execution_archive']=execute('execution','sudo sha256sum '+target+'/execution.tar')
         evidence['phase']='archived'
     except BaseException as error:

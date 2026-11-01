@@ -31,6 +31,9 @@ func TestLocalAuthorityInitializationNeverReplacesKeys(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, host, ed25519.PrivateKeySize)
 	require.NotEqual(t, private, host)
+	hostPublic, err := os.ReadFile(filepath.Join(root, "host.pub"))
+	require.NoError(t, err)
+	require.Equal(t, ed25519.PrivateKey(host).Public().(ed25519.PublicKey), ed25519.PublicKey(hostPublic))
 	for _, file := range []string{path, cfg.API.ExecutionGrant.SigningKeyFile, cfg.Agent.ExecutionGrantPublicKeyFile, cfg.HostSupervisor.SigningKeyFile} {
 		info, err := os.Stat(file)
 		require.NoError(t, err)

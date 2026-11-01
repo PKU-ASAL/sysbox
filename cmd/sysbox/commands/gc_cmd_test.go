@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"github.com/spf13/cobra"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,10 +13,11 @@ import (
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 
 	"github.com/oslab/sysbox/pkg/address"
-	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
@@ -38,7 +38,7 @@ func TestGCIncludesCanonicalStateAndRefusesUnresolvedActions(t *testing.T) {
 	require.True(t, active.containers["live-container"], "GC must read the same state as apply")
 	latest, err := repo.LoadState(ctx, "lab")
 	require.NoError(t, err)
-	require.NoError(t, repo.CommitActionIntent(ctx, runtime.ActionRecord{ID: "unknown-create", RunID: "run", Topology: "lab", Resource: address.Resource("sysbox_node", "other"), Action: controlplane.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: st.TopologyUID, ResourceUID: st.TopologyUID + "/other", Generation: 1, StateSerial: latest.Meta.Serial, ExpectedSerial: latest.Meta.Serial}))
+	require.NoError(t, repo.CommitActionIntent(ctx, runtime.ActionRecord{ID: "unknown-create", RunID: "run", Topology: "lab", Resource: address.Resource("sysbox_node", "other"), Action: model.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: st.TopologyUID, ResourceUID: st.TopologyUID + "/other", Generation: 1, StateSerial: latest.Meta.Serial, ExpectedSerial: latest.Meta.Serial}))
 	_, err = collectActiveIDsChecked(root)
 	require.Error(t, err, "unconfirmed resources must not be reclaimed")
 }

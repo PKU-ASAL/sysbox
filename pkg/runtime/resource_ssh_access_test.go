@@ -8,14 +8,16 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/oslab/sysbox/pkg/address"
-	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/graph"
-	"github.com/oslab/sysbox/pkg/state"
-	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/ssh"
+
+	"github.com/oslab/sysbox/pkg/address"
+	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/model"
+	"github.com/oslab/sysbox/pkg/state"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 type runtimeSSHConnection struct {
@@ -80,12 +82,12 @@ func TestSSHAccessRuntimeActionRecoversLostReplyWithoutReplay(t *testing.T) {
 	_, pc, n, conn := runtimeSSHFixture(t)
 	conn.lost = true
 	e := pc.exec
-	require.Error(t, e.Apply(context.Background(), singleConvergencePlan(n.Address, controlplane.PlanActionCreate)))
+	require.Error(t, e.Apply(context.Background(), singleConvergencePlan(n.Address, model.PlanActionCreate)))
 	require.Len(t, conn.calls, 1)
-	cold := NewExecutor(e.graph, e.state)
+	cold := NewExecutor(e.graph, e.state, driver.DefaultRegistry)
 	cold.SetRunContext(e.topology, "cold-run")
 	cold.SetActionRepository(e.actions)
-	require.ErrorIs(t, cold.Apply(context.Background(), singleConvergencePlan(n.Address, controlplane.PlanActionCreate)), ErrActionUncertain)
+	require.ErrorIs(t, cold.Apply(context.Background(), singleConvergencePlan(n.Address, model.PlanActionCreate)), ErrActionUncertain)
 	require.Len(t, conn.calls, 1)
 	require.Nil(t, cold.state.FindResource(n.Address))
 }
@@ -103,7 +105,7 @@ func TestSSHAccessRuntimeCreateReadDestroyWithoutHCL(t *testing.T) {
 	require.Equal(t, uint64(0), conn.calls[0].ExpectedRevision)
 	require.Equal(t, "node-uid", conn.found.Current.Handle.ResourceUID)
 	require.Equal(t, "access-uid", current.ResourceUID)
-	read, err := readResourceWithAttachments(ctx, SSHAccessResourceHandler{}, current, pc.State())
+	read, err := readResourceWithAttachments(ctx, SSHAccessResourceHandler{}, current, pc.State(), driver.DefaultRegistry)
 	require.NoError(t, err)
 	require.Equal(t, state.ResourcePresent, read.Status)
 	pc.exec.graph = graph.New()
@@ -112,7 +114,7 @@ func TestSSHAccessRuntimeCreateReadDestroyWithoutHCL(t *testing.T) {
 	require.Len(t, conn.calls, 2)
 	require.True(t, conn.calls[1].Delete)
 	require.Equal(t, uint64(1), conn.calls[1].ExpectedRevision)
-	read, err = readResourceWithAttachments(ctx, SSHAccessResourceHandler{}, current, pc.State())
+	read, err = readResourceWithAttachments(ctx, SSHAccessResourceHandler{}, current, pc.State(), driver.DefaultRegistry)
 	require.NoError(t, err)
 	require.Equal(t, state.ResourceAbsent, read.Status)
 }

@@ -4,11 +4,12 @@ import (
 	"context"
 	"crypto/ed25519"
 	"fmt"
+	"os"
+	"time"
+
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
 	"github.com/oslab/sysbox/pkg/substrate"
-	"os"
-	"time"
 )
 
 func runGrantedFileInstall(ctx context.Context, opts Options, cmd controlplane.AgentCommand) (substrate.FileInstallResult, error) {

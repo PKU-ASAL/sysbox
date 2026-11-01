@@ -909,7 +909,19 @@
       "tests": [
         "TestCanonicalUnlockRevokesAndWaitsForHostStopsAcrossRestart",
         "TestCanonicalLockHTTPReportsExecutionAuthority",
-        "TestStateMaintenanceRejectsIncompleteActivityRegistry"
+        "TestStateMaintenanceRejectsIncompleteActivityRegistry",
+        "TestAgentSignatureCannotBecomeAdministratorToken",
+        "TestBoundaryWorkerCannotCompleteRunWithoutHost",
+        "TestBoundaryWorkerCannotForgeHostCapabilities",
+        "TestBoundaryWorkerCannotAdmitAdoption",
+        "TestBoundaryWorkerCannotReverseHostObservationOrder",
+        "TestHostObservationRejectsForgeryAndPublishesAtomically",
+        "TestHostObservationRejectsExpiredSnapshot",
+        "TestPowerHostCompletionSurvivesDeliveryLeaseReplacement",
+        "TestFileHostCompletionAfterRealRetirement",
+        "TestCleanupReceiptRejectsForgedBindingAndAllowsExpiredLease",
+        "TestHostRunCommitFailureKeepsGrantAndObservation",
+        "TestHostRunCompletionReplayPreservesSignedObservationAcrossRestart"
       ],
       "kind": "contract",
       "race": true,
@@ -1092,7 +1104,7 @@
       "id": "upgrade-aggregate",
       "package": "./pkg/persistence",
       "tests": [
-        "TestFormat5ImportIsExplicitAndPreservesUnknownActions"
+        "TestLegacyAggregateVersionsAreRejectedWithoutImport"
       ],
       "kind": "upgrade",
       "race": true,
@@ -1418,7 +1430,7 @@
     },
     {
       "id": "file-reset-return",
-      "package": "./pkg/agentexec",
+      "package": "./pkg/hostexec",
       "tests": [
         "TestResetReturnCannotPublishRetiredRevision"
       ],
@@ -1968,7 +1980,7 @@
     },
     {
       "id": "intent-create-identity-agent",
-      "package": "./pkg/agentexec",
+      "package": "./pkg/hostexec",
       "tests": [
         "TestMissingIdentityObservationLoadsOnlyPinnedWorkspace"
       ],
@@ -2231,7 +2243,7 @@
     {
       "id": "recovery-inputs-host",
       "kind": "contract",
-      "package": "./pkg/agentexec",
+      "package": "./pkg/hostexec",
       "tests": [
         "TestHostRecoveryCommitsProvenJournalThroughSocketWithoutReplay"
       ],
@@ -2279,7 +2291,7 @@
     {
       "id": "p1-1-agentexec",
       "kind": "contract",
-      "package": "./pkg/agentexec",
+      "package": "./pkg/hostexec",
       "tests": [
         "TestRunWorkspaceLocalPathDoesNotRewriteCanonicalBinding"
       ],
@@ -2292,7 +2304,9 @@
       "tests": [
         "TestUpsertProjectRejectsTraversal",
         "TestUpsertProjectKeepsPreviousTreeWhenStagingFails",
-        "TestUpsertProjectConcurrentReadersSeeCompleteRevision"
+        "TestUpsertProjectConcurrentReadersSeeCompleteRevision",
+        "TestRevisionSnapshotRejectsDigestMismatch",
+        "TestExecutionBridgeMaterializesOnlyCanonicalRevision"
       ],
       "race": true,
       "requires_env": [
@@ -2302,9 +2316,9 @@
     {
       "id": "p1-2-agentexec",
       "kind": "contract",
-      "package": "./pkg/agentexec",
+      "package": "./pkg/hostexec",
       "tests": [
-        "TestRunDeliveryRejectsTamperedRevisionBeforeMaterializing"
+        "TestHostRunExecutorRejectsChangedCanonicalClaimBeforeMaterialization"
       ],
       "race": true
     },

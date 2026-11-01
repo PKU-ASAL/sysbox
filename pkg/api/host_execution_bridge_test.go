@@ -9,6 +9,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/hostexec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -22,12 +23,12 @@ func TestHostExecutionBridgeFinishPreservesCanonicalRun(t *testing.T) {
 				if backend == "sqlite" {
 					cfg.State.Backend = "sqlite://" + filepath.Join(t.TempDir(), "runs.db")
 				}
-				bridge, err := NewHostExecutionBridge(cfg)
+				bridge, err := hostexec.Open(cfg)
 				require.NoError(t, err)
 				ctx := context.Background()
 				run := controlplane.Run{ID: "run", Topology: "lab", AgentID: "agent", Status: controlplane.RunAssigned}
-				require.NoError(t, bridge.server.apiStore.SaveRun(ctx, run))
-				claimed, ok, err := bridge.server.apiStore.ClaimRun(ctx, run.ID, run.AgentID, "worker", time.Minute)
+				require.NoError(t, bridge.Store.SaveRun(ctx, run))
+				claimed, ok, err := bridge.Store.ClaimRun(ctx, run.ID, run.AgentID, "worker", time.Minute)
 				require.NoError(t, err)
 				require.True(t, ok)
 				before, err := bridge.ParentRun(ctx, run.ID)
@@ -56,12 +57,12 @@ func TestHostExecutionBridgeFinishPreservesCanonicalRun(t *testing.T) {
 	}
 }
 
-func TestNewHostExecutionBridgeRejectsInitializationFailure(t *testing.T) {
+func TestNewExecutionBridgeRejectsInitializationFailure(t *testing.T) {
 	cfg := config.DefaultServiceConfig()
 	cfg.Paths.RunsDir = t.TempDir()
 	cfg.Paths.WorkspacesDir = t.TempDir()
 	cfg.State.Backend = "sqlite://"
-	bridge, err := NewHostExecutionBridge(cfg)
+	bridge, err := hostexec.Open(cfg)
 	require.ErrorContains(t, err, "resolved durable filesystem path")
 	require.Nil(t, bridge, "invalid canonical storage must not fall back to a local store")
 }

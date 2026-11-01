@@ -20,6 +20,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/secret"
@@ -248,14 +249,14 @@ func (s *EvaluationService) Evaluate(ctx context.Context, request EvaluationRequ
 		response.Checks = append(response.Checks, failedCheck(EvaluationCheckGraphBuild, EvaluationClassValidation))
 		return response, nil
 	}
-	topology, err := runtime.BuildGraph(root, evalContext)
+	topology, err := runtime.BuildGraph(root, evalContext, driver.DefaultRegistry)
 	if err != nil || len(topology.All()) > EvaluationMaxResources {
 		response.Checks = append(response.Checks, failedCheck(EvaluationCheckGraphBuild, EvaluationClassValidation))
 		return response, nil
 	}
 	response.Checks = append(response.Checks, passedCheck(EvaluationCheckGraphBuild, EvaluationClassValidation))
 
-	plan, err := runtime.ComputePlan(topology, &state.State{Version: state.SchemaVersion})
+	plan, err := runtime.ComputePlan(topology, &state.State{Version: state.SchemaVersion}, driver.DefaultRegistry)
 	if err != nil {
 		response.Checks = append(response.Checks, failedCheck(EvaluationCheckPlanCompute, EvaluationClassPlanning))
 		return response, nil
@@ -423,7 +424,7 @@ func evaluationInventoryFresh(inventory controlplane.AgentInventory, now time.Ti
 		return false
 	}
 	observedAt := inventory.ObservedAt.UTC()
-	return !observedAt.Before(now.Add(-2*time.Minute)) && !observedAt.After(now.Add(30*time.Second))
+	return controlplane.FreshHostObservation(observedAt, now) && !observedAt.After(now.Add(30*time.Second))
 }
 
 func evaluationHeartbeatFresh(heartbeat, now time.Time) bool {

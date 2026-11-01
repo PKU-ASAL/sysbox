@@ -49,7 +49,9 @@ func (r *ConsoleRepository) CompareAndSwap(ctx context.Context, old, next contro
 			return nil, ErrConflict
 		}
 		if SameConsoleSession(*current, next) {
-			return nil, nil
+			if next.Status != controlplane.ConsoleSessionStatusLost && next.Status != controlplane.ConsoleSessionStatusCancelling {
+				return nil, nil
+			}
 		}
 		return &next, nil
 	})

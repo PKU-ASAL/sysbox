@@ -98,7 +98,7 @@ func BuildTaskRequest(ctx context.Context, id string, req substrate.ExecRequest)
 	if limit == 0 {
 		limit = substrate.DefaultExecOutputLimit
 	}
-	task := guesttask.Request{UserID: 65534, ID: id, Args: args, Environment: req.Environment, WorkingDir: req.WorkingDir, Input: input, OutputLimit: limit}
+	task := guesttask.Request{UserID: 65534, ID: id, Args: args, Environment: req.Environment, WorkingDir: req.WorkingDir, Input: input, OutputLimit: limit, Terminal: req.Terminal}
 	return task, task.Validate()
 }
 

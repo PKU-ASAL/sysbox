@@ -6,10 +6,11 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/stretchr/testify/require"
+
+	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/model"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 type checkpointGuestConn struct {
@@ -50,7 +51,7 @@ func TestCreatePersistsIncompleteCandidateBeforeGuestStart(t *testing.T) {
 		require.Nil(t, persisted.FindResource(addr), "incomplete creates must not publish resource state")
 	}}
 	d.guestConn = conn
-	require.NoError(t, e.Apply(context.Background(), singleConvergencePlan(addr, controlplane.PlanActionCreate)))
+	require.NoError(t, e.Apply(context.Background(), singleConvergencePlan(addr, model.PlanActionCreate)))
 	require.Equal(t, 1, conn.starts)
 }
 
@@ -61,7 +62,7 @@ func TestCreateCheckpointFailurePreventsGuestEffects(t *testing.T) {
 	d.guestConn = conn
 	want := errors.New("candidate checkpoint unavailable")
 	e.actions.(*memoryActions).outcomeErr = want
-	require.ErrorIs(t, e.Apply(context.Background(), singleConvergencePlan(addr, controlplane.PlanActionCreate)), want)
+	require.ErrorIs(t, e.Apply(context.Background(), singleConvergencePlan(addr, model.PlanActionCreate)), want)
 	require.Zero(t, conn.starts)
 	require.Zero(t, d.entries)
 	require.Nil(t, e.state.FindResource(addr))

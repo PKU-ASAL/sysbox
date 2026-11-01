@@ -11,9 +11,9 @@ import (
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
@@ -24,8 +24,8 @@ func init()                                            { RegisterResourceHandler
 func (FirewallResourceHandler) Type() string           { return "sysbox_firewall" }
 func (FirewallResourceHandler) Schema() ResourceSchema { return ResourceSchemaFor("sysbox_firewall") }
 
-func (FirewallResourceHandler) Read(ctx context.Context, current state.Resource) (ResourceReadResult, error) {
-	policy, err := driver.DefaultRegistry.RequirePolicy(current.Driver)
+func (FirewallResourceHandler) Read(ctx context.Context, current state.Resource, providers *driver.Registry) (ResourceReadResult, error) {
+	policy, err := providers.RequirePolicy(current.Driver)
 	if err != nil {
 		return ResourceReadResult{Status: state.ResourceUnknown, Resource: current, Reason: err.Error()}, err
 	}
@@ -46,7 +46,7 @@ func (FirewallResourceHandler) Read(ctx context.Context, current state.Resource)
 	return resourceReadOK(current), nil
 }
 
-func (FirewallResourceHandler) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
+func (FirewallResourceHandler) PlanDiff(desired *graph.Node, current *state.Resource) (model.PlannedChange, error) {
 	return planDiffByDesiredHash(desired, current)
 }
 func (FirewallResourceHandler) Create(ctx context.Context, pc *ProviderContext, n *graph.Node) (state.Resource, error) {
@@ -54,7 +54,7 @@ func (FirewallResourceHandler) Create(ctx context.Context, pc *ProviderContext, 
 }
 
 func (FirewallResourceHandler) Delete(ctx context.Context, pc *ProviderContext, current state.Resource) error {
-	policy, err := driver.DefaultRegistry.RequirePolicy(current.Driver)
+	policy, err := pc.exec.providers.RequirePolicy(current.Driver)
 	if err != nil {
 		return err
 	}
@@ -70,7 +70,7 @@ func (FirewallResourceHandler) Delete(ctx context.Context, pc *ProviderContext, 
 }
 func (FirewallResourceHandler) ExternalID(current state.Resource) string { return current.Str("table") }
 
-func (FirewallResourceHandler) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext) (any, []address.Address, error) {
+func (FirewallResourceHandler) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext, providers *driver.Registry) (any, []address.Address, error) {
 	cfg := &config.FirewallConfig{}
 	if err := config.DecodeResource(&r, cfg, ctx); err != nil {
 		return nil, nil, err
@@ -140,7 +140,7 @@ func (e *Executor) resolveFirewallResource(ctx context.Context, n *graph.Node, d
 	if err != nil {
 		return state.Resource{}, fmt.Errorf("firewall %s: %w", n.Address.Name, err)
 	}
-	policy, err := driver.DefaultRegistry.RequirePolicy(targetResource.Driver)
+	policy, err := e.providers.RequirePolicy(targetResource.Driver)
 	if err != nil {
 		return state.Resource{}, err
 	}

@@ -1,0 +1,29 @@
+version: 1
+host_supervisor:
+  socket: /run/sysbox-host/host.sock
+  root: /var/lib/sysbox-host/tasks
+  signing_key_file: /etc/sysbox-host/host.key
+  worker_group_id: 32000
+agent:
+  execution_grant_public_key_file: /etc/sysbox-worker/issuer.pub
+paths:
+  home: /var/lib/sysbox-host
+  runs_dir: /var/lib/sysbox-host/runs
+  workspaces_dir: /var/lib/sysbox-host/workspaces
+  cache: /var/cache/sysbox
+# Use the same canonical database as the API, with an address reachable from
+# the host. Replace credentials before installing this root-only configuration.
+state:
+  backend: postgres://sysbox:REPLACE_PASSWORD@127.0.0.1:55432/sysbox?sslmode=disable
+providers:
+  docker:
+    enabled: true
+  network:
+    enabled: true
+  firecracker:
+    enabled: false
+  libvirt:
+    enabled: false
+    # Before enabling, create this root-owned directory with mode 0755.
+    # QEMU needs traversal; keep disks outside the private host journal root.
+    workdir: /var/lib/sysbox-libvirt

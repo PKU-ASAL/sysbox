@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"github.com/oslab/sysbox/pkg/address"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -14,13 +13,14 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/stretchr/testify/require"
-
+	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/state"
+	"github.com/stretchr/testify/require"
 )
 
 func TestAgentRegistry(t *testing.T) {
@@ -287,7 +287,7 @@ func TestAgentProtocolMismatchRejected(t *testing.T) {
 }
 
 func TestAgentCommandLeaseExpiresAndRedelivers(t *testing.T) {
-	store := &localAPIStore{runsDir: t.TempDir()}
+	store := &controlstore.Local{RunsDir: t.TempDir()}
 	ctx := context.Background()
 	cmd := controlplane.AgentCommand{
 		ID:        "cmd-1",
@@ -313,7 +313,7 @@ func TestAgentCommandLeaseExpiresAndRedelivers(t *testing.T) {
 	expired.LeaseUntil = time.Now().Add(-time.Second)
 	raw, err := persistence.EncodeCommandRecord(persistence.CommandRecord{Command: expired})
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(store.runsDir, "_agents", "host-a", "commands", "cmd-1.json"), raw, 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(store.RunsDir, "_agents", "host-a", "commands", "cmd-1.json"), raw, 0600))
 	leased, ok, err = store.AcquireAgentCommandLease(ctx, "host-a", "cmd-1", "owner-2", time.Hour)
 	require.NoError(t, err)
 	require.True(t, ok)
@@ -502,7 +502,7 @@ resource "sysbox_node" "web" {
   ]
 }`)
 	rec := httptest.NewRecorder()
-	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/agents/host-a/projections/resources", bindObservationTestBody(t, s, "host-a", body)))
+	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/agents/host-a/observations", bindObservationTestBody(t, s, "host-a", body)))
 	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
 
 	rec = httptest.NewRecorder()
@@ -523,7 +523,7 @@ func saveHealthyNodeProjection(t *testing.T, s *Server, agentID, topology, node 
   ]
 }`)
 	rec := httptest.NewRecorder()
-	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/agents/"+agentID+"/projections/resources", bindObservationTestBody(t, s, agentID, body)))
+	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/agents/"+agentID+"/observations", bindObservationTestBody(t, s, agentID, body)))
 	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
 }
 
@@ -545,7 +545,7 @@ func TestAgentStreamEndpointRemoved(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, rec.Code)
 }
 
-func TestAgentRunCompletionUpdatesRunAndProjection(t *testing.T) {
+func TestAgentRunCompletionRouteRemoved(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
 	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}}))
 	run := s.jobs.start("mixed", "apply")
@@ -575,18 +575,13 @@ func TestAgentRunCompletionUpdatesRunAndProjection(t *testing.T) {
 }`)
 	rec := httptest.NewRecorder()
 	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/agents/host-a/runs/"+run.ID+"/complete", body))
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
 
 	got, ok := s.jobs.get(run.ID)
 	require.True(t, ok)
-	require.Equal(t, controlplane.RunDone, got.Status)
+	require.Equal(t, controlplane.RunRunning, got.Status)
 	require.Equal(t, "host-a", got.AgentID)
 
-	rec = httptest.NewRecorder()
-	s.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/agents/host-a/projections", nil))
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	require.Contains(t, rec.Body.String(), `"topology":"mixed"`)
-	require.Contains(t, rec.Body.String(), `"resource_count":3`)
 }
 
 func TestAgentResourceProjectionUpdatesStatusProjection(t *testing.T) {
@@ -605,7 +600,7 @@ func TestAgentResourceProjectionUpdatesStatusProjection(t *testing.T) {
   }
 }`)
 	rec := httptest.NewRecorder()
-	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/agents/host-a/projections/resources", bindObservationTestBody(t, s, "host-a", body)))
+	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/agents/host-a/observations", bindObservationTestBody(t, s, "host-a", body)))
 	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
 
 	rec = httptest.NewRecorder()
@@ -627,7 +622,7 @@ func TestAgentInventoryPersists(t *testing.T) {
   "topologies": [{"workspace":"mixed","topology":"mixed","serial":3,"resource_count":2,"health":"healthy"}]
 }`)
 	rec := httptest.NewRecorder()
-	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/agents/host-a/inventory", bindObservationTestBody(t, s, "host-a", body)))
+	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/agents/host-a/observations", bindObservationTestBody(t, s, "host-a", body)))
 	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
 
 	rec = httptest.NewRecorder()
@@ -637,7 +632,7 @@ func TestAgentInventoryPersists(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `"resource_count":2`)
 }
 
-func TestNodeOperationCompletionPersists(t *testing.T) {
+func TestNodeOperationCompletionRouteRemoved(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
 	require.NoError(t, s.agentService().Save(context.Background(), controlplane.Agent{ID: "host-a", Status: "online", Capabilities: []string{"docker"}}))
 	op, err := s.nodeOperations().enqueue(context.Background(), "topology-uid", prepareNodeOperation(controlplane.NodeOperation{
@@ -662,12 +657,11 @@ func TestNodeOperationCompletionPersists(t *testing.T) {
 	require.NoError(t, err)
 	rec := httptest.NewRecorder()
 	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/agents/host-a/node-operations/"+op.ID+"/complete", bytes.NewReader(raw)))
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
 
 	rec = httptest.NewRecorder()
 	s.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/node-operations/"+op.ID, nil))
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	require.Contains(t, rec.Body.String(), `"status":"done"`)
+	require.Contains(t, rec.Body.String(), `"status":"queued"`)
 	require.Contains(t, rec.Body.String(), `"requested_by":"alice"`)
-	require.Contains(t, rec.Body.String(), `"actor":"alice"`)
 }

@@ -8,6 +8,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -57,7 +58,7 @@ func ApplyHostAdoptionState(raw, authorityRaw []byte, op controlplane.NodeOperat
 			Evidence      substrate.AdoptionEvidence
 			Resource      state.Resource
 		}{op.ID, req.Topology, identity, req.Evidence, stable})
-		action := runtime.ActionRecord{ID: "adopt-" + digest, Topology: req.Topology, RunID: op.ID, Resource: addr, Action: controlplane.PlanActionAdopt, Status: runtime.ActionIntentCommitted, DesiredDigest: digest, OwnerUID: identity.OwnerUID, ResourceUID: identity.ResourceUID, Generation: identity.Generation, StateSerial: req.ExpectedSerial, ExpectedSerial: req.ExpectedSerial, Candidate: &resource}
+		action := runtime.ActionRecord{ID: "adopt-" + digest, Topology: req.Topology, RunID: op.ID, Resource: addr, Action: model.PlanActionAdopt, Status: runtime.ActionIntentCommitted, DesiredDigest: digest, OwnerUID: identity.OwnerUID, ResourceUID: identity.ResourceUID, Generation: identity.Generation, StateSerial: req.ExpectedSerial, ExpectedSerial: req.ExpectedSerial, Candidate: &resource}
 		if err = validateAction(action); err == nil {
 			err = commitAdoptionEvidence(a, action, addr, identity, req.ExpectedSerial, digest)
 		}

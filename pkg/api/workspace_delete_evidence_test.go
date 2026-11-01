@@ -7,6 +7,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/oslab/sysbox/pkg/workspace"
 	"github.com/stretchr/testify/require"
 )
 
@@ -14,15 +15,15 @@ func TestRemoteMetadataDeleteRequiresReceiptOrExplicitForce(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
 	ctx := context.Background()
 	w := s.workspaceService()
-	require.NoError(t, w.bindPlacement("lab", "owner", controlplane.AgentProtocolVersion))
+	require.NoError(t, w.BindPlacement("lab", "owner", controlplane.AgentProtocolVersion))
 	require.ErrorIs(t, w.Delete(ctx, "lab", false), persistence.ErrConflict)
-	placement, err := w.loadPlacement("lab")
+	placement, err := w.LoadPlacement("lab")
 	require.NoError(t, err)
 	require.NotNil(t, placement)
 	require.NoError(t, s.apiStore.SaveRun(ctx, controlplane.Run{ID: "destroyed", Topology: "lab", AgentID: "owner", Op: "destroy", Status: controlplane.RunDone, QueuedAt: time.Now().UTC(), EndedAt: time.Now().UTC()}))
 	require.ErrorIs(t, w.Delete(ctx, "lab", false), persistence.ErrConflict, "terminal run is not a durable empty resource receipt")
 	require.NoError(t, w.Delete(ctx, "lab", true))
-	placement, err = w.loadPlacement("lab")
+	placement, err = w.LoadPlacement("lab")
 	require.NoError(t, err)
 	require.Nil(t, placement)
 }
@@ -33,7 +34,7 @@ func TestMetadataForceCannotDeleteWhileLifecycleOperationActive(t *testing.T) {
 			s := NewServer(t.TempDir(), t.TempDir())
 			ctx := context.Background()
 			w := s.workspaceService()
-			require.NoError(t, w.bindPlacement("lab", "owner", controlplane.AgentProtocolVersion))
+			require.NoError(t, w.BindPlacement("lab", "owner", controlplane.AgentProtocolVersion))
 			if kind == "run" {
 				require.NoError(t, s.apiStore.SaveRun(ctx, controlplane.Run{ID: "active", Topology: "lab", AgentID: "owner", Op: "apply", Status: controlplane.RunAssigned, QueuedAt: time.Now().UTC()}))
 			} else {
@@ -42,7 +43,7 @@ func TestMetadataForceCannotDeleteWhileLifecycleOperationActive(t *testing.T) {
 			for _, force := range []bool{false, true} {
 				require.ErrorIs(t, w.Delete(ctx, "lab", force), persistence.ErrConflict)
 			}
-			placement, err := w.loadPlacement("lab")
+			placement, err := w.LoadPlacement("lab")
 			require.NoError(t, err)
 			require.NotNil(t, placement)
 		})
@@ -76,16 +77,20 @@ func TestMetadataDeleteIntentResumesCleanupAfterCrash(t *testing.T) {
 	s := NewServer(t.TempDir(), t.TempDir())
 	ctx := context.Background()
 	w := s.workspaceService()
-	require.NoError(t, w.bindPlacement("lab", "owner", controlplane.AgentProtocolVersion))
+	require.NoError(t, w.BindPlacement("lab", "owner", controlplane.AgentProtocolVersion))
 	called := false
-	w.deleteState = func(context.Context, string, int64, string) error { called = true; return nil }
-	intent := deletionIntent{Topology: "lab", UID: "topology-uid", Serial: 4, Created: time.Now().UTC()}
-	require.NoError(t, w.writeDeletionIntent(intent))
+	w.DeleteState = func(context.Context, string, int64, string) error { called = true; return nil }
+	intent := workspace.DeletionIntent{Topology: "lab", UID: "topology-uid", Serial: 4, Created: time.Now().UTC()}
+	require.NoError(t, w.WriteDeletionIntent(intent))
 	require.ErrorIs(t, w.UpsertProject(ctx, "lab", map[string][]byte{"field.sysbox.hcl": []byte("topology \"lab\" {}")}), persistence.ErrConflict)
 	require.NoError(t, w.Delete(ctx, "lab", true))
 	require.True(t, called)
-	require.Nil(t, func() *deletionIntent { got, err := w.readDeletionIntent("lab"); require.NoError(t, err); return got }())
-	placement, err := w.loadPlacement("lab")
+	require.Nil(t, func() *workspace.DeletionIntent {
+		got, err := w.ReadDeletionIntent("lab")
+		require.NoError(t, err)
+		return got
+	}())
+	placement, err := w.LoadPlacement("lab")
 	require.NoError(t, err)
 	require.Nil(t, placement)
 }

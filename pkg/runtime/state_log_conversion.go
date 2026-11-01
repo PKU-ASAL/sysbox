@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"encoding/json"
+
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/state"
 )

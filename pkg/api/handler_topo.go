@@ -1,49 +1,31 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
-	"github.com/oslab/sysbox/pkg/diag"
-
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/diag"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 )
 
-// safeSegment matches allowed path values for topology / node / id URL segments.
-// Rejects "..", special characters, and URL-encoded traversals.
-var safeSegment = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
-
-// globalRevisionPattern matches the content-addressed digests produced by
-// POST /v1/revisions ("sha256:" + 64 lowercase hex chars).
-var globalRevisionPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
-
-// validatePathSegment returns an error if the segment could enable path traversal.
-func validatePathSegment(seg, label string) error {
-	if !safeSegment.MatchString(seg) {
-		return fmt.Errorf("invalid %s %q: must match [A-Za-z0-9_-]+", label, seg)
-	}
-	return nil
-}
-
 // validateRevision accepts either a workspace revision id (a path-safe segment)
 // or a global content-addressed digest ("sha256:<hex>").
 func validateRevision(rev string) error {
-	if globalRevisionPattern.MatchString(rev) {
+	if controlstore.GlobalRevisionPattern.MatchString(rev) {
 		return nil
 	}
-	return validatePathSegment(rev, "revision")
+	return controlstore.ValidatePathSegment(rev, "revision")
 }
 
 // GET /v1/health
@@ -67,7 +49,7 @@ func (s *Server) handleListTopologies(w http.ResponseWriter, r *http.Request) {
 // GET /v1/topologies/{topology}/state
 func (s *Server) handleGetState(w http.ResponseWriter, r *http.Request) {
 	topology := r.PathValue("topology")
-	if err := validatePathSegment(topology, "topology"); err != nil {
+	if err := controlstore.ValidatePathSegment(topology, "topology"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -81,7 +63,7 @@ func (s *Server) handleGetState(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGetStateMetadata(w http.ResponseWriter, r *http.Request) {
 	topology := r.PathValue("topology")
-	if err := validatePathSegment(topology, "topology"); err != nil {
+	if err := controlstore.ValidatePathSegment(topology, "topology"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -95,7 +77,7 @@ func (s *Server) handleGetStateMetadata(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handleGetStateLock(w http.ResponseWriter, r *http.Request) {
 	topology := r.PathValue("topology")
-	if err := validatePathSegment(topology, "topology"); err != nil {
+	if err := controlstore.ValidatePathSegment(topology, "topology"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -109,7 +91,7 @@ func (s *Server) handleGetStateLock(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleForceUnlockState(w http.ResponseWriter, r *http.Request) {
 	topology := r.PathValue("topology")
-	if err := validatePathSegment(topology, "topology"); err != nil {
+	if err := controlstore.ValidatePathSegment(topology, "topology"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -135,7 +117,7 @@ func (s *Server) handleForceUnlockState(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handleListStateSnapshots(w http.ResponseWriter, r *http.Request) {
 	topology := r.PathValue("topology")
-	if err := validatePathSegment(topology, "topology"); err != nil {
+	if err := controlstore.ValidatePathSegment(topology, "topology"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -149,12 +131,12 @@ func (s *Server) handleListStateSnapshots(w http.ResponseWriter, r *http.Request
 
 func (s *Server) handleRestoreStateSnapshot(w http.ResponseWriter, r *http.Request) {
 	topology := r.PathValue("topology")
-	if err := validatePathSegment(topology, "topology"); err != nil {
+	if err := controlstore.ValidatePathSegment(topology, "topology"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
 	snapshot := r.PathValue("snapshot")
-	if err := validatePathSegment(snapshot, "snapshot"); err != nil {
+	if err := controlstore.ValidatePathSegment(snapshot, "snapshot"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -192,7 +174,7 @@ func stateOperationErrorStatus(err error) int {
 
 func (s *Server) handleGetOutputs(w http.ResponseWriter, r *http.Request) {
 	topology := r.PathValue("topology")
-	if err := validatePathSegment(topology, "topology"); err != nil {
+	if err := controlstore.ValidatePathSegment(topology, "topology"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -201,7 +183,7 @@ func (s *Server) handleGetOutputs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	_, _, _, root, evalCtx, err := runtime.LoadWorkspaceWithManager(s.workspaceService().HCLFile(topology), mgr)
+	_, _, _, root, evalCtx, err := runtime.LoadWorkspaceWithManager(s.workspaceService().HCLFile(topology), mgr, driver.DefaultRegistry)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -227,7 +209,7 @@ func (s *Server) handleGetOutputs(w http.ResponseWriter, r *http.Request) {
 // GET /v1/topologies/{topology}/health
 func (s *Server) handleGetTopologyHealth(w http.ResponseWriter, r *http.Request) {
 	topology := r.PathValue("topology")
-	if err := validatePathSegment(topology, "topology"); err != nil {
+	if err := controlstore.ValidatePathSegment(topology, "topology"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -252,7 +234,7 @@ func (s *Server) handleGetTopologyHealth(w http.ResponseWriter, r *http.Request)
 // GET /v1/topologies/{topology}/plan
 func (s *Server) handleGetPlan(w http.ResponseWriter, r *http.Request) {
 	topology := r.PathValue("topology")
-	if err := validatePathSegment(topology, "topology"); err != nil {
+	if err := controlstore.ValidatePathSegment(topology, "topology"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -261,12 +243,12 @@ func (s *Server) handleGetPlan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	g, _, st, _, _, err := runtime.LoadWorkspaceWithManager(s.workspaceService().HCLFile(topology), mgr)
+	g, _, st, _, _, err := runtime.LoadWorkspaceWithManager(s.workspaceService().HCLFile(topology), mgr, driver.DefaultRegistry)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	plan, err := runtime.ComputePlan(g, st)
+	plan, err := runtime.ComputePlan(g, st, driver.DefaultRegistry)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -277,7 +259,7 @@ func (s *Server) handleGetPlan(w http.ResponseWriter, r *http.Request) {
 // POST /v1/topologies/{topology}/apply
 func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 	topology := r.PathValue("topology")
-	if err := validatePathSegment(topology, "topology"); err != nil {
+	if err := controlstore.ValidatePathSegment(topology, "topology"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -288,7 +270,7 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 	}
 	run, err := s.runs().StartApply(r.Context(), topology, RunStartRequest{
 		OperationKey: r.Header.Get("Idempotency-Key"),
-		Revision:     req.Revision, AgentID: req.AgentID, AllowUnsafeState: req.AllowUnsafeState, Inputs: req.Inputs, DeadlineAt: req.DeadlineAt,
+		Revision:     req.Revision, AgentID: req.AgentID, Target: req.Target, AllowUnsafeState: req.AllowUnsafeState, Inputs: req.Inputs, DeadlineAt: req.DeadlineAt,
 	})
 	if err != nil {
 		writeError(w, runServiceStatus(err), err)
@@ -305,7 +287,7 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 // POST /v1/topologies/{topology}/repair
 func (s *Server) handleRepair(w http.ResponseWriter, r *http.Request) {
 	topology := r.PathValue("topology")
-	if err := validatePathSegment(topology, "topology"); err != nil {
+	if err := controlstore.ValidatePathSegment(topology, "topology"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -327,7 +309,7 @@ func (s *Server) handleRepair(w http.ResponseWriter, r *http.Request) {
 // POST /v1/topologies/{topology}/reset
 func (s *Server) handleReset(w http.ResponseWriter, r *http.Request) {
 	topology := r.PathValue("topology")
-	if err := validatePathSegment(topology, "topology"); err != nil {
+	if err := controlstore.ValidatePathSegment(topology, "topology"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -337,7 +319,7 @@ func (s *Server) handleReset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	run, err := s.runs().StartReset(r.Context(), topology, RunStartRequest{
-		Revision: req.Revision, AgentID: req.AgentID, Target: req.Target, AllowUnsafeState: req.AllowUnsafeState,
+		OperationKey: r.Header.Get("Idempotency-Key"), Revision: req.Revision, AgentID: req.AgentID, Target: req.Target, AllowUnsafeState: req.AllowUnsafeState,
 	})
 	if err != nil {
 		writeError(w, runServiceStatus(err), err)
@@ -368,6 +350,7 @@ func decodeResetRequest(r *http.Request) (resetRequest, error) {
 }
 
 type applyRequest struct {
+	Target           string            `json:"target,omitempty"`
 	Revision         string            `json:"revision,omitempty"`
 	AgentID          string            `json:"agent_id,omitempty"`
 	AllowUnsafeState bool              `json:"allow_unsafe_state,omitempty"`
@@ -392,39 +375,17 @@ func decodeApplyRequest(r *http.Request) (applyRequest, error) {
 		}
 	}
 	if req.AgentID != "" {
-		if err := validatePathSegment(req.AgentID, "agent_id"); err != nil {
+		if err := controlstore.ValidatePathSegment(req.AgentID, "agent_id"); err != nil {
 			return applyRequest{}, err
 		}
 	}
 	return req, nil
 }
 
-func writePreflightLogsTo(w io.Writer, res *preflightResult) {
-	if res == nil {
-		return
-	}
-	_, _ = w.Write([]byte("Preflight checks:\n"))
-	for _, c := range res.Checks {
-		status := "ok"
-		if !c.OK {
-			status = c.Severity
-		}
-		line := fmt.Sprintf("  [%s] %s", status, c.Name)
-		if c.Message != "" {
-			line += ": " + c.Message
-		}
-		if c.Hint != "" {
-			line += " (" + c.Hint + ")"
-		}
-		line += "\n"
-		_, _ = w.Write([]byte(line))
-	}
-}
-
 // POST /v1/topologies/{topology}/destroy
 func (s *Server) handleDestroy(w http.ResponseWriter, r *http.Request) {
 	topology := r.PathValue("topology")
-	if err := validatePathSegment(topology, "topology"); err != nil {
+	if err := controlstore.ValidatePathSegment(topology, "topology"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -448,7 +409,7 @@ func (s *Server) handleDestroy(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 	topology := r.URL.Query().Get("topology")
 	if topology != "" {
-		if err := validatePathSegment(topology, "topology"); err != nil {
+		if err := controlstore.ValidatePathSegment(topology, "topology"); err != nil {
 			writeError(w, http.StatusBadRequest, err)
 			return
 		}
@@ -458,7 +419,7 @@ func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if err := validatePathSegment(id, "id"); err != nil {
+	if err := controlstore.ValidatePathSegment(id, "id"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -479,11 +440,11 @@ func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleResumeRun(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if err := validatePathSegment(id, "id"); err != nil {
+	if err := controlstore.ValidatePathSegment(id, "id"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	run, parent, err := s.runs().Resume(r.Context(), id)
+	run, parent, err := s.runs().ResumeWithKey(r.Context(), id, r.Header.Get("Idempotency-Key"))
 	if err != nil {
 		writeError(w, runServiceStatus(err), err)
 		return
@@ -491,35 +452,9 @@ func (s *Server) handleResumeRun(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]string{"run_id": run.ID, "parent_id": parent.ID, "agent_id": run.AgentID})
 }
 
-func (s *Server) reconcileParentJournal(parent, run *controlplane.Run) error {
-	mgr, err := s.stateManager(parent.Topology)
-	if err != nil {
-		return err
-	}
-	report, err := s.reconcileCanonicalActions(context.Background(), parent.Topology, parent.ID, mgr)
-	if err != nil {
-		return err
-	}
-	if report == nil {
-		return nil
-	}
-	logs := s.jobs.logWriter(run.ID)
-	for _, action := range report.Recovered {
-		_, _ = logs.Write([]byte(fmt.Sprintf("[resume] %s %s", action.Status, action.Resource)))
-		if action.ExternalID != "" {
-			_, _ = logs.Write([]byte(fmt.Sprintf(" (%s)", action.ExternalID)))
-		}
-		_, _ = logs.Write([]byte("\n"))
-	}
-	for _, action := range report.Skipped {
-		_, _ = logs.Write([]byte(fmt.Sprintf("[resume] skipped %s: %s\n", action.Resource, action.Status)))
-	}
-	return nil
-}
-
 func (s *Server) handleCleanupRun(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if err := validatePathSegment(id, "id"); err != nil {
+	if err := controlstore.ValidatePathSegment(id, "id"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -542,7 +477,7 @@ func (s *Server) handleCleanupRun(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleRecoverRun(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if err := validatePathSegment(id, "id"); err != nil {
+	if err := controlstore.ValidatePathSegment(id, "id"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -570,7 +505,7 @@ func (s *Server) handleRecoverRun(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGetRunCheckpoint(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if err := validatePathSegment(id, "id"); err != nil {
+	if err := controlstore.ValidatePathSegment(id, "id"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -596,7 +531,7 @@ func (s *Server) handleGetRunCheckpoint(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handleGetRunActions(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if err := validatePathSegment(id, "id"); err != nil {
+	if err := controlstore.ValidatePathSegment(id, "id"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -616,7 +551,7 @@ func (s *Server) handleGetRunActions(w http.ResponseWriter, r *http.Request) {
 // GET /v1/runs/{id}/logs  — SSE stream
 func (s *Server) handleRunLogs(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if err := validatePathSegment(id, "id"); err != nil {
+	if err := controlstore.ValidatePathSegment(id, "id"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -633,8 +568,6 @@ func (s *Server) handleRunLogs(w http.ResponseWriter, r *http.Request) {
 	defer logs.Unsubscribe(ch)
 	ServeSSE(w, r, ch)
 }
-
-// helpers
 
 func (s *Server) checkpointFile(topology, runID string) string {
 	return filepath.Join(s.runsDir, topology, "runs", runID+".checkpoint.json")

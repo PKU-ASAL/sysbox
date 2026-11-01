@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/substrate"
 	"regexp"
 )
 
@@ -18,14 +19,15 @@ var validID = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,128}$`)
 
 type SignedGrant = controlplane.SignedExecutionGrant
 type Request struct {
-	UserID      uint32            `json:"user_id"`
-	ID          string            `json:"id"`
-	Args        []string          `json:"args"`
-	Environment map[string]string `json:"environment,omitempty"`
-	WorkingDir  string            `json:"working_dir,omitempty"`
-	Input       []byte            `json:"input,omitempty"`
-	OutputLimit int               `json:"output_limit"`
-	Grant       SignedGrant       `json:"grant"`
+	Terminal    *substrate.TerminalOptions `json:"terminal,omitempty"`
+	UserID      uint32                     `json:"user_id"`
+	ID          string                     `json:"id"`
+	Args        []string                   `json:"args"`
+	Environment map[string]string          `json:"environment,omitempty"`
+	WorkingDir  string                     `json:"working_dir,omitempty"`
+	Input       []byte                     `json:"input,omitempty"`
+	OutputLimit int                        `json:"output_limit"`
+	Grant       SignedGrant                `json:"grant"`
 }
 
 func (r Request) Digest() (string, error) {
@@ -41,10 +43,19 @@ func (r Request) Validate() error {
 	if r.UserID == 0 || !validID.MatchString(r.ID) || len(r.Args) == 0 || r.Args[0] == "" || len(r.Input) > MaxInput || r.OutputLimit < 1 || r.OutputLimit > MaxOutput {
 		return fmt.Errorf("invalid guest task request")
 	}
+	if r.Terminal != nil {
+		if err := r.Terminal.Validate(); err != nil {
+			return err
+		}
+		if len(r.Input) != 0 {
+			return fmt.Errorf("terminal input must use the live control channel")
+		}
+	}
 	return nil
 }
 
 type Record struct {
+	Terminal             *substrate.TerminalOptions                `json:"terminal,omitempty"`
 	Cancellation         *controlplane.SignedExecutionCancellation `json:"cancellation,omitempty"`
 	DeadlineBootNS       int64                                     `json:"deadline_boot_ns"`
 	SupervisorPID        int                                       `json:"supervisor_pid"`

@@ -12,7 +12,7 @@ import two_vms as lab
 def inject(execute, topology, save):
     if not re.fullmatch(r"p9-[a-zA-Z0-9-]+", topology):
         raise RuntimeError("test topology required")
-    query = ("sudo find /var/lib/sysbox-supervisor/journal -maxdepth 1 -name '*.json' "
+    query = ("sudo find /var/lib/sysbox-host/journal -maxdepth 1 -name '*.json' "
              "-exec jq -c 'select(.ref.topology==\"" + topology + "\")' {} \\;")
     def record():
         rows = execute("execution", query).splitlines()

@@ -2,17 +2,19 @@ package api
 
 import (
 	"context"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/persistence"
-	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGrantRecoveryInspectSurvivesRetiredSessionAndStopReplayAfterSuccessor(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
-		repo := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		repo := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		session, err := repo.OpenSession(ctx, "agent", "one", "")
 		require.NoError(t, err)
 		request := controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: "topology", ResourceUID: "node", Generation: 1}, AgentID: "agent", SessionID: session.ID, ActionID: "action", CommandID: "command", Attempt: 1, Operation: "guest_task", Digest: "digest", TargetBootID: "guest-boot"}

@@ -8,12 +8,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
 )
 
 func TestGCSourceHTTPPublicationIsDurableAndStrict(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		s := stateDeleteTestServer(t, store)
 		call := func(method, path string, body any) *httptest.ResponseRecorder {
 			raw, err := json.Marshal(body)
@@ -47,7 +48,7 @@ func TestGCSourceHTTPPublicationIsDurableAndStrict(t *testing.T) {
 }
 
 func TestGCSourceHTTPRetirementFencesFuturePublication(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		repo, err := s.actionRepository("lab")

@@ -1,67 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-if [ -e /tmp/sysbox-e2e/heterogeneous-matrix ]; then
-  echo 'Previous matrix evidence exists at /tmp/sysbox-e2e/heterogeneous-matrix; recover and verify its resources before starting another run.' >&2
-  exit 1
-fi
-cache_root="${SYSBOX_CACHE:-${XDG_CACHE_HOME:-${HOME}/.cache}/sysbox}"
-image_host="$(${root}/scripts/prepare-libvirt-cloud-image.sh)"
-kernel_host="${SYSBOX_KERNEL:-$(find "${cache_root}/artifacts" -type f -name 'vmlinux-*' | sort | head -1)}"
-rootfs_host="${SYSBOX_ROOTFS:-${cache_root}/rootfs/ubuntu-24.04.ext4}"
-modcache="$(go env GOPATH)/pkg/mod"
-firecracker_bin="${SYSBOX_FIRECRACKER_BIN:-$(command -v firecracker || true)}"
-if [ -z "${firecracker_bin}" ]; then
-  firecracker_bin="${cache_root}/tools/firecracker"
-fi
-key_dir="$(mktemp -d /tmp/sysbox-matrix-key.XXXXXX)"
-image_runtime="$(mktemp /tmp/sysbox-ubuntu-cloud.XXXXXX.img)"
-
-cleanup() {
-  status=$?
-  if [ "${status}" -ne 0 ]; then
-    echo "Matrix failed: preserving state at /tmp/sysbox-e2e/heterogeneous-matrix, key at ${key_dir}, image at ${image_runtime}." >&2
-    return
-  fi
-  rm -rf "${key_dir}"
-  docker run --rm -v /tmp:/cleanup alpine:latest rm -f "/cleanup/$(basename "${image_runtime}")" >/dev/null 2>&1 || true
-}
-trap cleanup EXIT
-
-test -f "${kernel_host}"
-test -f "${rootfs_host}"
-test -f "${image_host}"
-test -x "${firecracker_bin}"
-cp --reflink=auto "${image_host}" "${image_runtime}"
-chmod 0644 "${image_runtime}"
-ssh-keygen -q -t ed25519 -N '' -C sysbox-matrix -f "${key_dir}/id_ed25519"
-public_key="$(cat "${key_dir}/id_ed25519.pub")"
-inner_script="${SYSBOX_MATRIX_INNER:-tests/e2e/heterogeneous_matrix_inner.sh}"
-
-case "${kernel_host}" in "${cache_root}"/*) ;; *) echo "SYSBOX_KERNEL must be under ${cache_root}" >&2; exit 1 ;; esac
-case "${rootfs_host}" in "${cache_root}"/*) ;; *) echo "SYSBOX_ROOTFS must be under ${cache_root}" >&2; exit 1 ;; esac
-
-docker run --rm --privileged --pid=host --network=host \
-  -v /run/netns:/run/netns:rshared \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v /var/run/libvirt:/var/run/libvirt \
-	-v /var/lib/sysbox:/var/lib/sysbox:rshared \
-  -v /var/lib/libvirt/images:/var/lib/libvirt/images:ro \
-  -v /tmp:/tmp:rshared \
-  -v "${cache_root}:${cache_root}:ro" \
-  -v "${key_dir}/id_ed25519:/keys/matrix:ro" \
-  -v "${root}:/src" \
-  -v "${modcache}:/go/pkg/mod:ro" \
-  -v "${firecracker_bin}:/usr/local/bin/firecracker:ro" \
-  -w /src \
-  -e GOPROXY=off \
-  -e GOCACHE=/tmp/go-build \
-  -e HOME=/tmp/heterogeneous-matrix-home \
-  -e PATH=/usr/sbin:/usr/local/bin:/usr/local/go/bin:/usr/local/sbin:/usr/bin:/sbin:/bin \
-  -e SYSBOX_KERNEL="${kernel_host}" \
-  -e SYSBOX_ROOTFS="${rootfs_host}" \
-  -e SYSBOX_QCOW2="${image_runtime}" \
-  -e SYSBOX_MATRIX_SSH_PRIVATE_KEY=/keys/matrix \
-  -e SYSBOX_MATRIX_SSH_PUBLIC_KEY="${public_key}" \
-  golang:1.26 sh -c 'apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq docker.io e2fsprogs genisoimage iproute2 iputils-ping libvirt-clients mount openssh-client qemu-utils >/dev/null && sh "$1"' -- "${inner_script}"
+: "${SYSBOX_LAB_ROOT:?verified disposable two-VM lab required}"
+: "${SYSBOX_RELEASE_METADATA:?release metadata required}"
+: "${SYSBOX_E2E_BINARY:?released binary required}"
+: "${SYSBOX_E2E_HELPER:?released guest helper required}"
+: "${SYSBOX_MIXED_REVISION:?published mixed-provider revision required}"
+: "${SYSBOX_E2E_OUTPUT:?new evidence directory required}"
+extra=()
+if [[ "${SYSBOX_TARGETED_RESET:-0}" == 1 ]]; then extra+=(--targeted-reset); fi
+exec python3 "$root/scripts/acceptance/mixed_lifecycle.py" \
+ --root "$SYSBOX_LAB_ROOT" --release-metadata "$SYSBOX_RELEASE_METADATA" \
+ --binary "$SYSBOX_E2E_BINARY" --helper "$SYSBOX_E2E_HELPER" \
+ --revision "$SYSBOX_MIXED_REVISION" --output "$SYSBOX_E2E_OUTPUT" \
+ --cidr "${SYSBOX_MIXED_CIDR:-10.59.0.0/24}" --reset-cycles "${SYSBOX_RESET_CYCLES:-1}" "${extra[@]}"

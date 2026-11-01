@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/runtime"
 )
 
@@ -25,7 +26,7 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	g, err := runtime.BuildGraph(root, ctx)
+	g, err := runtime.BuildGraph(root, ctx, driver.DefaultRegistry)
 	if err != nil {
 		return err
 	}

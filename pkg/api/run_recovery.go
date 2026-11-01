@@ -4,13 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/google/uuid"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/persistence"
 	"net/http"
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/persistence"
 )
 
 // recoveryAuthorization is re-evaluated immediately before Agent work. It does
@@ -20,7 +22,7 @@ func (s *Server) recoveryAuthorization(ctx context.Context, run controlplane.Run
 	if mode == controlplane.RunRecoveryObserve {
 		// Optional immutable input supports exact read-only provider discovery.
 		// Historical/non-default-input observations retain their existing no-graph path.
-		if globalRevisionPattern.MatchString(run.Revision) && (run.Op != "apply" || run.OperationKey == "" || run.OperationKey == applyOperationKey(run.Revision, nil, run.UnsafeState)) {
+		if controlstore.GlobalRevisionPattern.MatchString(run.Revision) && (run.Op != "apply" || run.OperationKey == "" || run.OperationKey == applyOperationKey(run.Revision, nil, run.UnsafeState)) {
 			revision, err := s.apiStore.GetGlobalRevision(ctx, run.Revision)
 			if err == nil && controlplane.ComputeRevisionDigest(revision.Files) == run.Revision {
 				result.Revision = revision
@@ -38,12 +40,12 @@ func (s *Server) recoveryAuthorization(ctx context.Context, run controlplane.Run
 	if err != nil {
 		return result, err
 	}
-	for _, other := range latestRunsByID(runs) {
+	for _, other := range controlstore.LatestRunsByID(runs) {
 		if other.Topology == run.Topology && other.Status.IsActive() {
 			return result, persistence.ErrConflict
 		}
 	}
-	if !globalRevisionPattern.MatchString(run.Revision) {
+	if !controlstore.GlobalRevisionPattern.MatchString(run.Revision) {
 		return result, fmt.Errorf("%w: recovery requires an immutable revision", persistence.ErrInvalidRecord)
 	}
 	// Non-default inputs are intentionally not persisted. Do not silently
@@ -68,13 +70,14 @@ func (s *Server) recoveryAuthorization(ctx context.Context, run controlplane.Run
 	result.Revision = revision
 	return result, nil
 }
+
 func (s *Server) handleRequestRunRecovery(w http.ResponseWriter, r *http.Request) {
 	if err := s.authorizeGuestOperation(s.requestSubject(r)); err != nil {
 		writeError(w, 403, err)
 		return
 	}
 	id := r.PathValue("id")
-	if err := validatePathSegment(id, "run"); err != nil {
+	if err := controlstore.ValidatePathSegment(id, "run"); err != nil {
 		writeError(w, 400, err)
 		return
 	}
@@ -130,6 +133,7 @@ func (s *Server) handleRequestRunRecovery(w http.ResponseWriter, r *http.Request
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"command_id": cmd.ID, "run_id": run.ID, "mode": mode})
 }
+
 func (s *Server) handleAuthorizeRunRecovery(w http.ResponseWriter, r *http.Request) {
 	agent := r.PathValue("agent")
 	if err := s.verifyAgentRequest(r, agent); err != nil {
@@ -167,7 +171,7 @@ func (s *Server) handleAuthorizeRunRecovery(w http.ResponseWriter, r *http.Reque
 		writeError(w, agentRepositoryErrorStatus(err), err)
 		return
 	}
-	if !persistence.SameRunIncarnation(*run, *cmd.Run) || run.Attempt != cmd.Run.Attempt || run.LeaseOwner != cmd.Run.LeaseOwner {
+	if !controlplane.SameRunIncarnation(*run, *cmd.Run) || run.Attempt != cmd.Run.Attempt || run.LeaseOwner != cmd.Run.LeaseOwner {
 		writeError(w, 409, persistence.ErrConflict)
 		return
 	}
@@ -192,6 +196,7 @@ func (s *Server) handleAuthorizeRunRecovery(w http.ResponseWriter, r *http.Reque
 	auth.LeaseUntil = cmd.LeaseUntil
 	writeJSON(w, 200, auth)
 }
+
 func (s *Server) handleGetRunRecovery(w http.ResponseWriter, r *http.Request) {
 	if err := s.authorizeGuestOperation(s.requestSubject(r)); err != nil {
 		writeError(w, 403, err)
@@ -213,17 +218,11 @@ func (s *Server) handleGetRunRecovery(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, report)
 }
-func (b *ExecutionBridge) PinnedRevisionWorkspace(ctx context.Context, run controlplane.Run, revision *controlplane.GlobalRevision) (string, error) {
-	if revision == nil || revision.Revision != run.Revision || controlplane.ComputeRevisionDigest(revision.Files) != run.Revision {
-		return "", persistence.ErrConflict
-	}
-	return b.server.workspaceService().MaterializeRevision(run.Topology, run.Revision, revision.Files)
-}
 
 // Only a retained fence with an unchanged original snapshot can bind an
 // observation to a reboot. This check is repeated after host provider reads.
 func (s *Server) authorizeFenceObservation(ctx context.Context, cmd controlplane.AgentCommand, run controlplane.Run) (controlplane.FenceObservationBinding, error) {
-	fence, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).ReadHostFence(ctx, cmd.ActionID)
+	fence, err := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore}).ReadHostFence(ctx, cmd.ActionID)
 	if err != nil {
 		return controlplane.FenceObservationBinding{}, err
 	}

@@ -164,6 +164,11 @@ func (s *Substrate) ApplyReset(ctx context.Context, handle substrate.ResetHandle
 	if err := s.validateResetRecord(state, false, true); err != nil {
 		return substrate.NodeHandle{}, err
 	}
+	// Match CreateNode: the host service's private umask must not prevent
+	// the separate QEMU account from traversing its owned VM directory.
+	if err := os.Chmod(state.NewVMDir, 0o755); err != nil {
+		return substrate.NodeHandle{}, err
+	}
 	hs, err := resetLibvirtHandleState(request, state, diskPath)
 	if err != nil {
 		return substrate.NodeHandle{}, err

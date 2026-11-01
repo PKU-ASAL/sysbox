@@ -5,7 +5,8 @@ import (
 	"testing"
 
 	"github.com/oslab/sysbox/pkg/address"
-	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
@@ -13,14 +14,14 @@ import (
 )
 
 func TestSnapshotRestorePreservesIdenticalUnresolvedJournal(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		repo, err := s.actionRepository("lab")
 		require.NoError(t, err)
 		st, err := repo.LoadState(ctx, "lab")
 		require.NoError(t, err)
-		intent := runtime.ActionRecord{ID: "pending", Topology: "lab", RunID: "interrupted", Resource: address.Resource("sysbox_node", "web"), Action: controlplane.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: st.TopologyUID, ResourceUID: "node", Generation: 1, ProviderOperationID: "pending", ProviderOperationAnchor: "action:pending", Quiescence: "unknown"}
+		intent := runtime.ActionRecord{ID: "pending", Topology: "lab", RunID: "interrupted", Resource: address.Resource("sysbox_node", "web"), Action: model.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: st.TopologyUID, ResourceUID: "node", Generation: 1, ProviderOperationID: "pending", ProviderOperationAnchor: "action:pending", Quiescence: "unknown"}
 		require.NoError(t, repo.CommitActionIntent(ctx, intent))
 		before, err := repo.LoadActions(ctx, "lab")
 		require.NoError(t, err)
@@ -31,7 +32,7 @@ func TestSnapshotRestorePreservesIdenticalUnresolvedJournal(t *testing.T) {
 		require.NoError(t, err)
 		digest, err := request.Digest()
 		require.NoError(t, err)
-		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		barrier, err := authority.BeginMaintenance(ctx, request.ID, st.TopologyUID, digest)
 		require.NoError(t, err)
 		request.MaintenanceEpoch = barrier.Epoch

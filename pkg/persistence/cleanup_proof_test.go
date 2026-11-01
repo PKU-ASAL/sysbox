@@ -2,13 +2,16 @@ package persistence
 
 import (
 	"context"
-	"github.com/oslab/sysbox/pkg/address"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/runtime"
-	"github.com/oslab/sysbox/pkg/state"
-	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/oslab/sysbox/pkg/address"
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
+	"github.com/oslab/sysbox/pkg/runtime"
+	"github.com/oslab/sysbox/pkg/state"
 )
 
 func TestCleanupProofRejectsPendingIntentInEmptyState(t *testing.T) {
@@ -25,7 +28,7 @@ func TestCleanupProofRejectsPendingIntentInEmptyState(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, proof.Empty)
 	require.NotEmpty(t, proof.TopologyUID)
-	a := runtime.ActionRecord{ID: "pending", RunID: "apply", Topology: "lab", Resource: address.Resource("sysbox_node", "web"), Action: controlplane.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: st.TopologyUID, ResourceUID: "web", Generation: 1, StateSerial: proof.StateSerial, ExpectedSerial: proof.StateSerial}
+	a := runtime.ActionRecord{ID: "pending", RunID: "apply", Topology: "lab", Resource: address.Resource("sysbox_node", "web"), Action: model.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: st.TopologyUID, ResourceUID: "web", Generation: 1, StateSerial: proof.StateSerial, ExpectedSerial: proof.StateSerial}
 	require.NoError(t, r.CommitActionIntent(ctx, a))
 	_, err = r.ProveCleanup(ctx, run)
 	require.Error(t, err, "empty state cannot conceal an unfinished external effect")

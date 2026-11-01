@@ -56,7 +56,7 @@ class ReleaseArtifactTests(unittest.TestCase):
             root = Path(directory)
             (root/'sysbox').write_bytes(b'cli')
             (root/'sysbox-init').write_bytes(b'helper')
-            target = dict(architecture='amd64', sysbox_sha256=hashlib.sha256(b'cli').hexdigest(),
+            target = dict(os='linux', architecture='amd64', sysbox_sha256=hashlib.sha256(b'cli').hexdigest(),
                           sysbox_init_sha256=hashlib.sha256(b'helper').hexdigest())
             (root/'build-metadata.json').write_text(json.dumps(dict(commit='candidate',targets=[target])))
             binary, helper, metadata = release_inputs(root/'build-metadata.json', root/'sysbox', root/'sysbox-init')
@@ -64,3 +64,23 @@ class ReleaseArtifactTests(unittest.TestCase):
             (root/'sysbox-init').write_bytes(b'changed')
             with self.assertRaises(ValueError):
                 release_inputs(root/'build-metadata.json', binary, helper)
+
+class TargetedResetTests(MixedEvidenceTests):
+    def test_targeted_reset_preserves_unselected_instances(self):
+        before, after = self.fixture()
+        after['resources'][1] = copy.deepcopy(before['resources'][1])
+        after['resources'][2] = copy.deepcopy(before['resources'][2])
+        verify_states(before, after, ('docker',))
+        after['resources'][1]['generation'] += 1
+        with self.assertRaises(ValueError):
+            verify_states(before, after, ('docker',))
+
+    def test_reset_cannot_change_pinned_baseline(self):
+        before, after = self.fixture()
+        image = dict(address='sysbox_image.base', resource_type='sysbox_image', owner_uid='owner', resource_uid='image', generation=1, external_id='digest', attributes={'sha256': 'original'})
+        before['resources'].append(copy.deepcopy(image))
+        after['resources'].append(copy.deepcopy(image))
+        verify_states(before, after)
+        after['resources'][-1]['attributes']['sha256'] = 'changed'
+        with self.assertRaisesRegex(ValueError, 'digest'):
+            verify_states(before, after)

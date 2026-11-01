@@ -1,7 +1,7 @@
 package runtime
 
 import (
-	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/state"
 )
 
@@ -28,7 +28,7 @@ type IntentDispositionPlan struct {
 	Blockers         []string                    `json:"blockers"`
 }
 
-func PlanIntentDisposition(a ActionRecord, observations []controlplane.RecoveredResource) IntentDispositionPlan {
+func PlanIntentDisposition(a ActionRecord, observations []model.RecoveredResource) IntentDispositionPlan {
 	if resolved, err := IntentWithDiscoveredIdentity(a, observations); err == nil {
 		a = resolved
 	}
@@ -49,16 +49,16 @@ func PlanIntentDisposition(a ActionRecord, observations []controlplane.Recovered
 		p.Blockers = []string{}
 		return p
 	}
-	if a.Action == controlplane.PlanActionReset && a.Phase == "verifying" && len(a.ResetSSH) > 0 {
+	if a.Action == model.PlanActionReset && a.Phase == "verifying" && len(a.ResetSSH) > 0 {
 		return planResetSSHDisposition(a, observations, p)
 	}
-	if a.Action == controlplane.PlanActionReset && a.Candidate != nil && a.Candidate.Generation != a.Generation {
+	if a.Action == model.PlanActionReset && a.Candidate != nil && a.Candidate.Generation != a.Generation {
 		p.ResourceDecision = "review-reset"
 		if !a.ResetBeforeReplacement() && !a.ResetReplacementRecorded() {
 			p.Blockers = append(p.Blockers, "reset_generation_reconciliation_required")
 			return p
 		}
-		var original *controlplane.RecoveredResource
+		var original *model.RecoveredResource
 		for i := range observations {
 			o := &observations[i]
 			if o.ActionID != a.ID {
@@ -75,7 +75,7 @@ func PlanIntentDisposition(a ActionRecord, observations []controlplane.Recovered
 			return p
 		}
 		source := a
-		source.Action = controlplane.PlanActionRead
+		source.Action = model.PlanActionRead
 		source.Generation = a.Candidate.Generation
 		source.ReplayForbidden = false
 		source.ResetSSH = nil
@@ -84,7 +84,7 @@ func PlanIntentDisposition(a ActionRecord, observations []controlplane.Recovered
 			p.Blockers = append(p.Blockers, "observation_identity_or_coverage_mismatch")
 			return p
 		}
-		result := PlanIntentDisposition(source, []controlplane.RecoveredResource{*old})
+		result := PlanIntentDisposition(source, []model.RecoveredResource{*old})
 		if a.ResetReplacementRecorded() {
 			if result.ResourceDecision != "confirm-absence" || len(result.Blockers) != 1 || original.ResetReplacement == nil {
 				p.Blockers = append(p.Blockers, "reset_old_absence_and_replacement_observation_required")
@@ -96,11 +96,11 @@ func PlanIntentDisposition(a ActionRecord, observations []controlplane.Recovered
 				return p
 			}
 			target := a
-			target.Action = controlplane.PlanActionRead
+			target.Action = model.PlanActionRead
 			target.Candidate = a.Replacement
 			target.Replacement = nil
 			target.ReplayForbidden = true
-			result = PlanIntentDisposition(target, []controlplane.RecoveredResource{*observed})
+			result = PlanIntentDisposition(target, []model.RecoveredResource{*observed})
 			if result.ResourceDecision == "retain-managed" {
 				result.ResourceDecision = "retain-incomplete-replacement"
 			}
@@ -126,7 +126,7 @@ func PlanIntentDisposition(a ActionRecord, observations []controlplane.Recovered
 		p.Blockers = append(p.Blockers, "candidate_identity_mismatch")
 		return p
 	}
-	var observed *controlplane.RecoveredResource
+	var observed *model.RecoveredResource
 	for i := range observations {
 		if observations[i].ActionID != a.ID {
 			continue
@@ -168,7 +168,7 @@ func PlanIntentDisposition(a ActionRecord, observations []controlplane.Recovered
 			p.Blockers = append(p.Blockers, "resource_presence_unknown")
 		}
 	}
-	if a.Action == controlplane.PlanActionReset {
+	if a.Action == model.PlanActionReset {
 		p.ResourceDecision = "review-reset"
 		p.Blockers = append(p.Blockers, "reset_generation_reconciliation_required")
 		if a.Replacement != nil {
@@ -185,7 +185,7 @@ func dispositionIdentity(role string, r *state.Resource) IntentDispositionIdenti
 // ResetBeforeReplacement identifies a durably recorded phase before any new
 // generation creation was admitted. It never proves cessation by itself.
 func (a ActionRecord) ResetBeforeReplacement() bool {
-	if a.Action != controlplane.PlanActionReset || a.Candidate == nil || a.Replacement != nil || a.EffectComplete || a.Generation <= 1 || a.Candidate.Generation != a.Generation-1 {
+	if a.Action != model.PlanActionReset || a.Candidate == nil || a.Replacement != nil || a.EffectComplete || a.Generation <= 1 || a.Candidate.Generation != a.Generation-1 {
 		return false
 	}
 	for _, dep := range a.ResetSSH {
@@ -203,5 +203,5 @@ func (a ActionRecord) ResetBeforeReplacement() bool {
 // ResetReplacementRecorded is the uncertain guest-setup window with both
 // generation identities durably retained. A new reset is still required.
 func (a ActionRecord) ResetReplacementRecorded() bool {
-	return a.Action == controlplane.PlanActionReset && a.Phase == "applying" && !a.EffectComplete && len(a.ResetSSH) == 0 && a.Candidate != nil && a.Replacement != nil && a.Generation > 1 && a.Candidate.Generation == a.Generation-1 && a.Replacement.Generation == a.Generation && a.Replacement.OwnerUID == a.OwnerUID && a.Replacement.ResourceUID == a.ResourceUID && a.Replacement.Driver == a.Candidate.Driver && a.Replacement.Address.Equal(a.Resource)
+	return a.Action == model.PlanActionReset && a.Phase == "applying" && !a.EffectComplete && len(a.ResetSSH) == 0 && a.Candidate != nil && a.Replacement != nil && a.Generation > 1 && a.Candidate.Generation == a.Generation-1 && a.Replacement.Generation == a.Generation && a.Replacement.OwnerUID == a.OwnerUID && a.Replacement.ResourceUID == a.ResourceUID && a.Replacement.Driver == a.Candidate.Driver && a.Replacement.Address.Equal(a.Resource)
 }

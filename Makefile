@@ -8,19 +8,20 @@ endif
 
 BINARY := bin/sysbox
 INITDIR := pkg/provider/firecracker/initbin
-ARCH := $(shell $(GO) env GOARCH)
+ARCH = $(shell $(GO) env GOARCH)
 
 TOPO ?= two-networks
 API_URL ?= http://127.0.0.1:9876
-AGENT_API_URL ?= http://sysbox-api:9876
+AGENT_API_URL ?= $(API_URL)
 API_DATA_DIR ?= $(or $(SYSBOX_HOST_HOME_DIR),.sysbox/api)
 API_DATA_ABS := $(abspath $(API_DATA_DIR))
 AGENT_ID ?= local-docker
-AGENT_SUBSTRATES ?=
+AGENT_SUBSTRATES ?= docker
 
 HCL := examples/$(TOPO)/field.sysbox.hcl
 STATE := .sysbox/runs/$(TOPO)/state.json
 SYSBOX := $(BINARY) --state $(STATE) -f $(HCL)
+SERVICE_SYSBOX := $(BINARY) --api $(API_URL) --topology $(TOPO)
 LAB_SSH_KEY ?= .sysbox/runs/$(TOPO)/lab_key
 LAB_SSH_PUBKEY ?= $(LAB_SSH_KEY).pub
 
@@ -194,7 +195,7 @@ help: ## Show command groups
 	@echo "  make test           Run unit tests"
 	@echo "  make lint           Run go vet"
 	@echo "  make test-e2e       Run API e2e smoke test against make api deploy-full"
-	@echo "  make test-firecracker-e2e  Run direct Firecracker/KVM lifecycle acceptance"
+	@echo "  make test-firecracker-e2e  Run jailed Firecracker/KVM lifecycle acceptance"
 	@echo "  make test-docker-launch  Run Docker ENTRYPOINT/CMD override acceptance"
 	@echo "  make test-docker-network-alias  Run Docker managed-network DNS alias acceptance"
 	@echo "  make test-privileged-compile  Compile privileged recovery tests without running them"
@@ -206,6 +207,9 @@ help: ## Show command groups
 	@echo "  make prepare-windows10-media  Cache verified Windows and VirtIO installer media"
 	@echo "  make build-windows10-image  Build a Windows 10 qcow2 with native libvirt"
 	@echo "  make test-windows10-libvirt  Run the opt-in Windows domain-start lifecycle probe"
+
+$(BINARY):
+	@test -x "$@" || { echo "Build or install matching binaries first: bash scripts/release/build-binaries.sh bin" >&2; exit 1; }
 
 build: $(INITDIR)/sysbox-init.linux-$(ARCH).bin ## Build bin/sysbox
 	$(GOENV) CGO_ENABLED=0 $(GO) build -buildvcs=false -o $(BINARY) ./cmd/sysbox
@@ -233,8 +237,8 @@ docs-test: ## Validate canonical documentation structure and links
 test-e2e: ## Run black-box API e2e tests
 	bash tests/e2e/api_smoke.sh
 
-test-firecracker-e2e: ## Run real Firecracker/KVM generation fencing E2E (requires /dev/kvm)
-	$(GOENV) $(GO) test -tags e2e -v ./pkg/provider/firecracker -run '^TestFirecrackerReal.*E2E$$' -count=1 -timeout=10m
+test-firecracker-e2e: build-all ## Run jailed Firecracker/KVM lifecycle E2E (requires prepared root host)
+	$(GOENV) $(GO) test -tags e2e -v ./pkg/provider/firecracker -run '^Test(FirecrackerReal|JailerReal).*E2E$$' -count=1 -timeout=10m
 
 test-docker-launch: ## Run Docker launch override lifecycle acceptance
 	bash tests/e2e/docker_launch_override.sh
@@ -291,7 +295,7 @@ lint: ## Run go vet
 
 ci: build lint test docs-test ## Run the local CI gate
 	@status=0; for topo in two-networks three-nodes microvm mixed libvirt-vm controlled-egress; do \
-		output="$$( $(BINARY) -f examples/$$topo/field.sysbox.hcl --state /tmp/sysbox-ci-$$topo.json plan 2>&1 )"; rc=$$?; \
+		output="$$( $(BINARY) -f examples/$$topo/field.sysbox.hcl validate 2>&1 )"; rc=$$?; \
 		printf "  %-14s%s\n" "$$topo:" "$$(printf '%s\n' "$$output" | head -1)"; \
 		if [ $$rc -ne 0 ]; then status=$$rc; fi; \
 	done; exit $$status
@@ -305,24 +309,17 @@ cli:
 cli-help:
 	@echo "Usage: make cli <validate|plan|apply|destroy|output|state> [TOPO=$(TOPO)]"
 
-cli-validate: build
-	$(SYSBOX) validate
+cli-validate: $(BINARY)
+	$(BINARY) -f $(HCL) validate
 
-cli-plan: build
-	$(SYSBOX) plan
+cli-plan: $(BINARY)
+	$(SERVICE_SYSBOX) plan -f $(HCL)
 
-cli-apply: build
-	@mkdir -p .sysbox/runs/$(TOPO)
-	@if [ "$(TOPO)" = "three-nodes" ] && [ ! -f "$(LAB_SSH_KEY)" ]; then \
-		echo "Generating lab SSH keypair: $(LAB_SSH_KEY)"; \
-		ssh-keygen -t ed25519 -f "$(LAB_SSH_KEY)" -N "" -C "sysbox-lab" -q; \
-		chmod 600 "$(LAB_SSH_KEY)"; \
-		chmod 644 "$(LAB_SSH_PUBKEY)"; \
-	fi
-	LAB_SSH_PUBKEY="$(LAB_SSH_PUBKEY)" $(SYSBOX) apply --auto-approve
+cli-apply: $(BINARY)
+	$(SERVICE_SYSBOX) apply -f $(HCL) --auto-approve
 
-cli-destroy: build
-	$(SYSBOX) destroy --auto-approve
+cli-destroy: $(BINARY)
+	$(SERVICE_SYSBOX) destroy --auto-approve
 
 cli-output: build
 	$(SYSBOX) output
@@ -352,13 +349,13 @@ api-seed:
 		fi; \
 	done
 
-api-deploy: api-build-api
-	$(COMPOSE) $(COMPOSE_API) up -d
+api-deploy:
+	$(COMPOSE) $(COMPOSE_API) up -d --no-build
 	@echo "API server: $(API_URL)/v1/health"
 	@echo "Seed examples with: make api seed"
 
-api-deploy-full: api-deploy .agent-register
-	$(COMPOSE) $(COMPOSE_FULL) up -d sysbox-agent
+api-deploy-full: api-deploy
+	$(COMPOSE) $(COMPOSE_FULL) up -d --no-build sysbox-agent
 	@echo "Agent: $(AGENT_ID)"
 
 api-status:
@@ -367,9 +364,11 @@ api-status:
 	@printf "API health: "
 	@curl -sf "$(API_URL)/v1/health" 2>/dev/null || echo "unreachable"
 
-.agent-register:
-	$(COMPOSE) $(COMPOSE_FULL) run --rm --no-deps --entrypoint sysbox sysbox-agent \
-		agent register --api $(AGENT_API_URL) --token "$(SYSBOX_API_TOKEN)" --id $(AGENT_ID) --name $(AGENT_ID) $(if $(AGENT_SUBSTRATES),--substrates $(AGENT_SUBSTRATES),) --identity /var/lib/sysbox/agent/identity.json
+.agent-register: $(BINARY)
+	@mkdir -p .sysbox/enrollment
+	@test ! -e .sysbox/enrollment/identity.json || { echo "Enrollment already exists; inspect it before registering again"; exit 1; }
+	$(BINARY) agent register --api $(AGENT_API_URL) --token "$(SYSBOX_API_TOKEN)" --id $(AGENT_ID) --name $(AGENT_ID) --substrates $(AGENT_SUBSTRATES) --identity .sysbox/enrollment/identity.json
+	@echo "Install this identity using deploy/prepare-worker.sh; the worker never receives the enrollment token."
 
 api-down:
 	$(COMPOSE) $(COMPOSE_FULL) down

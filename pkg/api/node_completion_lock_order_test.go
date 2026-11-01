@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
 )
@@ -13,13 +14,13 @@ import (
 func TestPostgresHostCompletionWaitsForAuthorityWithoutHoldingCommand(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	s := &postgresAPIStore{dsn: isolatedPostgresTestDSN(t)}
-	pool, err := s.poolFor(ctx)
+	s := &controlstore.Postgres{DSN: isolatedPostgresTestDSN(t)}
+	pool, err := s.PoolFor(ctx)
 	require.NoError(t, err)
 	defer pool.Close()
 	op, cmd := nodeDispatchFixture()
 	require.NoError(t, s.CreateNodeOperationDispatch(ctx, op, cmd))
-	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s})
+	authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s})
 	_, err = authority.OpenSession(ctx, op.AgentID, "lock-test", "")
 	require.NoError(t, err)
 	issuer, err := pool.Begin(ctx)
@@ -33,7 +34,7 @@ func TestPostgresHostCompletionWaitsForAuthorityWithoutHoldingCommand(t *testing
 	go func() {
 		// An intentionally invalid receipt makes completion roll back after
 		// all locks are acquired. This test targets lock acquisition, not proof.
-		_, err := s.completeNodeOperation(ctx, op.AgentID, op.ID, &controlplane.SignedExecutionStopReceipt{},
+		_, err := s.TransitionNodeOperation(ctx, op.AgentID, op.ID, &controlplane.SignedExecutionStopReceipt{},
 			func(current controlplane.NodeOperation, _ *persistence.CommandRecord) (controlplane.NodeOperation, error) {
 				return current, nil
 			})

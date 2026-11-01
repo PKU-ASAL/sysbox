@@ -2,24 +2,26 @@ package api
 
 import (
 	"context"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/persistence"
-	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/stretchr/testify/require"
 )
 
 func TestPostgresRetryAndGuestDispatchAcceptance(t *testing.T) {
 	ctx := context.Background()
 	dsn := isolatedPostgresTestDSN(t)
-	s := &postgresAPIStore{dsn: dsn}
-	pool, err := s.poolFor(ctx)
+	s := &controlstore.Postgres{DSN: dsn}
+	pool, err := s.PoolFor(ctx)
 	require.NoError(t, err)
 	t.Cleanup(pool.Close)
-	retry := DispatchRetryRecord{CommandID: "retry", Failures: 2, Next: time.Now().UTC().Truncate(time.Microsecond).Add(time.Minute), LastError: "offline"}
+	retry := controlstore.DispatchRetryRecord{CommandID: "retry", Failures: 2, Next: time.Now().UTC().Truncate(time.Microsecond).Add(time.Minute), LastError: "offline"}
 	require.NoError(t, s.SaveDispatchRetry(ctx, retry))
-	reopened := &postgresAPIStore{dsn: dsn}
-	other, err := reopened.poolFor(ctx)
+	reopened := &controlstore.Postgres{DSN: dsn}
+	other, err := reopened.PoolFor(ctx)
 	require.NoError(t, err)
 	t.Cleanup(other.Close)
 	got, err := reopened.LoadDispatchRetry(ctx, retry.CommandID)

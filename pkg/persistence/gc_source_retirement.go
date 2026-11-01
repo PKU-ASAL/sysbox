@@ -7,7 +7,6 @@ import (
 
 // Retired sources remain immutable reference holders. Retirement fences future
 // publishers; it does not attest provider stop or authorize reference removal.
-const GCSourceRetirementFormatVersion = 8
 
 func (r *Repository) RetireGCSource(ctx context.Context, topology, source, owner string, expected int64) error {
 	if !topologyName.MatchString(source) || expected < 1 || expected == math.MaxInt64 {
@@ -30,9 +29,7 @@ func (r *Repository) RetireGCSource(ctx context.Context, topology, source, owner
 		s.Retired = true
 		s.Version++
 		a.GCSources[source] = s
-		if a.Format != GCDispositionFormatVersion && a.Format != OwnershipRetirementFormatVersion && a.Format != OwnershipTargetFormatVersion && a.Format != GCAdmissionFormatVersion && a.Format != IntentDispositionFormatVersion && a.Format != AdoptionRecoveryFormatVersion && a.Format != LegacyAdoptionRecoveryFormatVersion {
-			a.Format = GCSourceRetirementFormatVersion
-		}
+
 		return nil
 	})
 }

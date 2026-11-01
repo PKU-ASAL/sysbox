@@ -61,6 +61,15 @@ func (c *TaskClient) GuestTaskBootID(ctx context.Context) (string, error) {
 	}
 	return out.BootID, nil
 }
+
+func (c *TaskClient) ControlExecution(ctx context.Context, h substrate.ExecutionHandle, control substrate.TerminalControl) error {
+	id, g, ok := transport.TaskGrantFromContext(ctx)
+	if !ok || id != h.ID {
+		return guesttask.ErrUnauthorized
+	}
+	_, err := c.call(ctx, Request{Operation: "terminal-control", Handle: h, Grant: &g, Control: &control})
+	return err
+}
 func (c *TaskClient) Start(ctx context.Context, request substrate.ExecRequest) (substrate.ExecutionHandle, error) {
 	id, grant, ok := transport.TaskGrantFromContext(ctx)
 	if !ok {
@@ -170,7 +179,7 @@ func (c *TaskClient) CancelGuestFile(ctx context.Context, h substrate.FileInstal
 }
 
 func (c *TaskClient) StartRun(ctx context.Context, req RunRequest, grant controlplane.SignedExecutionGrant) (RunObservation, error) {
-	r, err := c.call(ctx, Request{Operation: "run-start", RunRequest: &req, Grant: &grant})
+	r, err := c.call(ctx, Request{Operation: "run-start", RunRequest: &req, Grant: &grant, RunInputs: RunInputs(ctx)})
 	return runResponse(r, err)
 }
 func (c *TaskClient) ObserveRun(ctx context.Context, req RunRequest, grant controlplane.SignedExecutionGrant) (RunObservation, error) {

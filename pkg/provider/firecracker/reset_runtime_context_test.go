@@ -9,13 +9,14 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/oslab/sysbox/pkg/address"
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/provider/firecracker"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/substrate"
-	"github.com/stretchr/testify/require"
 )
 
 // Exercise the public runtime action -> operation context -> Reset SPI contract.
@@ -27,13 +28,13 @@ func TestFirecrackerResetAcceptsRuntimeTargetContextAcrossRecovery(t *testing.T)
 	raw := []byte("non-bootable test image")
 	require.NoError(t, os.WriteFile(source, raw, 0600))
 	baseline := substrate.ArtifactIdentity{Kind: substrate.ArtifactRootFS, Source: source, Digest: fmt.Sprintf("sha256:%x", sha256.Sum256(raw)), Architecture: "amd64", GuestFamily: substrate.GuestFamilyLinux}
-	node := substrate.NodeSpec{Name: "test-node", Image: substrate.ArtifactHandle{ID: source, Identity: baseline}, ProviderConfig: &firecracker.Config{Kernel: "/fixture/kernel", AllowDirect: true}}
+	node := substrate.NodeSpec{Name: "test-node", Image: substrate.ArtifactHandle{ID: source, Identity: baseline}, ProviderConfig: &firecracker.Config{Kernel: "/fixture/kernel"}}
 	sub := firecracker.New("/fixture/kernel", root)
 	oldIdentity := substrate.OperationIdentity{ActionID: "original-create", OwnerUID: "owner", ResourceUID: "resource", TopologyUID: "topology", Generation: 4}
 	old, err := sub.CreateNode(substrate.WithOperationIdentity(ctx, oldIdentity), node)
 	require.NoError(t, err)
 	request := substrate.ResetRequest{Current: old, Node: node, Baseline: baseline}
-	action := runtime.ActionRecord{ID: "durable-reset-action", Topology: "lab", RunID: "reset-run", Resource: address.Resource("sysbox_node", "test"), Action: controlplane.PlanActionReset, OwnerUID: oldIdentity.OwnerUID, ResourceUID: oldIdentity.ResourceUID, Generation: old.Generation + 1}
+	action := runtime.ActionRecord{ID: "durable-reset-action", Topology: "lab", RunID: "reset-run", Resource: address.Resource("sysbox_node", "test"), Action: model.PlanActionReset, OwnerUID: oldIdentity.OwnerUID, ResourceUID: oldIdentity.ResourceUID, Generation: old.Generation + 1}
 	target := substrate.OperationIdentity{ActionID: action.ID, OwnerUID: action.OwnerUID, ResourceUID: action.ResourceUID, TopologyUID: oldIdentity.TopologyUID, Generation: action.Generation}
 	targetCtx := substrate.WithOperationIdentity(ctx, target)
 	var resetDriver driver.Reset = sub

@@ -19,7 +19,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const manifestVersion = 2
+const manifestVersion = 3
 
 // Only this sentinel means the entire owned generation was proved absent.
 // ENOENT for a config or another required file is incomplete evidence.
@@ -36,6 +36,7 @@ type processIdentity struct {
 // vmManifest is the sole durable authority for provider identity and recovery.
 // Phase and Ready describe past observations; neither is evidence of liveness.
 type vmManifest struct {
+	Jail                 *jailIdentity              `json:"jail,omitempty"`
 	AdoptionFence        string                     `json:"adoption_fence,omitempty"`
 	AdoptionFenceArchive string                     `json:"adoption_fence_archive,omitempty"`
 	Transfer             *manifestOwnershipTransfer `json:"ownership_transfer,omitempty"`
@@ -269,6 +270,15 @@ func (s *Substrate) loadManifest(ctx context.Context, h substrate.NodeHandle) (*
 	raw, err := readRegularFile(path)
 	if os.IsNotExist(err) {
 		if _, e := os.Lstat(dir); os.IsNotExist(e) {
+			if err := s.jailResidueAbsent(h.ID); err != nil {
+				return nil, err
+			}
+			if supplied, ok := h.Provider.(*HandleState); ok && supplied.JailRoot != "" {
+				if _, e := os.Lstat(supplied.JailRoot); !os.IsNotExist(e) {
+					return nil, fmt.Errorf("jail exists or cannot be observed after metadata removal")
+				}
+			}
+
 			if supplied, _ := h.Provider.(*HandleState); supplied != nil && supplied.PID > 0 {
 				if err := confirmMissingManifestProcessExited(supplied); err != nil {
 					return nil, err
@@ -320,13 +330,33 @@ func (s *Substrate) loadManifest(ctx context.Context, h substrate.NodeHandle) (*
 		return nil, fmt.Errorf("firecracker manifest directory identity conflict")
 	}
 	hs := &m.Handle
-	if hs.Version != manifestVersion || hs.ManifestPath != path || hs.VMDir != dir || hs.ConfigPath != filepath.Join(dir, "vm_config.json") || hs.Socket != ownedUnixSocketPath(dir, h.ID, "firecracker.sock", "fc") {
+	expectedSocket := ownedUnixSocketPath(dir, h.ID, "firecracker.sock", "fc")
+	expectedVsock := ownedUnixSocketPath(dir, h.ID, "vsock.sock", "vs")
+	if hs.JailRoot != "" {
+		if !filepath.IsAbs(hs.JailRoot) || filepath.Clean(hs.JailRoot) != hs.JailRoot || filepath.Base(hs.JailRoot) != "root" || filepath.Base(filepath.Dir(hs.JailRoot)) != m.VMID {
+			return nil, fmt.Errorf("invalid jail root binding")
+		}
+		if err := rejectSymlinks(hs.JailRoot); err != nil {
+			return nil, err
+		}
+		expectedSocket = filepath.Join(hs.JailRoot, "run/firecracker.sock")
+		expectedVsock = filepath.Join(hs.JailRoot, "run/vsock.sock")
+	}
+	if m.Jail != nil {
+		if m.Jail.Root != hs.JailRoot {
+			return nil, fmt.Errorf("manifest jail root conflict")
+		}
+		if _, err := jailerArguments(&m, *m.Jail); err != nil {
+			return nil, err
+		}
+	}
+	if hs.Version != manifestVersion || hs.ManifestPath != path || hs.VMDir != dir || hs.ConfigPath != filepath.Join(dir, "vm_config.json") || hs.Socket != expectedSocket {
 		return nil, fmt.Errorf("firecracker manifest path identity conflict")
 	}
 	if hs.OwnerUID != m.OwnerUID || hs.ResourceUID != m.ResourceUID || hs.Generation != m.Generation || hs.TopologyUID != m.TopologyUID {
 		return nil, fmt.Errorf("firecracker manifest handle identity conflict")
 	}
-	if hs.VsockUDS != "" && hs.VsockUDS != ownedUnixSocketPath(dir, h.ID, "vsock.sock", "vs") {
+	if hs.VsockUDS != "" && hs.VsockUDS != expectedVsock {
 		return nil, fmt.Errorf("firecracker manifest vsock path conflict")
 	}
 	for _, p := range []string{hs.ConfigPath, hs.Socket, hs.VsockUDS, filepath.Join(dir, "rootfs.ext4"), filepath.Join(dir, "config.ext4")} {
@@ -341,7 +371,11 @@ func (s *Substrate) loadManifest(ctx context.Context, h substrate.NodeHandle) (*
 			st, e := os.Lstat(p)
 			if e == nil {
 				stat, ok := st.Sys().(*syscall.Stat_t)
-				if !ok || stat.Uid != uint32(os.Geteuid()) {
+				owner := uint32(os.Geteuid())
+				if m.Jail != nil {
+					owner = m.Jail.UID
+				}
+				if !ok || stat.Uid != owner {
 					return nil, fmt.Errorf("firecracker socket owner conflict")
 				}
 			}
@@ -357,7 +391,7 @@ func (s *Substrate) loadManifest(ctx context.Context, h substrate.NodeHandle) (*
 		return nil, fmt.Errorf("firecracker manifest generation conflict")
 	}
 	if supplied, _ := h.Provider.(*HandleState); supplied != nil {
-		if supplied.Version != manifestVersion || supplied.ManifestPath != path || supplied.OwnerUID != m.OwnerUID || supplied.ResourceUID != m.ResourceUID || supplied.Generation != m.Generation || supplied.TopologyUID != m.TopologyUID || supplied.Socket != hs.Socket || supplied.ConfigPath != hs.ConfigPath || supplied.VsockUDS != hs.VsockUDS {
+		if supplied.Version != manifestVersion || supplied.ManifestPath != path || supplied.OwnerUID != m.OwnerUID || supplied.ResourceUID != m.ResourceUID || supplied.Generation != m.Generation || supplied.TopologyUID != m.TopologyUID || supplied.JailRoot != hs.JailRoot || supplied.Socket != hs.Socket || supplied.ConfigPath != hs.ConfigPath || supplied.VsockUDS != hs.VsockUDS {
 			return nil, fmt.Errorf("firecracker supplied handle identity conflict")
 		}
 	}

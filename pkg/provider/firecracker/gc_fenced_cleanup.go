@@ -91,6 +91,9 @@ func (s *Substrate) DeleteFencedGCResidue(ctx context.Context, c controlplane.GC
 	if _, err = s.loadManifest(ctx, h); err != nil {
 		return err
 	}
+	if err = removeJail(current); err != nil {
+		return err
+	}
 	for _, path := range []string{current.Handle.Socket, current.Handle.VsockUDS} {
 		if path != "" {
 			if err = os.Remove(path); err != nil && !os.IsNotExist(err) {

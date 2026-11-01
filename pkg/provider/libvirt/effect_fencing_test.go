@@ -118,7 +118,11 @@ func TestExecutionSPIFencesBeforeSSH(t *testing.T) {
 			case "copy":
 				err = conn.(substrate.ConnectionFileCopier).CopyFile(ctx, "source", "target")
 			case "console":
-				_, err = sub.OpenConsole(ctx, h, substrate.ConsoleRequest{})
+				conn, connectErr := sub.Connection(h, nil)
+				err = connectErr
+				if err == nil {
+					err = conn.(*domainConnection).ControlExecution(ctx, substrate.ExecutionHandle{}, substrate.TerminalControl{Type: "stdin", Data: []byte("x")})
+				}
 			}
 			require.True(t, driver.IsCategory(err, driver.ErrorInvalidState), "expected identity conflict, got %v", err)
 			_, err = os.Stat(log)

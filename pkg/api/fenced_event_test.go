@@ -2,15 +2,17 @@ package api
 
 import (
 	"context"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/persistence"
-	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/stretchr/testify/require"
 )
 
 func TestFencedCommandRejectsMissingProofWithoutPublishingEvent(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, s controlstore.Store) {
 		ctx := context.Background()
 		cmd := controlplane.AgentCommand{ID: "fenced", AgentID: "agent", Type: "node_operation", ActionID: "action", ResourceUID: "resource", Generation: 2, LeaseEpoch: 3}
 		require.NoError(t, s.SaveAgentCommand(ctx, cmd))
@@ -25,7 +27,7 @@ func TestFencedCommandRejectsMissingProofWithoutPublishingEvent(t *testing.T) {
 }
 
 func TestFencedTerminalEventCannotRetireNewLease(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, s controlstore.Store) {
 		ctx := context.Background()
 		cmd := controlplane.AgentCommand{ID: "renewed", AgentID: "agent", Type: "node_operation", Status: "leased", LeaseOwner: "old", Attempt: 1, LeaseUntil: time.Now().Add(-time.Hour), ActionID: "action", ResourceUID: "resource", Generation: 2, LeaseEpoch: 3}
 		require.NoError(t, s.SaveAgentCommand(ctx, cmd))

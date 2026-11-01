@@ -8,7 +8,10 @@ import (
 	"sort"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
@@ -21,10 +24,10 @@ type JournalReplayReport struct {
 
 // Legacy checkpoints are diagnostic projections. They cannot authorize state
 // writes or provider effects in the canonical lifecycle repository.
-func replayCheckpointJournal(context.Context, apiStore, string, string, *state.Manager, string) (*JournalReplayReport, error) {
+func replayCheckpointJournal(context.Context, controlstore.Store, string, string, *state.Manager, string) (*JournalReplayReport, error) {
 	return nil, fmt.Errorf("%w: checkpoint patches are not recovery authority; durable action intents are required", runtime.ErrConvergenceUnsupported)
 }
-func reconcileCheckpointJournal(context.Context, apiStore, string, string, *state.Manager, string) (*RecoverReport, error) {
+func reconcileCheckpointJournal(context.Context, controlstore.Store, string, string, *state.Manager, string) (*RecoverReport, error) {
 	return nil, fmt.Errorf("%w: checkpoint-only recovery is disabled; use canonical action recovery", runtime.ErrConvergenceUnsupported)
 }
 
@@ -70,7 +73,7 @@ func (s *Server) loadRecoveryExecution(ctx context.Context, topology, runID stri
 	if err != nil {
 		return nil, err
 	}
-	authority, err := (apiExecutionGrantStorage{store: s.apiStore}).ReadExecutionAuthority(ctx)
+	authority, err := (controlstore.AuthorityStorage{Store: s.apiStore}).ReadExecutionAuthority(ctx)
 	if err != nil && !errors.Is(err, persistence.ErrNotFound) {
 		return nil, err
 	}
@@ -91,7 +94,7 @@ func (s *Server) loadRecoveryExecution(ctx context.Context, topology, runID stri
 	if err != nil {
 		return nil, fmt.Errorf("verify pinned snapshot: %w", err)
 	}
-	g, _, st, _, _, err := runtime.LoadWorkspaceWithInputs(snapshot, mgr, run.Inputs)
+	g, _, st, _, _, err := runtime.LoadWorkspaceWithInputs(snapshot, mgr, run.Inputs, driver.DefaultRegistry)
 	if err != nil {
 		return nil, fmt.Errorf("load pinned recovery inputs: %w", err)
 	}
@@ -133,8 +136,8 @@ func (s *Server) loadRecoveryExecution(ctx context.Context, topology, runID stri
 	plan := &runtime.Plan{}
 	for _, key := range keys {
 		action := chosen[key]
-		change := controlplane.PlannedChange{Address: action.Resource, Action: action.Action, Reason: "recover authorized durable action"}
-		if action.Action == controlplane.PlanActionReset {
+		change := model.PlannedChange{Address: action.Resource, Action: action.Action, Reason: "recover authorized durable action"}
+		if action.Action == model.PlanActionReset {
 			reset, err := runtime.BuildResetPlan(g, st, action.Resource.String())
 			if err != nil {
 				return nil, err
@@ -144,12 +147,12 @@ func (s *Server) loadRecoveryExecution(ctx context.Context, topology, runID stri
 			}
 			change = reset.Actions[0]
 		}
-		if action.Action != controlplane.PlanActionDelete && g.Get(action.Resource) == nil {
+		if action.Action != model.PlanActionDelete && g.Get(action.Resource) == nil {
 			return nil, fmt.Errorf("%w: action target absent from pinned revision", runtime.ErrPlanStale)
 		}
 		plan.Actions = append(plan.Actions, change)
 	}
-	executor := runtime.NewExecutor(g, st)
+	executor := runtime.NewExecutor(g, st, driver.DefaultRegistry)
 	executor.SetRunContext(topology, runID)
 	executor.SetWorkspaceFromHCLFile(snapshot)
 	executor.SetActionRepository(repository)
@@ -170,7 +173,7 @@ func (s *Server) reconcileCanonicalActions(ctx context.Context, topology, runID 
 	if err != nil {
 		return nil, err
 	}
-	execution.executor.SetActionRepository(&recoveryActionRepository{ActionRepository: execution.repository, server: s, run: *execution.run, localRecovery: true})
+	execution.executor.SetActionRepository(&controlstore.RecoveryRepository{ActionRepository: execution.repository, Store: s.apiStore, Run: *execution.run, LocalRecovery: true})
 	if err := execution.executor.RecoverActions(ctx, execution.plan); err != nil {
 		return nil, err
 	}
@@ -217,7 +220,7 @@ func (s *Server) cleanupCanonicalActions(ctx context.Context, topology, runID st
 	}
 	// A known complete effect can be restored first. Arbitrary uncertain guest
 	// execution remains blocked by the same runner and is never replayed.
-	execution.executor.SetActionRepository(&recoveryActionRepository{ActionRepository: execution.repository, server: s, run: *execution.run, localRecovery: true})
+	execution.executor.SetActionRepository(&controlstore.RecoveryRepository{ActionRepository: execution.repository, Store: s.apiStore, Run: *execution.run, LocalRecovery: true})
 	if err := execution.executor.RecoverActions(ctx, execution.plan); err != nil {
 		return nil, err
 	}
@@ -229,7 +232,7 @@ func (s *Server) cleanupCanonicalActions(ctx context.Context, topology, runID st
 	}
 	selected := map[string]runtime.ActionRecord{}
 	for _, action := range actions {
-		if action.RunID != runID || action.Action == controlplane.PlanActionDelete {
+		if action.RunID != runID || action.Action == model.PlanActionDelete {
 			continue
 		}
 		key := action.Resource.String()
@@ -269,7 +272,7 @@ func (s *Server) cleanupCanonicalActions(ctx context.Context, topology, runID st
 			appendCleanupAction(report, entry)
 			continue
 		}
-		plan.Actions = append(plan.Actions, controlplane.PlannedChange{Address: record.Resource, Action: controlplane.PlanActionDelete, Reason: "explicit cleanup of this run's verified generation"})
+		plan.Actions = append(plan.Actions, model.PlannedChange{Address: record.Resource, Action: model.PlanActionDelete, Reason: "explicit cleanup of this run's verified generation"})
 		entry.Status = "removed"
 		removing = append(removing, entry)
 	}

@@ -4,10 +4,11 @@ package firecracker
 
 import (
 	"context"
-	"github.com/oslab/sysbox/pkg/substrate"
-	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/substrate"
+	"github.com/stretchr/testify/require"
 )
 
 func TestFirecrackerRealGCExactOwnerAndSurvivorE2E(t *testing.T) {
@@ -18,7 +19,7 @@ func TestFirecrackerRealGCExactOwnerAndSurvivorE2E(t *testing.T) {
 	create := func(uid string) (substrate.NodeHandle, context.Context) {
 		op := substrate.OperationIdentity{ActionID: "create-" + uid, OwnerUID: "gc-owner", TopologyUID: "gc-owner", ResourceUID: uid, Generation: 1}
 		scoped := substrate.WithOperationIdentity(ctx, op)
-		h, err := s.CreateNode(scoped, substrate.NodeSpec{Name: uid, Image: substrate.ArtifactHandle{ID: rootfs}, ProviderConfig: &Config{Kernel: kernel, AllowDirect: true}})
+		h, err := s.CreateNode(scoped, substrate.NodeSpec{Name: uid, Image: substrate.ArtifactHandle{ID: rootfs}, ProviderConfig: &Config{Kernel: kernel}})
 		require.NoError(t, err)
 		cleanupRealVM(t, s, h)
 		require.NoError(t, s.StartNode(scoped, h))

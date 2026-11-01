@@ -3,7 +3,7 @@ package runtime
 import (
 	"fmt"
 
-	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
@@ -22,7 +22,7 @@ type RecoveryInput struct {
 }
 
 type RecoveryPlan struct {
-	Decision controlplane.RecoveryDecision
+	Decision model.RecoveryDecision
 	Reason   string
 }
 
@@ -32,7 +32,7 @@ func DecideNodeRecovery(in RecoveryInput) RecoveryPlan {
 		return decideRefreshRecovery(in)
 	default:
 		return RecoveryPlan{
-			Decision: controlplane.RecoveryDecisionUnknown,
+			Decision: model.RecoveryDecisionUnknown,
 			Reason:   "unknown recovery context",
 		}
 	}
@@ -41,21 +41,21 @@ func DecideNodeRecovery(in RecoveryInput) RecoveryPlan {
 func decideRefreshRecovery(in RecoveryInput) RecoveryPlan {
 	obs := in.Observation
 	if !in.HasState {
-		return RecoveryPlan{Decision: controlplane.RecoveryDecisionMarkDrift, Reason: "resource missing from state"}
+		return RecoveryPlan{Decision: model.RecoveryDecisionMarkDrift, Reason: "resource missing from state"}
 	}
 	if obs.Status == substrate.NodeStatusUnknown {
-		return RecoveryPlan{Decision: controlplane.RecoveryDecisionUnknown, Reason: observationReason(obs, "node status unknown")}
+		return RecoveryPlan{Decision: model.RecoveryDecisionUnknown, Reason: observationReason(obs, "node status unknown")}
 	}
 	if obs.Running && obs.Healthy {
-		return RecoveryPlan{Decision: controlplane.RecoveryDecisionNoop, Reason: observationReason(obs, "node running")}
+		return RecoveryPlan{Decision: model.RecoveryDecisionNoop, Reason: observationReason(obs, "node running")}
 	}
 	if !obs.Exists || obs.Status == substrate.NodeStatusMissing {
-		return RecoveryPlan{Decision: controlplane.RecoveryDecisionMarkDrift, Reason: observationReason(obs, "node missing")}
+		return RecoveryPlan{Decision: model.RecoveryDecisionMarkDrift, Reason: observationReason(obs, "node missing")}
 	}
 	if obs.Running && !obs.Healthy {
-		return RecoveryPlan{Decision: controlplane.RecoveryDecisionMarkDrift, Reason: observationReason(obs, "node unhealthy")}
+		return RecoveryPlan{Decision: model.RecoveryDecisionMarkDrift, Reason: observationReason(obs, "node unhealthy")}
 	}
-	return RecoveryPlan{Decision: controlplane.RecoveryDecisionMarkDrift, Reason: observationReason(obs, fmt.Sprintf("node %s", obs.Status))}
+	return RecoveryPlan{Decision: model.RecoveryDecisionMarkDrift, Reason: observationReason(obs, fmt.Sprintf("node %s", obs.Status))}
 }
 
 func observationReason(obs substrate.NodeObservation, fallback string) string {

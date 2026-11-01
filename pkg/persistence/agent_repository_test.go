@@ -3,10 +3,11 @@ package persistence
 import (
 	"context"
 	"errors"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/stretchr/testify/require"
 )
 
 type agentStorageFixture struct {

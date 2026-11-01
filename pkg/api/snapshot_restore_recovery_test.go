@@ -2,10 +2,12 @@ package api
 
 import (
 	"context"
+	"testing"
+
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestSnapshotRestoreSupervisorFinishesCommittedReleaseAfterRestart(t *testing.T) {
@@ -18,7 +20,7 @@ func TestSnapshotRestoreSupervisorFinishesCommittedReleaseAfterRestart(t *testin
 	require.NoError(t, err)
 	plan, err := repo.PlanSnapshotRestore(ctx, "lab", snapshot.ID, "restore", 0)
 	require.NoError(t, err)
-	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
 	barrier, err := authority.BeginMaintenance(ctx, plan.ID, plan.TopologyUID, mustRestoreDigest(t, plan))
 	require.NoError(t, err)
 	plan.MaintenanceEpoch = barrier.Epoch
@@ -53,7 +55,7 @@ func TestCommittedRestoreRecoveryNeverInventsMissingAuthority(t *testing.T) {
 	_, err = repo.CommitSnapshotRestore(ctx, "lab", request)
 	require.NoError(t, err)
 	require.ErrorIs(t, s.finishCommittedRestores(ctx, "lab"), persistence.ErrNotFound)
-	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
 	_, err = authority.InspectMaintenance(ctx, request.ID)
 	require.ErrorIs(t, err, persistence.ErrNotFound)
 }

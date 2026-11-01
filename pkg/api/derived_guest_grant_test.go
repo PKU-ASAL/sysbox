@@ -8,23 +8,38 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
 )
 
 func TestDerivedGuestRenewalAuthority(t *testing.T) {
-	s := NewServer(t.TempDir(), t.TempDir())
+	store := &controlstore.SQLite{DbPath: filepath.Join(t.TempDir(), "api.db"), RunsDir: t.TempDir()}
+	db, err := store.OpenDB()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	s := stateDeleteTestServer(t, store)
+	s.agentSvc = newAgentService(s)
+	_, err = db.Exec(`CREATE TABLE authority_writes(n INTEGER); INSERT INTO authority_writes VALUES(0); CREATE TRIGGER count_authority_write AFTER UPDATE ON sysbox_execution_authority BEGIN UPDATE authority_writes SET n=n+1; END`)
+	require.NoError(t, err)
+	resetWrites := func() { _, err := db.Exec("UPDATE authority_writes SET n=0"); require.NoError(t, err) }
+	assertOneWrite := func() {
+		var n int
+		require.NoError(t, db.QueryRow("SELECT n FROM authority_writes").Scan(&n))
+		require.Equal(t, 1, n)
+	}
 	pub, key, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
 	require.NoError(t, s.ConfigureExecutionGrantSigner(key))
 	ctx := context.Background()
 	require.NoError(t, s.apiStore.SaveAgent(ctx, controlplane.Agent{ID: "agent", AuthSecret: "secret", SecretHash: agent.SecretHash("secret")}))
-	repo := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	repo := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
 	session, err := repo.OpenSession(ctx, "agent", "worker-process", "")
 	require.NoError(t, err)
 	run := controlplane.Run{ID: "run", Topology: "lab", Revision: "revision", Op: "reset", Target: "sysbox_node.web"}
@@ -83,8 +98,10 @@ func TestDerivedGuestRenewalAuthority(t *testing.T) {
 			require.Equal(t, http.StatusUnauthorized, w.Code, w.Body.String())
 		})
 	}
+	resetWrites()
 	w = post("derive-guest", proof, true)
 	require.Equal(t, 200, w.Code, w.Body.String())
+	assertOneWrite()
 	var child controlplane.SignedExecutionGrant
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &child))
 	authorize := func() *httptest.ResponseRecorder {
@@ -96,10 +113,14 @@ func TestDerivedGuestRenewalAuthority(t *testing.T) {
 		s.ServeHTTP(w, r)
 		return w
 	}
+	resetWrites()
 	w = authorize()
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assertOneWrite()
+	resetWrites()
 	w = post("derive-guest", proof, true)
 	require.Equal(t, 200, w.Code, w.Body.String())
+	assertOneWrite()
 	var retry controlplane.SignedExecutionGrant
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &retry))
 	require.Equal(t, child.Grant, retry.Grant)
@@ -110,8 +131,10 @@ func TestDerivedGuestRenewalAuthority(t *testing.T) {
 	body := map[string]any{"parent": parent, "child": child}
 	w = post("renew-guest", body, false)
 	require.Equal(t, 401, w.Code)
+	resetWrites()
 	w = post("renew-guest", body, true)
 	require.Equal(t, 200, w.Code, w.Body.String())
+	assertOneWrite()
 	var renewed controlplane.SignedExecutionGrant
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &renewed))
 	require.NoError(t, controlplane.VerifyExecutionGrant(pub, renewed, "guest", time.Now()))
@@ -156,7 +179,7 @@ func TestDerivedGuestRenewalAuthority(t *testing.T) {
 	w = authorize()
 	require.Equal(t, http.StatusConflict, w.Code, w.Body.String())
 	require.NoError(t, s.apiStore.DeleteAgentCommand(ctx, "agent", cmd.ID))
-	require.ErrorIs(t, s.derivedGuestStorage(ctx, parent).validate(&persistence.CommandRecord{Command: cmd, Retired: true}), persistence.ErrConflict)
+	require.ErrorIs(t, s.derivedGuestStorage(ctx, parent).Validate(&persistence.CommandRecord{Command: cmd, Retired: true}), persistence.ErrConflict)
 	w = post("renew-guest", body, true)
 	require.NotEqual(t, 200, w.Code)
 	w = post("derive-guest", proof, true)
@@ -166,9 +189,9 @@ func TestDerivedGuestRenewalAuthority(t *testing.T) {
 }
 
 func TestRejectedDerivedGrantPersistsClockFloor(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
-		storage := apiExecutionGrantStorage{store: store}
+		storage := controlstore.AuthorityStorage{Store: store}
 		repo := persistence.NewExecutionGrantRepository(storage)
 		session, err := repo.OpenSession(ctx, "agent", "process", "")
 		require.NoError(t, err)
@@ -216,7 +239,7 @@ func TestRejectedDerivedEnvelopePersistsClockFloor(t *testing.T) {
 				want = http.StatusUnauthorized
 			}
 			require.Equal(t, want, w.Code)
-			raw, err = (apiExecutionGrantStorage{store: s.apiStore}).ReadExecutionAuthority(ctx)
+			raw, err = (controlstore.AuthorityStorage{Store: s.apiStore}).ReadExecutionAuthority(ctx)
 			require.NoError(t, err)
 			var ledger struct {
 				ObservedAt time.Time `json:"observed_at"`

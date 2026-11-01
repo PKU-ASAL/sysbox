@@ -1,0 +1,31 @@
+[Unit]
+Description=Sysbox privileged host executor
+After=network-online.target
+
+[Service]
+Type=simple
+# Use the system manager's default root identity. On Ubuntu systemd 255,
+# explicit User=root combined with syscall hardening and NoNewPrivileges
+# can remove effective CAP_SETUID, preventing jailer from dropping privileges.
+ExecStart=/usr/local/bin/sysbox host-supervisor --config /etc/sysbox-host/sysbox.yaml --identity /etc/sysbox-host/identity.json
+Restart=on-failure
+RuntimeDirectory=sysbox-host
+RuntimeDirectoryMode=0750
+UMask=0077
+KillMode=process
+TimeoutStopSec=120
+
+# The host service retains only the privileges required by providers, jailer and
+# cgroup/network setup. Provider paths come from the root-owned config file.
+NoNewPrivileges=yes
+AmbientCapabilities=
+CapabilityBoundingSet=CAP_CHOWN CAP_FOWNER CAP_MKNOD CAP_SETPCAP CAP_SYS_PTRACE CAP_SYS_ADMIN CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_CHROOT CAP_SETUID CAP_SETGID CAP_KILL CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE
+ProtectHome=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+LockPersonality=yes
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=SYSBOX_CONFIG=/etc/sysbox-host/sysbox.yaml
+
+[Install]
+WantedBy=multi-user.target

@@ -82,7 +82,7 @@ func PrepareFenceIntent(authority, lifecycle []byte, d controlplane.IntentDispos
 	}
 	c := original.Command
 	g := f.Request.Grant
-	if original.Retired || c.ID != g.CommandID || c.Type != "run_assigned" || c.AgentID != g.AgentID || c.ActionID != run.ID || c.TopologyUID != g.Scope.TopologyUID || c.Run == nil || !SameRunIncarnation(*c.Run, run) || uint64(c.Attempt) != g.Attempt || (run.Status != controlplane.RunRunning && run.Status != controlplane.RunFailed) || run.HostCompletion != nil || run.Cleanup != nil {
+	if original.Retired || c.ID != g.CommandID || c.Type != "run_assigned" || c.AgentID != g.AgentID || c.ActionID != run.ID || c.TopologyUID != g.Scope.TopologyUID || c.Run == nil || !controlplane.SameRunIncarnation(*c.Run, run) || uint64(c.Attempt) != g.Attempt || (run.Status != controlplane.RunRunning && run.Status != controlplane.RunFailed) || run.HostCompletion != nil || run.Cleanup != nil {
 		return zero, ErrConflict
 	}
 	next, err := PrepareIntentDispositionLifecycle(authority, lifecycle, d, run, observation, key, now)

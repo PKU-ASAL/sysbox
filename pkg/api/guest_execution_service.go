@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
@@ -23,26 +24,26 @@ var (
 )
 
 type GuestExecutionService struct {
-	store   guestExecutionPersistence
+	store   controlstore.GuestExecutionPersistence
 	publish func(context.Context, string, controlplane.AgentCommand) (controlplane.AgentCommand, error)
 	enqueue func(context.Context, controlplane.GuestExecution, controlplane.AgentCommand) (controlplane.GuestExecution, error)
 	now     func() time.Time
 }
 
-func newGuestExecutionService(store guestExecutionPersistence, publish func(context.Context, string, controlplane.AgentCommand) (controlplane.AgentCommand, error), now func() time.Time) *GuestExecutionService {
+func newGuestExecutionService(store controlstore.GuestExecutionPersistence, publish func(context.Context, string, controlplane.AgentCommand) (controlplane.AgentCommand, error), now func() time.Time) *GuestExecutionService {
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
 	return &GuestExecutionService{store: store, publish: publish, now: now}
 }
 
-func newGuestExecutionServiceWithOutbox(store guestExecutionPersistence, publish func(context.Context, string, controlplane.AgentCommand) (controlplane.AgentCommand, error), enqueue func(context.Context, controlplane.GuestExecution, controlplane.AgentCommand) (controlplane.GuestExecution, error), now func() time.Time) *GuestExecutionService {
+func newGuestExecutionServiceWithOutbox(store controlstore.GuestExecutionPersistence, publish func(context.Context, string, controlplane.AgentCommand) (controlplane.AgentCommand, error), enqueue func(context.Context, controlplane.GuestExecution, controlplane.AgentCommand) (controlplane.GuestExecution, error), now func() time.Time) *GuestExecutionService {
 	service := newGuestExecutionService(store, publish, now)
 	service.enqueue = enqueue
 	return service
 }
 
-func newGuestExecutionServiceFromStore(store guestExecutionPersistence, publish func(context.Context, string, controlplane.AgentCommand) (controlplane.AgentCommand, error), now func() time.Time) *GuestExecutionService {
+func newGuestExecutionServiceFromStore(store controlstore.GuestExecutionPersistence, publish func(context.Context, string, controlplane.AgentCommand) (controlplane.AgentCommand, error), now func() time.Time) *GuestExecutionService {
 	service := newGuestExecutionService(store, publish, now)
 	service.enqueue = func(ctx context.Context, execution controlplane.GuestExecution, command controlplane.AgentCommand) (controlplane.GuestExecution, error) {
 		if err := store.CreateGuestExecutionDispatch(ctx, execution, command); err != nil {

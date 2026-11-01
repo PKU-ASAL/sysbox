@@ -4,7 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/oslab/sysbox/pkg/agentexec"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/state"
 	"github.com/stretchr/testify/require"
 )
 
@@ -24,8 +25,11 @@ func TestCLIAndExecutionShareConfiguredRepository(t *testing.T) {
 			require.NoError(t, err)
 			first, err := mgr.Load()
 			require.NoError(t, err)
-			bridge := agentexec.NewLocalBridge(agentexec.LocalOptions{Topology: localTopology(), StatePath: flagStateFile, BackendURL: flagBackend})
-			other, err := bridge.StateManager(localTopology())
+			pool := &controlstore.LifecycleRepositories{}
+			defer pool.Close()
+			repo, err := pool.Open(root, flagBackend, localTopology())
+			require.NoError(t, err)
+			other := state.NewManagerWithBackend(repo.StateBackend(localTopology()))
 			require.NoError(t, err)
 			second, err := other.Load()
 			require.NoError(t, err)

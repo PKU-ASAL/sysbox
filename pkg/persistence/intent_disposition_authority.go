@@ -3,6 +3,7 @@ package persistence
 import (
 	"crypto/ed25519"
 	"encoding/hex"
+
 	"github.com/oslab/sysbox/pkg/controlplane"
 )
 
@@ -27,14 +28,14 @@ func validateIntentDispositionAuthority(f HostFenceRecord, a *executionAuthority
 	o := r.Observation
 	c := o.Command
 	report := o.Recovery
-	if run.ID != d.RunID || run.Topology != d.Topology || !run.QueuedAt.Equal(d.RunQueuedAt) || run.Revision != d.RunRevision || run.AgentID != g.AgentID || run.Attempt <= 0 || uint64(run.Attempt) != g.Attempt || !SameRunIncarnation(run, r.RunAfter) || r.RunAfter.Status != controlplane.RunFailed || r.RunAfter.Recoverable || !r.RunAfter.EndedAt.Equal(r.PreparedAt) || !r.RunAfter.LeaseUntil.IsZero() || r.RunAfter.HostCompletion != nil || r.RunAfter.Cleanup != nil {
+	if run.ID != d.RunID || run.Topology != d.Topology || !run.QueuedAt.Equal(d.RunQueuedAt) || run.Revision != d.RunRevision || run.AgentID != g.AgentID || run.Attempt <= 0 || uint64(run.Attempt) != g.Attempt || !controlplane.SameRunIncarnation(run, r.RunAfter) || r.RunAfter.Status != controlplane.RunFailed || r.RunAfter.Recoverable || !r.RunAfter.EndedAt.Equal(r.PreparedAt) || !r.RunAfter.LeaseUntil.IsZero() || r.RunAfter.HostCompletion != nil || r.RunAfter.Cleanup != nil {
 		return ErrCorruptRecord
 	}
 	cmd := r.CommandAfter.Command
 	if !r.CommandAfter.Retired || cmd.ID != g.CommandID || cmd.AgentID != g.AgentID || cmd.ActionID != run.ID || cmd.Type != "run_assigned" || cmd.Status != controlplane.AgentCommandStatusFailed || !cmd.EndedAt.Equal(r.PreparedAt) {
 		return ErrCorruptRecord
 	}
-	if report == nil || !o.Retired || c.ID != report.CommandID || c.ActionID != d.FenceID || c.Type != controlplane.RunRecoveryCommand || c.RecoveryMode != controlplane.RunRecoveryObserve || c.Status != controlplane.AgentCommandStatusCompleted || c.AgentID != g.AgentID || c.TopologyUID != g.Scope.TopologyUID || c.ExpectedSerial != d.ExpectedSerial || c.Run == nil || !SameRunIncarnation(*c.Run, run) || report.TopologyUID != g.Scope.TopologyUID || report.ObservedAt.Before(f.Receipt.ObservedAt) || report.ObservedAt.After(r.PreparedAt) || evidenceHash(*report) != d.ObservationSHA256 || validateRecoveryReport(c, report) != nil {
+	if report == nil || !o.Retired || c.ID != report.CommandID || c.ActionID != d.FenceID || c.Type != controlplane.RunRecoveryCommand || c.RecoveryMode != controlplane.RunRecoveryObserve || c.Status != controlplane.AgentCommandStatusCompleted || c.AgentID != g.AgentID || c.TopologyUID != g.Scope.TopologyUID || c.ExpectedSerial != d.ExpectedSerial || c.Run == nil || !controlplane.SameRunIncarnation(*c.Run, run) || report.TopologyUID != g.Scope.TopologyUID || report.ObservedAt.Before(f.Receipt.ObservedAt) || report.ObservedAt.After(r.PreparedAt) || evidenceHash(*report) != d.ObservationSHA256 || validateRecoveryReport(c, report) != nil {
 		return ErrCorruptRecord
 	}
 	digest, err := f.Request.Digest()

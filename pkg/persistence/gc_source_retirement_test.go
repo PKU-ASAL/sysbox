@@ -2,9 +2,10 @@ package persistence
 
 import (
 	"context"
-	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestGCSourceRetirementPreservesReferencesAndFencesPublisher(t *testing.T) {
@@ -30,7 +31,7 @@ func TestGCSourceRetirementPreservesReferencesAndFencesPublisher(t *testing.T) {
 	require.ErrorIs(t, err, ErrConflict)
 	require.ErrorIs(t, cold.CompleteGCSource(ctx, "lab", "host", st.TopologyUID, 1, m), ErrConflict)
 	require.NoError(t, cold.update(ctx, "lab", func(a *aggregate) error {
-		require.Equal(t, GCSourceRetirementFormatVersion, a.Format)
+		require.Equal(t, FormatVersion, a.Format)
 		refs, err := gcReferencesAt(a, time.Now().Add(48*time.Hour))
 		require.NoError(t, err)
 		require.Equal(t, 1, refs.Domains["revision"].Count)

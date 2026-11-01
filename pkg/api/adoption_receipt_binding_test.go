@@ -11,16 +11,17 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/stretchr/testify/require"
 )
 
 func TestAdoptionCompletionRejectsTamperedEvidenceBeforeStateWrite(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) { testAdoptionReceiptBinding(t, store) })
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) { testAdoptionReceiptBinding(t, store) })
 }
 
-func testAdoptionReceiptBinding(t *testing.T, store apiStore) {
+func testAdoptionReceiptBinding(t *testing.T, store controlstore.Store) {
 	s := NewServer(t.TempDir(), t.TempDir())
 	s.apiStore = store
 	s.nodeOps = newNodeOperationStore(store)
@@ -40,7 +41,7 @@ func testAdoptionReceiptBinding(t *testing.T, store apiStore) {
 	cmd, ok, err := s.apiStore.AcquireAgentCommandLease(ctx, "agent", op.CommandID, "worker", time.Minute)
 	require.NoError(t, err)
 	require.True(t, ok)
-	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
 	session, err := authority.OpenSession(ctx, "agent", "incarnation", "")
 	require.NoError(t, err)
 	digest, err := req.Digest()

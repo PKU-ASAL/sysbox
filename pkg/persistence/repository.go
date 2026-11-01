@@ -14,8 +14,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -28,14 +30,13 @@ var (
 	ErrUnsupportedVersion = errors.New("unsupported repository version")
 )
 
-const FormatVersion = 6
+const FormatVersion = 16
 
 var topologyName = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 type aggregate struct {
 	IntentDispositions   map[string]IntentDispositionArchive              `json:"intent_dispositions,omitempty"`
 	AdoptionRecoveries   map[string]AdoptionRecoveryRecord                `json:"adoption_recoveries,omitempty"`
-	GCReferenceFormat    int                                              `json:"gc_reference_format,omitempty"`
 	OwnershipTargets     map[string]OwnershipTargetReservation            `json:"ownership_targets,omitempty"`
 	OwnershipRetirements map[string]controlplane.OwnershipRetirementProof `json:"ownership_retirements,omitempty"`
 	DeletedFrom          *LifecycleDeletionReceipt                        `json:"deleted_from,omitempty"`
@@ -59,6 +60,7 @@ type backend interface {
 type Repository struct {
 	backend             backend
 	boundTopology       string
+	borrowedBackend     bool
 	externalGCMu        sync.RWMutex
 	externalGCInventory func(context.Context, string) (map[string][]string, error)
 }
@@ -81,7 +83,24 @@ func (r *Repository) SetExternalGCInventoryProvider(provider func(context.Contex
 	return nil
 }
 
-func (r *Repository) Close() error { return r.backend.close() }
+func (r *Repository) Close() error {
+	if r.borrowedBackend {
+		return nil
+	}
+	return r.backend.close()
+}
+
+// BindTopology borrows this repository's database pool without transferring
+// ownership. The owner must outlive every view and close after users stop.
+func (r *Repository) BindTopology(topology string) (*Repository, error) {
+	if !topologyName.MatchString(topology) || r.boundTopology != "" && r.boundTopology != topology {
+		return nil, ErrInvalidRecord
+	}
+	if _, ok := r.backend.(*sqlBackend); !ok {
+		return nil, ErrUnsupportedVersion
+	}
+	return &Repository{backend: r.backend, boundTopology: topology, borrowedBackend: true}, nil
+}
 
 func (r *Repository) ListTopologies(ctx context.Context) ([]state.TopologyMetadata, error) {
 	keys, err := r.backend.keys(ctx)
@@ -118,14 +137,14 @@ func decodeAggregate(raw []byte) (*aggregate, error) {
 	if err := json.Unmarshal(raw, &header); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrCorruptRecord, err)
 	}
-	if header.Format != FormatVersion && header.Format != GCSourceFormatVersion && header.Format != GCSourceRetirementFormatVersion && header.Format != GCDispositionFormatVersion && header.Format != OwnershipRetirementFormatVersion && header.Format != OwnershipTargetFormatVersion && header.Format != GCAdmissionFormatVersion && header.Format != IntentDispositionFormatVersion && header.Format != AdoptionRecoveryFormatVersion && header.Format != LegacyAdoptionRecoveryFormatVersion {
+	if header.Format != FormatVersion {
 		return nil, fmt.Errorf("%w: got %d want %d", ErrUnsupportedVersion, header.Format, FormatVersion)
 	}
 	var a aggregate
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrCorruptRecord, err)
 	}
-	if a.Format != FormatVersion && a.Format != GCSourceFormatVersion && a.Format != GCSourceRetirementFormatVersion && a.Format != GCDispositionFormatVersion && a.Format != OwnershipRetirementFormatVersion && a.Format != OwnershipTargetFormatVersion && a.Format != GCAdmissionFormatVersion && a.Format != IntentDispositionFormatVersion && a.Format != AdoptionRecoveryFormatVersion && a.Format != LegacyAdoptionRecoveryFormatVersion {
+	if a.Format != FormatVersion {
 		return nil, fmt.Errorf("%w: got %d want %d", ErrUnsupportedVersion, a.Format, FormatVersion)
 	}
 	if err := validateAggregate(&a, ""); err != nil {
@@ -137,6 +156,9 @@ func decodeAggregate(raw []byte) (*aggregate, error) {
 // Validate both loaded records and proposed mutations. JSON syntax alone does
 // not make identity, journal revision, or recovery evidence trustworthy.
 func validateAggregate(a *aggregate, topology string) error {
+	if a.Format != FormatVersion {
+		return ErrUnsupportedVersion
+	}
 	if err := validateIntentDispositionArchives(a); err != nil {
 		return err
 	}
@@ -193,7 +215,7 @@ func validateAggregate(a *aggregate, topology string) error {
 			return fmt.Errorf("%w: invalid action status", ErrCorruptRecord)
 		}
 		if action.Status == runtime.ActionSucceeded {
-			if action.ExpectedSerial >= a.Serial || action.Action != controlplane.PlanActionDelete && action.Candidate == nil {
+			if action.ExpectedSerial >= a.Serial || action.Action != model.PlanActionDelete && action.Candidate == nil {
 				return fmt.Errorf("%w: success lacks atomic patch evidence", ErrCorruptRecord)
 			}
 		}
@@ -201,7 +223,7 @@ func validateAggregate(a *aggregate, topology string) error {
 			want := action.Generation
 			// Reset checkpoints before replacement preserve the old generation
 			// and its provider reset token, never pretend it is already new.
-			if action.Action == controlplane.PlanActionReset && !action.EffectComplete && action.Status != runtime.ActionSucceeded {
+			if action.Action == model.PlanActionReset && !action.EffectComplete && action.Status != runtime.ActionSucceeded {
 				want--
 			}
 			if !c.Address.Equal(action.Resource) || c.OwnerUID != action.OwnerUID || c.ResourceUID != action.ResourceUID || c.Generation != want || want < 1 {
@@ -209,7 +231,7 @@ func validateAggregate(a *aggregate, topology string) error {
 			}
 		}
 		if replacement := action.Replacement; replacement != nil {
-			if action.Action != controlplane.PlanActionReset || (action.Phase != "applying" && action.Phase != "verifying") || !replacement.Address.Equal(action.Resource) || replacement.OwnerUID != action.OwnerUID || replacement.ResourceUID != action.ResourceUID || replacement.Generation != action.Generation || replacement.ExternalID == "" {
+			if action.Action != model.PlanActionReset || (action.Phase != "applying" && action.Phase != "verifying") || !replacement.Address.Equal(action.Resource) || replacement.OwnerUID != action.OwnerUID || replacement.ResourceUID != action.ResourceUID || replacement.Generation != action.Generation || replacement.ExternalID == "" {
 				return fmt.Errorf("%w: invalid reset replacement identity", ErrCorruptRecord)
 			}
 			if action.EffectComplete && (action.Candidate == nil || action.Candidate.ExternalID != replacement.ExternalID || action.Candidate.Driver != replacement.Driver) {
@@ -358,11 +380,11 @@ func validateAction(a runtime.ActionRecord) error {
 		return fmt.Errorf("invalid action identity")
 	}
 	switch a.Action {
-	case controlplane.PlanActionCreate, controlplane.PlanActionAdopt, controlplane.PlanActionRead, controlplane.PlanActionDelete, controlplane.PlanActionReset:
+	case model.PlanActionCreate, model.PlanActionAdopt, model.PlanActionRead, model.PlanActionDelete, model.PlanActionReset:
 	default:
 		return fmt.Errorf("invalid action %s", a.Action)
 	}
-	if a.Action == controlplane.PlanActionReset && resetPhaseOrder(a.Phase) < 0 {
+	if a.Action == model.PlanActionReset && resetPhaseOrder(a.Phase) < 0 {
 		return fmt.Errorf("invalid reset phase %q", a.Phase)
 	}
 	return nil
@@ -391,7 +413,7 @@ func (r *Repository) CommitActionIntent(ctx context.Context, action runtime.Acti
 	if action.DispositionID != "" || action.Status != runtime.ActionIntentCommitted || action.Revision != 0 {
 		return fmt.Errorf("new action must be intent_committed")
 	}
-	if action.Action == controlplane.PlanActionReset && (action.Phase != "accepted" || action.EffectComplete) {
+	if action.Action == model.PlanActionReset && (action.Phase != "accepted" || action.EffectComplete) {
 		return fmt.Errorf("%w: reset intent must begin accepted without effects", ErrConflict)
 	}
 	return r.update(ctx, action.Topology, func(a *aggregate) error {
@@ -504,7 +526,7 @@ func applyActionOutcome(a *aggregate, action runtime.ActionRecord, patch *runtim
 	if old.Replacement != nil && (action.Replacement == nil || old.Replacement.ExternalID != action.Replacement.ExternalID || old.Replacement.Driver != action.Replacement.Driver) {
 		return fmt.Errorf("%w: reset replacement cannot be discarded or substituted", ErrConflict)
 	}
-	if action.Action == controlplane.PlanActionReset {
+	if action.Action == model.PlanActionReset {
 		before, after := resetPhaseOrder(old.Phase), resetPhaseOrder(action.Phase)
 		if before < 1 || after < before || after > before+1 {
 			return fmt.Errorf("%w: reset phase must advance one step or remain unchanged", ErrConflict)
@@ -523,7 +545,7 @@ func applyActionOutcome(a *aggregate, action runtime.ActionRecord, patch *runtim
 			return ErrConflict
 		}
 		if patch.Op == runtime.StatePatchDelete {
-			if action.Action != controlplane.PlanActionDelete {
+			if action.Action != model.PlanActionDelete {
 				return ErrConflict
 			}
 			a.State.RemoveResource(action.Resource)
@@ -579,7 +601,7 @@ func (r *Repository) CommitAdoptionEvidenceAtomic(ctx context.Context, runID, to
 		return err
 	}
 	digest := fmt.Sprintf("%x", sha256.Sum256(raw))
-	action := runtime.ActionRecord{ID: "adopt-" + digest, Topology: topology, RunID: runID, Resource: addr, Action: controlplane.PlanActionAdopt, Status: runtime.ActionIntentCommitted, DesiredDigest: digest, OwnerUID: identity.OwnerUID, ResourceUID: identity.ResourceUID, Generation: identity.Generation, StateSerial: expectedSerial, ExpectedSerial: expectedSerial, Candidate: &resource}
+	action := runtime.ActionRecord{ID: "adopt-" + digest, Topology: topology, RunID: runID, Resource: addr, Action: model.PlanActionAdopt, Status: runtime.ActionIntentCommitted, DesiredDigest: digest, OwnerUID: identity.OwnerUID, ResourceUID: identity.ResourceUID, Generation: identity.Generation, StateSerial: expectedSerial, ExpectedSerial: expectedSerial, Candidate: &resource}
 	if err := validateAction(action); err != nil {
 		return err
 	}
@@ -675,22 +697,22 @@ func validateActionTarget(st *state.State, action runtime.ActionRecord) error {
 	}
 	current := st.FindResource(action.Resource)
 	if current == nil {
-		if action.Action == controlplane.PlanActionDelete || action.Action == controlplane.PlanActionReset {
+		if action.Action == model.PlanActionDelete || action.Action == model.PlanActionReset {
 			return ErrConflict
 		}
 		return nil
 	}
-	if action.Action == controlplane.PlanActionCreate || action.Action == controlplane.PlanActionAdopt {
+	if action.Action == model.PlanActionCreate || action.Action == model.PlanActionAdopt {
 		return ErrConflict
 	}
 	want := action.Generation
-	if action.Action == controlplane.PlanActionReset {
+	if action.Action == model.PlanActionReset {
 		want--
 	}
 	if current.OwnerUID != action.OwnerUID || current.ResourceUID != action.ResourceUID || current.Generation != want {
 		return ErrConflict
 	}
-	if action.Action == controlplane.PlanActionDelete && (action.Candidate == nil || current.ExternalID != action.Candidate.ExternalID) {
+	if action.Action == model.PlanActionDelete && (action.Candidate == nil || current.ExternalID != action.Candidate.ExternalID) {
 		return ErrConflict
 	}
 	return nil
@@ -753,17 +775,6 @@ func resetAggregate(a *aggregate) error {
 	a.Restores = map[string]SnapshotRestoreReceipt{}
 	a.ResetContinuations = map[string]runtime.ResetContinuationReceipt{}
 	a.GC = map[string]GCReservation{}
-	if a.Format == GCAdmissionFormatVersion {
-		switch {
-		case len(a.OwnershipTargets) > 0:
-			a.Format = OwnershipTargetFormatVersion
-		case len(a.OwnershipRetirements) > 0:
-			a.Format = OwnershipRetirementFormatVersion
-		default:
-			a.Format = a.GCReferenceFormat
-		}
-	}
-	a.GCReferenceFormat = 0
 	a.Serial = 0
 	a.UpdatedAt = time.Now().UTC()
 	return nil

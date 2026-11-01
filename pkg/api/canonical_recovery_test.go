@@ -14,7 +14,10 @@ import (
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
@@ -33,7 +36,7 @@ func (h *recoveryResource) Type() string { return h.kind }
 func (h *recoveryResource) Schema() runtime.ResourceSchema {
 	return runtime.ResourceSchema{Type: h.kind, Version: 1}
 }
-func (h *recoveryResource) Read(_ context.Context, r state.Resource) (runtime.ResourceReadResult, error) {
+func (h *recoveryResource) Read(_ context.Context, r state.Resource, providers *driver.Registry) (runtime.ResourceReadResult, error) {
 	if h.onRead != nil {
 		h.onRead()
 	}
@@ -48,14 +51,14 @@ func (h *recoveryResource) Read(_ context.Context, r state.Resource) (runtime.Re
 	return runtime.ResourceReadResult{Status: status, Resource: r}, nil
 }
 func (h *recoveryResource) Discover(ctx context.Context, _ *runtime.ProviderContext, n *graph.Node) (runtime.ResourceReadResult, error) {
-	return h.Read(ctx, state.Resource{Address: n.Address})
+	return h.Read(ctx, state.Resource{Address: n.Address}, driver.DefaultRegistry)
 }
-func (h *recoveryResource) PlanDiff(n *graph.Node, r *state.Resource) (controlplane.PlannedChange, error) {
-	a := controlplane.PlanActionNoop
+func (h *recoveryResource) PlanDiff(n *graph.Node, r *state.Resource) (model.PlannedChange, error) {
+	a := model.PlanActionNoop
 	if r == nil {
-		a = controlplane.PlanActionCreate
+		a = model.PlanActionCreate
 	}
-	return controlplane.PlannedChange{Address: n.Address, Action: a}, nil
+	return model.PlannedChange{Address: n.Address, Action: a}, nil
 }
 func (h *recoveryResource) Create(_ context.Context, _ *runtime.ProviderContext, n *graph.Node) (state.Resource, error) {
 	h.exists = true
@@ -68,7 +71,7 @@ func (h *recoveryResource) Delete(context.Context, *runtime.ProviderContext, sta
 	return nil
 }
 func (h *recoveryResource) ExternalID(r state.Resource) string { return r.ExternalID }
-func (h *recoveryResource) DecodeResource(config.ResourceBlock, string, *hcl.EvalContext) (any, []address.Address, error) {
+func (h *recoveryResource) DecodeResource(config.ResourceBlock, string, *hcl.EvalContext, *driver.Registry) (any, []address.Address, error) {
 	if h.provisioner {
 		return &config.NodeConfig{Provisioners: []config.ProvisionerConfig{{Type: "exec", Program: "work", Shell: "none"}}}, nil, nil
 	}
@@ -97,7 +100,7 @@ func TestCanonicalRecoveryRejectsFreezeStartedDuringObservation(t *testing.T) {
 			require.NoError(t, err)
 			provider.onRead = func() {
 				provider.onRead = nil
-				_, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).BeginMaintenance(ctx, "freeze-during-read", before.TopologyUID, "restore-digest")
+				_, err := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore}).BeginMaintenance(ctx, "freeze-during-read", before.TopologyUID, "restore-digest")
 				require.NoError(t, err)
 			}
 			manager, err := s.stateManager("lab")
@@ -127,7 +130,7 @@ func TestCanonicalRecoveryAndCleanupRefuseMaintenanceBeforeProviderAccess(t *tes
 			require.NoError(t, err)
 			journal, err := repo.LoadActions(ctx, "lab")
 			require.NoError(t, err)
-			authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+			authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
 			_, err = authority.BeginMaintenance(ctx, "maintenance", before.TopologyUID, "restore-digest")
 			require.NoError(t, err)
 			reads, deletes := provider.reads, provider.deletes
@@ -173,16 +176,16 @@ func canonicalRecoveryFixture(t *testing.T, provisioner bool, agents ...string) 
 	s.jobs.replace(run)
 	mgr, err := s.stateManager("lab")
 	require.NoError(t, err)
-	g, _, st, _, _, err := runtime.LoadWorkspaceWithInputs(path, mgr, nil)
+	g, _, st, _, _, err := runtime.LoadWorkspaceWithInputs(path, mgr, nil, driver.DefaultRegistry)
 	require.NoError(t, err)
 	repo, err := s.actionRepository("lab")
 	require.NoError(t, err)
 	addr := address.Resource(h.kind, "node")
-	executor := runtime.NewExecutor(g, st)
+	executor := runtime.NewExecutor(g, st, driver.DefaultRegistry)
 	executor.SetRunContext("lab", run.ID)
 	executor.SetRunIncarnation(run.QueuedAt, run.Revision)
 	executor.SetActionRepository(rejectRecoveryCommit{repo})
-	require.Error(t, executor.Apply(context.Background(), &runtime.Plan{Actions: []controlplane.PlannedChange{{Address: addr, Action: controlplane.PlanActionCreate}}}))
+	require.Error(t, executor.Apply(context.Background(), &runtime.Plan{Actions: []model.PlannedChange{{Address: addr, Action: model.PlanActionCreate}}}))
 	require.Equal(t, 1, h.creates)
 	return s, run, h, addr
 }
@@ -229,7 +232,7 @@ func TestCanonicalRecoverRejectsCheckpointOnlyEvidence(t *testing.T) {
 	run := s.jobs.start("lab", "apply")
 	run.Status = controlplane.RunFailed
 	s.jobs.replace(run)
-	cp := runtime.OperationCheckpoint{RunID: run.ID, Topology: "lab", StatePatches: []runtime.StatePatch{{Resource: "sysbox_node.web", Action: controlplane.PlanActionCreate, Op: runtime.StatePatchUpsert, State: &runtime.StateResourceLog{Type: "sysbox_node", Name: "web", ExternalID: "unverified"}}}}
+	cp := runtime.OperationCheckpoint{RunID: run.ID, Topology: "lab", StatePatches: []runtime.StatePatch{{Resource: "sysbox_node.web", Action: model.PlanActionCreate, Op: runtime.StatePatchUpsert, State: &runtime.StateResourceLog{Type: "sysbox_node", Name: "web", ExternalID: "unverified"}}}}
 	require.NoError(t, s.apiStore.SaveCheckpoint(context.Background(), "lab", run.ID, cp))
 	rec := recoveryRequest(s, run.ID, "recover")
 	require.GreaterOrEqual(t, rec.Code, 400)

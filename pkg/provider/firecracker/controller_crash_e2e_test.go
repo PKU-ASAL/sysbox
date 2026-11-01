@@ -31,7 +31,7 @@ func TestFirecrackerCrashControllerChild(t *testing.T) {
 	s := realFirecracker(t, os.Getenv("SYSBOX_FC_CRASH_KERNEL"), os.Getenv("SYSBOX_FC_CRASH_BIN"), root)
 	identity := substrate.OperationIdentity{ActionID: "create", OwnerUID: "owner", ResourceUID: "resource", TopologyUID: "topology", Generation: 1}
 	ctx := substrate.WithOperationIdentity(context.Background(), identity)
-	h, err := s.CreateNode(ctx, substrate.NodeSpec{Name: "crash-node", Image: substrate.ArtifactHandle{ID: os.Getenv("SYSBOX_FC_CRASH_ROOTFS")}, ProviderConfig: &Config{Kernel: os.Getenv("SYSBOX_FC_CRASH_KERNEL"), AllowDirect: true}})
+	h, err := s.CreateNode(ctx, substrate.NodeSpec{Name: "crash-node", Image: substrate.ArtifactHandle{ID: os.Getenv("SYSBOX_FC_CRASH_ROOTFS")}, ProviderConfig: &Config{Kernel: os.Getenv("SYSBOX_FC_CRASH_KERNEL")}})
 	require.NoError(t, err)
 	// Publish cleanup coordinates before starting any process.
 	evidence := crashEvidence{Handle: *h.Provider.(*HandleState), ID: h.ID}

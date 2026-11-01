@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
 )
@@ -23,7 +24,7 @@ func consoleDispatchFixture() (controlplane.ConsoleSession, controlplane.AgentCo
 }
 
 func TestConsoleDispatchPublishesCompleteOutboxAndPreservesRetirement(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		sess, cmd := consoleDispatchFixture()
 		require.NoError(t, store.CreateConsoleDispatch(ctx, sess, cmd))
@@ -52,7 +53,7 @@ func TestConsoleDispatchPublishesCompleteOutboxAndPreservesRetirement(t *testing
 }
 
 func TestConsoleDispatchConflictAndFreezePublishNeitherRecord(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		sess, cmd := consoleDispatchFixture()
 		prior := cmd
@@ -65,7 +66,7 @@ func TestConsoleDispatchConflictAndFreezePublishNeitherRecord(t *testing.T) {
 		cmd.ID = "new-command"
 		s := stateDeleteTestServer(t, store)
 		uid := grantTestTopologyUID(t, s, "lab")
-		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		_, err = authority.BeginMaintenance(ctx, "freeze", uid, "plan")
 		require.NoError(t, err)
 		require.ErrorIs(t, store.CreateConsoleDispatch(ctx, sess, cmd), persistence.ErrConflict)
@@ -106,7 +107,7 @@ func TestConsoleAdmissionSurvivesNotificationFailure(t *testing.T) {
 }
 
 func TestConsoleOpenRejectsStandalonePublication(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		_, cmd := consoleDispatchFixture()
 		publisher := &AgentService{store: store}
 		_, err := publisher.PublishCommand(context.Background(), cmd.AgentID, cmd)
@@ -137,7 +138,7 @@ func TestConsoleAdmissionDoesNotAuthorizeRequestBodyIdentity(t *testing.T) {
 }
 
 func TestConsoleDispatchRejectsInvalidBindingWithoutPublication(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		for name, mutate := range map[string]func(*controlplane.AgentCommand){
 			"agent":   func(c *controlplane.AgentCommand) { c.AgentID = "other" },
 			"session": func(c *controlplane.AgentCommand) { copy := *c.Session; copy.Node = "other"; c.Session = &copy },
@@ -160,7 +161,7 @@ func TestConsoleDispatchRejectsInvalidBindingWithoutPublication(t *testing.T) {
 }
 
 func TestConsoleDispatchConcurrentCommandCollisionHasOneWinner(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		start := make(chan struct{})
 		results := make(chan error, 2)
 		var workers sync.WaitGroup

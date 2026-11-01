@@ -3,12 +3,14 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+
 	"github.com/oslab/sysbox/pkg/address"
-	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
-	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestApplyCannotTreatIncompleteRetainedResourceAsReady(t *testing.T) {
@@ -16,7 +18,7 @@ func TestApplyCannotTreatIncompleteRetainedResourceAsReady(t *testing.T) {
 	r := state.Resource{Address: addr, OwnerUID: e.state.TopologyUID, ResourceUID: "resource", Generation: 2}
 	require.NoError(t, r.RequireRecovery("decision", r.ResourceUID, r.Generation))
 	e.state.Resources = []state.Resource{r}
-	err := e.Apply(context.Background(), singleConvergencePlan(addr, controlplane.PlanActionRead))
+	err := e.Apply(context.Background(), singleConvergencePlan(addr, model.PlanActionRead))
 	require.ErrorIs(t, err, ErrActionUncertain)
 	require.Zero(t, h.creates)
 	require.Zero(t, h.deletes)

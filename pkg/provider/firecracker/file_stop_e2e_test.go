@@ -45,7 +45,7 @@ func TestFirecrackerUnknownPersistentFileStopE2E(t *testing.T) {
 	defer cancel()
 	id := substrate.OperationIdentity{ActionID: "create", OwnerUID: "file-stop-owner", TopologyUID: "file-stop-topology", ResourceUID: "file-stop-node", Generation: 1}
 	ctx = substrate.WithOperationIdentity(ctx, id)
-	h, err := s.CreateNode(ctx, substrate.NodeSpec{Name: "file-stop-e2e", Image: substrate.ArtifactHandle{ID: rootfs}, ProviderConfig: &Config{Kernel: kernel, AllowDirect: true}})
+	h, err := s.CreateNode(ctx, substrate.NodeSpec{Name: "file-stop-e2e", Image: substrate.ArtifactHandle{ID: rootfs}, ProviderConfig: &Config{Kernel: kernel}})
 	require.NoError(t, err)
 	cleanupRealVM(t, s, h)
 	require.NoError(t, s.StartNode(ctx, h))

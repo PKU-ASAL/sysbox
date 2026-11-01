@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
@@ -52,7 +52,7 @@ func (e *Executor) pinResetSSH(record *ActionRecord) error {
 		if err != nil || ref != saved.Node {
 			return fmt.Errorf("reset SSH dependency target changed: %s", current.Address)
 		}
-		digest, err := desiredActionDigest(n, controlplane.PlannedChange{Address: current.Address, Action: controlplane.PlanActionCreate})
+		digest, err := desiredActionDigest(n, model.PlannedChange{Address: current.Address, Action: model.PlanActionCreate})
 		if err != nil {
 			return err
 		}
@@ -85,7 +85,7 @@ func SameResetSSHIntent(a, b ActionRecord) bool {
 // ValidateResetSSH checks dependencies against the still-canonical old state.
 // Publication of the node and all verified child results happens in one commit.
 func (a ActionRecord) ValidateResetSSH(st *state.State) error {
-	if a.Action != controlplane.PlanActionReset {
+	if a.Action != model.PlanActionReset {
 		if len(a.ResetSSH) != 0 {
 			return fmt.Errorf("SSH dependencies require reset")
 		}
@@ -196,14 +196,14 @@ func (e *Executor) reconcileResetSSHWithEffects(ctx context.Context, record *Act
 		if n == nil {
 			return fmt.Errorf("reset SSH configuration missing")
 		}
-		digest, err := desiredActionDigest(n, controlplane.PlannedChange{Address: n.Address, Action: controlplane.PlanActionCreate})
+		digest, err := desiredActionDigest(n, model.PlannedChange{Address: n.Address, Action: model.PlanActionCreate})
 		if err != nil || digest != dep.DesiredDigest {
 			return fmt.Errorf("%w: reset SSH configuration changed", ErrPlanStale)
 		}
 		id := substrate.OperationIdentity{ActionID: dep.ActionID, OwnerUID: record.OwnerUID, TopologyUID: record.OwnerUID, ResourceUID: dep.Previous.ResourceUID, Generation: dep.Previous.Generation + 1}
 		childCtx := substrate.WithOperationIdentity(ctx, id)
 		if dep.Result != nil {
-			observed, err := h.ReadWithState(childCtx, *dep.Result, staged)
+			observed, err := h.ReadWithState(childCtx, *dep.Result, staged, e.providers)
 			if err != nil {
 				return err
 			}

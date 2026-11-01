@@ -2,9 +2,10 @@ package firecracker
 
 import (
 	"context"
+	"testing"
+
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestManagedAttachmentDiscoveryRequiresCompleteManifest(t *testing.T) {

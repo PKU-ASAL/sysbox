@@ -5,11 +5,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/persistence"
-	"github.com/oslab/sysbox/pkg/substrate"
 	"net/http"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 // Derived SSH mutations share the parent's command, but own a distinct digest,
@@ -40,12 +42,9 @@ func (s *Server) handleDeriveSSHExecutionGrant(w http.ResponseWriter, r *http.Re
 		return
 	}
 	parent := request.Parent
-	if err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).ObserveTime(r.Context()); err != nil {
-		writeError(w, agentRepositoryErrorStatus(err), err)
-		return
-	}
+	reject := s.rejectAuthorization(w, r)
 	if parent.Grant.AgentID != r.PathValue("agent") || controlplane.VerifyExecutionGrant(s.grantSigner.Public().(ed25519.PublicKey), parent, parent.BootID, time.Now()) != nil {
-		writeError(w, http.StatusConflict, controlplane.ErrInvalidExecutionGrant)
+		reject(http.StatusConflict, controlplane.ErrInvalidExecutionGrant)
 		return
 	}
 	operation := "guest_ssh_access_apply"
@@ -55,12 +54,12 @@ func (s *Server) handleDeriveSSHExecutionGrant(w http.ResponseWriter, r *http.Re
 	child := controlplane.ExecutionGrant{TargetBootID: request.GuestBootID, Scope: controlplane.ExecutionScope{TopologyUID: parent.Grant.Scope.TopologyUID, ResourceUID: request.ResourceUID, Generation: request.Generation}, AgentID: parent.Grant.AgentID, SessionID: parent.Grant.SessionID, ActionID: request.Request.ID, CommandID: parent.Grant.CommandID, Attempt: parent.Grant.Attempt, Operation: operation, Digest: digest, ExpiresAt: parent.Grant.ExpiresAt}
 	derived, err := mustDeriveGuestGrant(r.Context(), s.derivedGuestStorage(r.Context(), parent), parent.Grant, child, time.Until(parent.Grant.ExpiresAt))
 	if err != nil {
-		writeError(w, agentRepositoryErrorStatus(err), err)
+		reject(agentRepositoryErrorStatus(err), err)
 		return
 	}
 	signed, err := controlplane.SignExecutionGrant(s.grantSigner, *derived, request.GuestBootID, time.Now().UTC())
 	if err != nil {
-		writeError(w, http.StatusConflict, err)
+		reject(http.StatusConflict, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, signed)
@@ -98,7 +97,7 @@ func (s *Server) handleDerivedSSHCompletion(w http.ResponseWriter, r *http.Reque
 	sum := sha256.Sum256(raw)
 	// The ledger checks the exact issued grant including ParentEpoch. Historical
 	// signed completion remains admissible after expiry; it grants no new effect.
-	err = persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).AcceptHostStop(r.Context(), g, hex.EncodeToString(sum[:]))
+	err = persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore}).AcceptHostStop(r.Context(), g, hex.EncodeToString(sum[:]))
 	if err != nil {
 		writeError(w, agentRepositoryErrorStatus(err), err)
 		return

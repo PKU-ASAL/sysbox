@@ -4,11 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/gofrs/flock"
-	"github.com/oslab/sysbox/pkg/revisiongate"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/gofrs/flock"
+	"github.com/oslab/sysbox/pkg/revisiongate"
 )
 
 type fileBackend struct{ root string }

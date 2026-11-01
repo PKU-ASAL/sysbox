@@ -1,12 +1,14 @@
 package api
 
 import (
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/stretchr/testify/require"
 	"testing"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/hostexec"
+	"github.com/stretchr/testify/require"
 )
 
 func TestExecutionBridgeDoesNotRecoverMissingSnapshotFromMutableWorkspace(t *testing.T) {
-	b := &ExecutionBridge{server: NewServer(t.TempDir(), t.TempDir())}
+	b := &hostexec.Environment{}
 	require.Empty(t, b.HCLFileForRun(&controlplane.Run{ID: "old", Topology: "lab"}))
 }

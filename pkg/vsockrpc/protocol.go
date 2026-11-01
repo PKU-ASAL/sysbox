@@ -44,7 +44,6 @@ const (
 	OpPing      Op = "ping"
 	OpReady     Op = "ready.v1"
 	OpExec      Op = "exec.v2"
-	OpConsole   Op = "console"
 	OpWriteFile Op = "write_file.v2"
 	OpTask      Op = "task.v1"
 )
@@ -57,9 +56,6 @@ type Request struct {
 	Cmd       []string          `json:"cmd,omitempty"`      // exec
 	Env       map[string]string `json:"env,omitempty"`      // exec
 	WorkDir   string            `json:"work_dir,omitempty"` // exec
-	TTY       bool              `json:"tty,omitempty"`      // console
-	Cols      int               `json:"cols,omitempty"`     // console
-	Rows      int               `json:"rows,omitempty"`     // console
 	Path      string            `json:"path,omitempty"`     // write_file / read_file
 	Mode      uint32            `json:"mode,omitempty"`     // write_file (file mode bits)
 	Size      int64             `json:"size,omitempty"`     // write_file (body bytes following the header)

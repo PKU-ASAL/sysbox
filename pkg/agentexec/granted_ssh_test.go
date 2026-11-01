@@ -5,11 +5,6 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
-	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/hostsupervisor"
-	"github.com/oslab/sysbox/pkg/substrate"
-	"github.com/stretchr/testify/require"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -18,6 +13,12 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/hostsupervisor"
+	"github.com/oslab/sysbox/pkg/substrate"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSSHAccessCommandRequiresBoundPayload(t *testing.T) {
@@ -98,7 +99,7 @@ func TestSSHWorkerDoesNotPostCanonicalCompletionOnHostFailure(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { calls.Add(1); w.WriteHeader(200) }))
 	defer server.Close()
 	for _, operation := range []string{"guest_ssh_access_apply", "guest_ssh_access_delete"} {
-		runner := newCommandRunner(NewExecutorWithBridge(nil), Options{APIURL: server.URL, ID: "agent", Policy: config.DefaultServiceConfig().Agent.Policy})
+		runner := newCommandRunner(Options{APIURL: server.URL, ID: "agent", Policy: config.DefaultServiceConfig().Agent.Policy})
 		cmd := controlplane.AgentCommand{ID: "command", AgentID: "agent", Type: "node_operation", ActionID: "action", ResourceUID: "node", Generation: 1, LeaseOwner: "worker", Attempt: 1, LeaseUntil: time.Now().Add(time.Minute), Operation: controlplane.NodeOperation{ID: "operation", Topology: "lab", Node: "web", Operation: operation}}
 		var events []controlplane.AgentCommandEvent
 		runner.Execute(context.Background(), &cmd, func(event controlplane.AgentCommandEvent) { events = append(events, event) })

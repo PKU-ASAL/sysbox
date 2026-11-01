@@ -12,8 +12,8 @@ import (
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/secret"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -93,16 +93,16 @@ func TestSensitiveInputDoesNotEnterOutputs(t *testing.T) {
 // 3. Plan diff: the change is reported without revealing the value. A change in
 // a sensitive variable surfaces as the reference, not the before/after plaintext.
 func TestSensitiveInputDoesNotEnterPlanDiff(t *testing.T) {
-	change := controlplane.FieldChange{
+	change := model.FieldChange{
 		Path:      "env.FLAG",
 		Before:    "secret://input/flag",
 		After:     "secret://input/flag",
 		Sensitive: true,
 	}
-	planJSON, err := json.Marshal(controlplane.PlannedChange{
+	planJSON, err := json.Marshal(model.PlannedChange{
 		Address: address.Resource("sysbox_node", "web"),
-		Action:  controlplane.PlanActionCreate,
-		Changes: []controlplane.FieldChange{change},
+		Action:  model.PlanActionCreate,
+		Changes: []model.FieldChange{change},
 	})
 	require.NoError(t, err)
 

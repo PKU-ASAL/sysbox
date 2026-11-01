@@ -6,14 +6,17 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
-	"github.com/oslab/sysbox/pkg/address"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/runtime"
-	"github.com/oslab/sysbox/pkg/state"
-	"github.com/stretchr/testify/require"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/oslab/sysbox/pkg/address"
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
+	"github.com/oslab/sysbox/pkg/runtime"
+	"github.com/oslab/sysbox/pkg/state"
 )
 
 func TestFenceDeleteReconciliationClosesOnlyAnchoredAbsentNodes(t *testing.T) {
@@ -31,7 +34,7 @@ func TestFenceDeleteReconciliationClosesOnlyAnchoredAbsentNodes(t *testing.T) {
 	a := newAggregate()
 	a.Serial = 1
 	a.State.TopologyUID = "owner"
-	action := runtime.ActionRecord{ID: "delete", Topology: "lab", RunID: run.ID, RunQueuedAt: run.QueuedAt, RunRevision: run.Revision, OwnerUID: "owner", ResourceUID: "node", Generation: 1, Resource: address.Resource("sysbox_node", "web"), Action: controlplane.PlanActionDelete, Revision: 1, Status: runtime.ActionUncertain, ProviderOperationID: "delete", ProviderOperationAnchor: "action:delete", Quiescence: "unknown", Candidate: &state.Resource{Address: address.Resource("sysbox_node", "web"), Driver: "docker", ExternalID: "external", OwnerUID: "owner", ResourceUID: "node", Generation: 1}}
+	action := runtime.ActionRecord{ID: "delete", Topology: "lab", RunID: run.ID, RunQueuedAt: run.QueuedAt, RunRevision: run.Revision, OwnerUID: "owner", ResourceUID: "node", Generation: 1, Resource: address.Resource("sysbox_node", "web"), Action: model.PlanActionDelete, Revision: 1, Status: runtime.ActionUncertain, ProviderOperationID: "delete", ProviderOperationAnchor: "action:delete", Quiescence: "unknown", Candidate: &state.Resource{Address: address.Resource("sysbox_node", "web"), Driver: "docker", ExternalID: "external", OwnerUID: "owner", ResourceUID: "node", Generation: 1}}
 	a.Actions[action.ID] = action
 	a.State.AddResource(*action.Candidate)
 	_, journal, err := FenceJournal(run, a.Serial, actionValues(a))
@@ -46,7 +49,7 @@ func TestFenceDeleteReconciliationClosesOnlyAnchoredAbsentNodes(t *testing.T) {
 	require.NoError(t, repo.RecordHostFence(ctx, req.ID, receipt))
 	hostPub, hostKey, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
-	report := controlplane.RunRecoveryReport{CommandID: "observe", RunID: run.ID, AgentID: "agent", RunAttempt: run.Attempt, QueuedAt: run.QueuedAt, Revision: run.Revision, Mode: controlplane.RunRecoveryObserve, TopologyUID: "owner", StateSerial: a.Serial, ObservedAt: time.Now().UTC(), Resources: []controlplane.RecoveredResource{{ActionID: action.ID, Resource: action.Resource.String(), OwnerUID: "owner", ResourceUID: "node", Generation: 1, ExternalID: "external", Status: "absent", ProviderScope: "local-only", DeleteResidueAbsent: true, JournalStatus: "uncertain"}}}
+	report := controlplane.RunRecoveryReport{CommandID: "observe", RunID: run.ID, AgentID: "agent", RunAttempt: run.Attempt, QueuedAt: run.QueuedAt, Revision: run.Revision, Mode: controlplane.RunRecoveryObserve, TopologyUID: "owner", StateSerial: a.Serial, ObservedAt: time.Now().UTC(), Resources: []model.RecoveredResource{{ActionID: action.ID, Resource: action.Resource.String(), OwnerUID: "owner", ResourceUID: "node", Generation: 1, ExternalID: "external", Status: "absent", ProviderScope: "local-only", DeleteResidueAbsent: true, JournalStatus: "uncertain"}}}
 	report, err = controlplane.SignFenceObservation(hostKey, report, controlplane.FenceObservationBinding{RequestSHA256: digest, HostBootID: receipt.NewBootID}, "observer", 1)
 	require.NoError(t, err)
 	cmd := CommandRecord{Retired: true, Command: controlplane.AgentCommand{ID: "observe", AgentID: "agent", Type: controlplane.RunRecoveryCommand, RecoveryMode: controlplane.RunRecoveryObserve, ActionID: req.ID, TopologyUID: "owner", ExpectedSerial: a.Serial, Run: &run, Status: controlplane.AgentCommandStatusCompleted, LeaseOwner: "observer", Attempt: 1}, Recovery: &report}
@@ -117,7 +120,7 @@ func TestFenceDeleteReconciliationClosesOnlyAnchoredAbsentNodes(t *testing.T) {
 			o := original
 			c := cmd
 			reportCopy := report
-			reportCopy.Resources = append([]controlplane.RecoveredResource(nil), report.Resources...)
+			reportCopy.Resources = append([]model.RecoveredResource(nil), report.Resources...)
 			c.Recovery = &reportCopy
 			auth := authority
 			altered := copy.Actions[action.ID]

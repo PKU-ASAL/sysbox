@@ -6,26 +6,28 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/persistence"
-	"github.com/oslab/sysbox/pkg/substrate"
-	"github.com/stretchr/testify/require"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/oslab/sysbox/pkg/substrate"
+	"github.com/stretchr/testify/require"
 )
 
 func TestFileHostReceiptFinishesAfterCancelWithoutReleasingUnknownGrant(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := NewServer(t.TempDir(), t.TempDir())
 		s.apiStore = store
 		pub, key, err := ed25519.GenerateKey(rand.Reader)
 		require.NoError(t, err)
 		s.grantHostKeys = map[string]ed25519.PublicKey{"agent": pub}
-		repo := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		repo := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		session, err := repo.OpenSession(ctx, "agent", "first", "")
 		require.NoError(t, err)
 		op := controlplane.GuestFileOperation{ID: "install", Version: 1, Topology: "lab", Node: "node", AgentID: "agent", CommandID: "command", Status: controlplane.GuestExecutionQueued, CreatedAt: time.Now()}
@@ -83,10 +85,10 @@ func TestFileHostReceiptFinishesAfterCancelWithoutReleasingUnknownGrant(t *testi
 }
 
 func TestFileCancelAndGrantIssueSerialize(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := &Server{apiStore: store}
-		repo := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		repo := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		session, err := repo.OpenSession(ctx, "agent", "process", "")
 		require.NoError(t, err)
 		op := controlplane.GuestFileOperation{ID: "install", Version: 1, AgentID: "agent", CommandID: "command", Topology: "lab", Node: "node", Status: controlplane.GuestExecutionQueued}
@@ -102,15 +104,15 @@ func TestFileCancelAndGrantIssueSerialize(t *testing.T) {
 		go func() {
 			defer wait.Done()
 			var request controlplane.ExecutionGrant
-			storage := apiExecutionGrantStorage{store: store, commandID: cmd.ID, validate: func(record *persistence.CommandRecord) error {
+			storage := controlstore.AuthorityStorage{Store: store, CommandID: cmd.ID, Validate: func(record *persistence.CommandRecord) error {
 				var err error
 				request, err = s.sourceGrant(ctx, "agent", ExecutionGrantRequest{SessionID: session.ID, Attempt: leased.Attempt, LeaseOwner: leased.LeaseOwner, BootID: "boot"}, record)
 				return err
 			}}
 			issueErr = storage.UpdateExecutionAuthority(ctx, func(raw []byte) ([]byte, error) {
-				memory := &grantTransaction{raw: raw}
+				memory := &controlstore.GrantTransaction{Raw: raw}
 				_, err := persistence.NewExecutionGrantRepository(memory).Issue(ctx, request, time.Minute)
-				return memory.raw, err
+				return memory.Raw, err
 			})
 		}()
 		go func() { defer wait.Done(); noEffect, cancelErr = s.cancelFileDispatch(ctx, op) }()
@@ -130,7 +132,7 @@ func TestFileCancelAndGrantIssueSerialize(t *testing.T) {
 func TestActiveFileCancelResponseReportsPendingRequest(t *testing.T) {
 	s := guestExecutionTestServer(t)
 	ctx := context.Background()
-	session, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).OpenSession(ctx, "host-a", "guest-process", "")
+	session, err := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore}).OpenSession(ctx, "host-a", "guest-process", "")
 	require.NoError(t, err)
 	r := httptest.NewRequest("PUT", "/v1/topologies/lab/nodes/web/files?path=/opt/data/file&mode=0600", strings.NewReader("data"))
 	r.Header.Set("X-Sysbox-Roles", "admin")
@@ -148,7 +150,7 @@ func TestActiveFileCancelResponseReportsPendingRequest(t *testing.T) {
 	require.NoError(t, err)
 	request, err := s.sourceGrant(ctx, "host-a", ExecutionGrantRequest{SessionID: session.ID, LeaseOwner: cmd.LeaseOwner, Attempt: cmd.Attempt, BootID: "guest"}, &persistence.CommandRecord{Command: *cmd})
 	require.NoError(t, err)
-	_, err = persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).Issue(ctx, request, time.Minute)
+	_, err = persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore}).Issue(ctx, request, time.Minute)
 	require.NoError(t, err)
 	r = httptest.NewRequest("POST", "/v1/file-operations/"+op.ID+"/cancel", nil)
 	r.Header.Set("X-Sysbox-Roles", "admin")
@@ -161,13 +163,13 @@ func TestActiveFileCancelResponseReportsPendingRequest(t *testing.T) {
 }
 
 func TestRebootedFileReceiptEndsUnknownAndAllowsSuccessor(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		pub, key, err := ed25519.GenerateKey(rand.Reader)
 		require.NoError(t, err)
 		s.grantHostKeys = map[string]ed25519.PublicKey{"agent": pub}
-		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		session, err := authority.OpenSession(ctx, "agent", "host", "")
 		require.NoError(t, err)
 		op := controlplane.GuestFileOperation{ID: "file", Version: 1, AgentID: "agent", CommandID: "command", Topology: "lab", Node: "node", Status: controlplane.GuestExecutionQueued, CreatedAt: time.Now().UTC()}
@@ -212,13 +214,13 @@ func TestRebootedFileReceiptEndsUnknownAndAllowsSuccessor(t *testing.T) {
 }
 
 func TestSameBootFileScopeStopEndsUnknownAndAllowsSuccessor(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		pub, key, err := ed25519.GenerateKey(rand.Reader)
 		require.NoError(t, err)
 		s.grantHostKeys = map[string]ed25519.PublicKey{"agent": pub}
-		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		session, err := authority.OpenSession(ctx, "agent", "host", "")
 		require.NoError(t, err)
 		op := controlplane.GuestFileOperation{ID: "file", Version: 1, AgentID: "agent", CommandID: "command", Topology: "lab", Node: "node", Status: controlplane.GuestExecutionQueued, CreatedAt: time.Now().UTC()}

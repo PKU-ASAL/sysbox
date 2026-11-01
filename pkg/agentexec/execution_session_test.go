@@ -3,13 +3,14 @@ package agentexec
 import (
 	"context"
 	"encoding/json"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/stretchr/testify/require"
 	"io"
 	"net/http"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/stretchr/testify/require"
 )
 
 type grantRoundTripper func(*http.Request) (*http.Response, error)

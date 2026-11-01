@@ -28,9 +28,8 @@ func CapabilityNames(substrateName string, caps Capabilities) []string {
 
 // SupportedSubstrates partitions detection results into the substrates that are
 // supported and the reasons the rest are not. A substrate is unsupported only
-// when one of its checks fails with severity "error"; warning-level failures
-// (for example firecracker's "jailer isolation not implemented") downgrade but
-// do not disqualify.
+// when one of its checks fails with severity "error". Warnings do not
+// disqualify the substrate.
 //
 // reasons maps an unsupported substrate to the name of its first failing error
 // check (e.g. "kvm_device", "firecracker_bin"), which the agent turns into a

@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/stretchr/testify/require"
 )
 
@@ -26,14 +27,14 @@ func TestCapabilitiesDescribeSysboxEvidenceBoundaries(t *testing.T) {
 }
 
 func TestCapabilitiesDistinguishSharedAuthorityFromLocalStores(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		server := stateDeleteTestServer(t, store)
 		response := httptest.NewRecorder()
 		server.ServeHTTP(response, httptest.NewRequest("GET", "/v1/capabilities", nil))
 		require.Equal(t, 200, response.Code)
 		var fields map[string]any
 		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &fields))
-		_, shared := store.(*postgresAPIStore)
+		_, shared := store.(*controlstore.Postgres)
 		require.Equal(t, shared, fields["multi_api_execution"])
 		if shared {
 			require.Equal(t, "shared-postgres", fields["execution_store_scope"])

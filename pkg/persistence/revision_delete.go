@@ -98,7 +98,7 @@ func deleteGlobalRevisionLocked(ctx context.Context, c *sql.Conn, postgres bool,
 		// Synthetic global content protects other objects, but a revision's own
 		// registry record cannot count as its own lifecycle reference.
 		if a.GCSources != nil {
-			if _, synthetic := a.GCSources["global"]; synthetic && a.Serial == 0 && len(a.State.Resources) == 0 && a.Format == FormatVersion {
+			if _, synthetic := a.GCSources["global"]; synthetic && a.Serial == 0 && len(a.State.Resources) == 0 {
 				if source := a.GCSources["global"]; len(source.Manifest.Domains["revision"]) == 1 && source.Manifest.Domains["revision"][0] == id {
 					continue
 				}

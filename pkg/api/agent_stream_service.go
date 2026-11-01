@@ -8,13 +8,13 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 )
 
 type AgentStreamService struct {
 	agentService  *AgentService
-	store         apiStore
+	store         controlstore.Store
 	registry      *agentRegistry
 	pollInterval  time.Duration
 	originPattern func() []string

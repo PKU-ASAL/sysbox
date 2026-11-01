@@ -239,10 +239,10 @@ func (r *ExecutionGrantRepository) Issue(ctx context.Context, request controlpla
 		// A stopped power action cannot be turned into a fresh effect by
 		// redelivering its command with a new attempt, session, or epoch.
 		// Stops outlive the latest grant for this scope.
-		if request.Operation == "node_power" {
+		if request.Operation == "node_power" || request.Operation == "guest_task" {
 			for _, stop := range a.Stops {
 				old := stop.Grant
-				if old.Operation == "node_power" && old.Scope.TopologyUID == request.Scope.TopologyUID && old.ActionID == request.ActionID {
+				if old.Operation == request.Operation && old.Scope.TopologyUID == request.Scope.TopologyUID && old.ActionID == request.ActionID {
 					return ErrConflict
 				}
 			}
@@ -421,6 +421,11 @@ func (r *ExecutionGrantRepository) Authorize(ctx context.Context, proof controlp
 	})
 }
 func (r *ExecutionGrantRepository) Renew(ctx context.Context, proof controlplane.ExecutionGrant, ttl time.Duration) (*controlplane.ExecutionGrant, error) {
+	return r.RenewUntil(ctx, proof, ttl, time.Time{})
+}
+
+// RenewUntil applies an absolute deadline under the authority clock.
+func (r *ExecutionGrantRepository) RenewUntil(ctx context.Context, proof controlplane.ExecutionGrant, ttl time.Duration, until time.Time) (*controlplane.ExecutionGrant, error) {
 	if !validTTL(ttl) {
 		return nil, ErrInvalidRecord
 	}
@@ -435,6 +440,12 @@ func (r *ExecutionGrantRepository) Renew(ctx context.Context, proof controlplane
 			return ErrConflict
 		}
 		deadline := now.Add(ttl)
+		if !until.IsZero() && deadline.After(until) {
+			deadline = until
+		}
+		if !deadline.After(now) || !until.IsZero() && g.ExpiresAt.After(until) {
+			return ErrConflict
+		}
 		if deadline.After(g.ExpiresAt) {
 			g.ExpiresAt = deadline
 		}

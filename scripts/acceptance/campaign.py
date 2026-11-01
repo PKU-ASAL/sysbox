@@ -13,6 +13,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tarfile
 
 STAGES = {'P0': 4, 'P1': 5, 'P2': 7, 'P3': 7, 'P4': 6,
           'P5': 5, 'P6': 5, 'P7': 6, 'P8': 4, 'P9': 6}
@@ -54,9 +55,23 @@ def verify_events(raw, expected, expected_package=None):
 
 
 def original_requirements(root):
-    source = root / 'docs/design/2026-10-07-full-migration-distributed-execution-plan.md'
+    # The original requirements remain immutable historical evidence after the
+    # documentation consolidation; do not weaken the catalog to match new prose.
+    directory = root / 'docs/archive'
+    manifest = json.loads((directory / '2026-10-27-documentation.json').read_text())
+    source = 'docs/design/2026-10-07-full-migration-distributed-execution-plan.md'
+    archive = directory / '2026-10-27-documentation.tar.gz'
+    if sha256(archive.read_bytes()) != manifest['archive_sha256']:
+        raise ValueError('historical documentation archive digest mismatch')
+    with tarfile.open(archive, 'r:gz') as bundle:
+        member = bundle.getmember(source)
+        if not member.isfile():
+            raise ValueError('original requirement source must be a regular file')
+        raw = bundle.extractfile(member).read()
+    if sha256(raw) != manifest['files'][source]['sha256']:
+        raise ValueError('original requirement source digest mismatch')
     out, stage, number = {}, None, 0
-    for line in source.read_text().splitlines():
+    for line in raw.decode('utf-8').splitlines():
         if line.startswith('### P'):
             match = re.match(r'### (P\d+)：', line)
             stage = match[1] if match and match[1] in STAGES else None

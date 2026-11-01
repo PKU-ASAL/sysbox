@@ -8,28 +8,26 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/eventstream"
 )
 
 type agentRegistry struct {
-	mu          sync.RWMutex
-	agents      map[string]controlplane.Agent
-	streams     map[string]*Broadcaster
-	status      map[string]*Broadcaster
-	projections map[string]controlplane.Projection
-	resources   map[string]controlplane.ResourceProjection
-	events      map[string][]controlplane.AgentCommandEvent
+	mu        sync.RWMutex
+	agents    map[string]controlplane.Agent
+	streams   map[string]*eventstream.Broadcaster
+	status    map[string]*eventstream.Broadcaster
+	resources map[string]controlplane.ResourceProjection
+	events    map[string][]controlplane.AgentCommandEvent
 }
 
 func newAgentRegistry() *agentRegistry {
 	return &agentRegistry{
-		agents:      map[string]controlplane.Agent{},
-		streams:     map[string]*Broadcaster{},
-		status:      map[string]*Broadcaster{},
-		projections: map[string]controlplane.Projection{},
-		resources:   map[string]controlplane.ResourceProjection{},
-		events:      map[string][]controlplane.AgentCommandEvent{},
+		agents:    map[string]controlplane.Agent{},
+		streams:   map[string]*eventstream.Broadcaster{},
+		status:    map[string]*eventstream.Broadcaster{},
+		resources: map[string]controlplane.ResourceProjection{},
+		events:    map[string][]controlplane.AgentCommandEvent{},
 	}
 }
 
@@ -94,47 +92,6 @@ func (r *agentRegistry) ListResourceProjections(topology string) []controlplane.
 	return out
 }
 
-func (r *agentRegistry) SaveProjection(proj controlplane.Projection) {
-	if proj.AgentID == "" || (proj.Workspace == "" && proj.Topology == "") {
-		return
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	key := proj.AgentID + "/" + proj.Workspace + "/" + proj.Topology
-	r.projections[key] = proj
-}
-
-// RestoreCompletionProjection repairs a lost cache update without rolling back
-// a newer observation from another completed run or inventory report.
-func (r *agentRegistry) RestoreCompletionProjection(proj controlplane.Projection) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	key := proj.AgentID + "/" + proj.Workspace + "/" + proj.Topology
-	old, exists := r.projections[key]
-	if exists && (old.Serial > proj.Serial || old.UpdatedAt.After(proj.UpdatedAt) || old.Serial == proj.Serial && old.UpdatedAt.Equal(proj.UpdatedAt)) {
-		return
-	}
-	r.projections[key] = proj
-}
-
-func (r *agentRegistry) ListProjections(agentID string) []controlplane.Projection {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	out := make([]controlplane.Projection, 0, len(r.projections))
-	for _, proj := range r.projections {
-		if agentID == "" || proj.AgentID == agentID {
-			out = append(out, proj)
-		}
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].AgentID == out[j].AgentID {
-			return out[i].Topology < out[j].Topology
-		}
-		return out[i].AgentID < out[j].AgentID
-	})
-	return out
-}
-
 func (r *agentRegistry) Save(agent controlplane.Agent) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -162,23 +119,23 @@ func (r *agentRegistry) List() []controlplane.Agent {
 	return out
 }
 
-func (r *agentRegistry) Stream(id string) *Broadcaster {
+func (r *agentRegistry) Stream(id string) *eventstream.Broadcaster {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	stream := r.streams[id]
 	if stream == nil {
-		stream = &Broadcaster{}
+		stream = &eventstream.Broadcaster{}
 		r.streams[id] = stream
 	}
 	return stream
 }
 
-func (r *agentRegistry) StatusStream(topology string) *Broadcaster {
+func (r *agentRegistry) StatusStream(topology string) *eventstream.Broadcaster {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	stream := r.status[topology]
 	if stream == nil {
-		stream = &Broadcaster{}
+		stream = &eventstream.Broadcaster{}
 		r.status[topology] = stream
 	}
 	return stream

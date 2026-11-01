@@ -2,9 +2,11 @@ package api
 
 import (
 	"context"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/stretchr/testify/require"
 	"testing"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRepublishAssignedRunsRepairsMissingCommand(t *testing.T) {
@@ -22,7 +24,7 @@ func TestRepublishAssignedRunsRepairsMissingCommand(t *testing.T) {
 	cmds, err := s.ListAgentCommands(ctx, "agent")
 	require.NoError(t, err)
 	require.Len(t, cmds, 1)
-	require.Equal(t, runCommandID(run), cmds[0].ID)
+	require.Equal(t, controlstore.RunCommandID(run), cmds[0].ID)
 	require.Equal(t, canonical.TopologyUID, cmds[0].TopologyUID)
 	require.Equal(t, run.ID, cmds[0].ActionID)
 	require.Equal(t, canonical.Meta.Serial, cmds[0].ExpectedSerial)

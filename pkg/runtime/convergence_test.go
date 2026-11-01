@@ -5,12 +5,14 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/state"
-	"github.com/stretchr/testify/require"
 )
 
 type convergenceHandler struct {
@@ -27,7 +29,7 @@ func (*convergenceHandler) Type() string { return "test_converge" }
 func (*convergenceHandler) Schema() ResourceSchema {
 	return ResourceSchema{Type: "test_converge", Version: 1}
 }
-func (h *convergenceHandler) Read(_ context.Context, r state.Resource) (ResourceReadResult, error) {
+func (h *convergenceHandler) Read(_ context.Context, r state.Resource, providers *driver.Registry) (ResourceReadResult, error) {
 	h.reads++
 	return ResourceReadResult{Status: h.status, Resource: r}, nil
 }
@@ -36,14 +38,14 @@ func (h *convergenceHandler) Discover(ctx context.Context, _ *ProviderContext, n
 	if h.status == state.ResourcePresent {
 		r.ExternalID = "instance-1"
 	}
-	return h.Read(ctx, r)
+	return h.Read(ctx, r, driver.DefaultRegistry)
 }
-func (*convergenceHandler) PlanDiff(n *graph.Node, r *state.Resource) (controlplane.PlannedChange, error) {
-	a := controlplane.PlanActionNoop
+func (*convergenceHandler) PlanDiff(n *graph.Node, r *state.Resource) (model.PlannedChange, error) {
+	a := model.PlanActionNoop
 	if r == nil {
-		a = controlplane.PlanActionCreate
+		a = model.PlanActionCreate
 	}
-	return controlplane.PlannedChange{Address: n.Address, Action: a}, nil
+	return model.PlannedChange{Address: n.Address, Action: a}, nil
 }
 func (h *convergenceHandler) Create(_ context.Context, _ *ProviderContext, n *graph.Node) (state.Resource, error) {
 	h.creates++
@@ -75,7 +77,7 @@ func convergenceFixture(t *testing.T, status state.ResourceStatus, existing bool
 	if existing {
 		st.AddResource(state.Resource{Address: a, ExternalID: "instance-1", OwnerUID: "test-uid", ResourceUID: "test-uid/" + a.String(), Generation: 1})
 	}
-	e := NewExecutor(g, st)
+	e := NewExecutor(g, st, driver.DefaultRegistry)
 	e.SetRunContext("test-topology", "run-1")
 	stored, err := cloneExecutionState(st)
 	require.NoError(t, err)
@@ -105,7 +107,7 @@ func testActionExecutor(t *testing.T, g *graph.Graph, st *state.State) *Executor
 	}
 	stored, err := cloneExecutionState(st)
 	require.NoError(t, err)
-	e := NewExecutor(g, st)
+	e := NewExecutor(g, st, driver.DefaultRegistry)
 	e.SetRunContext("test-topology", "run-1")
 	e.SetActionRepository(&memoryActions{state: stored})
 	return e
@@ -174,16 +176,16 @@ func TestConvergenceRecoveryVerifiesLostCommitWithoutCreatingAgain(t *testing.T)
 	e, h, a := convergenceFixture(t, state.ResourceAbsent, false)
 	repo := e.actions.(*memoryActions)
 	repo.patchErr = errors.New("commit unavailable")
-	require.Error(t, e.Apply(context.Background(), singleConvergencePlan(a, controlplane.PlanActionCreate)))
+	require.Error(t, e.Apply(context.Background(), singleConvergencePlan(a, model.PlanActionCreate)))
 	require.Nil(t, e.state.FindResource(a))
 	require.Equal(t, 1, h.creates)
 	require.Len(t, repo.actions, 1)
 	require.NotNil(t, repo.actions[0].Candidate)
 	repo.patchErr = nil
-	restarted := NewExecutor(e.graph, e.state)
+	restarted := NewExecutor(e.graph, e.state, driver.DefaultRegistry)
 	restarted.SetRunContext("test-topology", "run-2")
 	restarted.SetActionRepository(repo)
-	require.NoError(t, restarted.Apply(context.Background(), singleConvergencePlan(a, controlplane.PlanActionCreate)))
+	require.NoError(t, restarted.Apply(context.Background(), singleConvergencePlan(a, model.PlanActionCreate)))
 	require.Equal(t, 1, h.creates)
 	require.NotNil(t, restarted.state.FindResource(a))
 	require.Equal(t, ActionSucceeded, repo.actions[0].Status)
@@ -194,39 +196,39 @@ func TestReturnedDeletionPersistsEvidenceAfterCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	h.onDelete = cancel
-	err := e.Destroy(ctx, singleConvergencePlan(a, controlplane.PlanActionDelete))
+	err := e.Destroy(ctx, singleConvergencePlan(a, model.PlanActionDelete))
 	require.Error(t, err)
 	repo := e.actions.(*memoryActions)
 	require.Len(t, repo.actions, 1)
 	require.True(t, repo.actions[0].EffectComplete, "returned deletion evidence must survive cancellation")
 	require.Equal(t, 1, h.deletes)
 	require.NotNil(t, repo.state.FindResource(a), "cancelled execution must not publish cleanup")
-	cold := NewExecutor(e.graph, e.state)
+	cold := NewExecutor(e.graph, e.state, driver.DefaultRegistry)
 	cold.SetRunContext(e.topology, "recovery")
 	cold.SetActionRepository(repo)
-	require.NoError(t, cold.RecoverActions(context.Background(), singleConvergencePlan(a, controlplane.PlanActionDelete)))
+	require.NoError(t, cold.RecoverActions(context.Background(), singleConvergencePlan(a, model.PlanActionDelete)))
 	require.Equal(t, 1, h.deletes)
 	require.Nil(t, repo.state.FindResource(a))
 }
 func TestConvergenceRecoveryUnknownNeverRepeatsCreate(t *testing.T) {
 	e, h, a := convergenceFixture(t, state.ResourceAbsent, false)
 	h.afterCreate = state.ResourceUnknown
-	require.Error(t, e.Apply(context.Background(), singleConvergencePlan(a, controlplane.PlanActionCreate)))
-	require.Error(t, e.Apply(context.Background(), singleConvergencePlan(a, controlplane.PlanActionCreate)))
+	require.Error(t, e.Apply(context.Background(), singleConvergencePlan(a, model.PlanActionCreate)))
+	require.Error(t, e.Apply(context.Background(), singleConvergencePlan(a, model.PlanActionCreate)))
 	require.Equal(t, 1, h.creates)
 }
 func TestConvergenceIntentFailurePreventsProviderCall(t *testing.T) {
 	e, h, a := convergenceFixture(t, state.ResourceAbsent, false)
 	want := errors.New("disk full")
 	e.actions.(*memoryActions).intentErr = want
-	require.ErrorIs(t, e.Apply(context.Background(), singleConvergencePlan(a, controlplane.PlanActionCreate)), want)
+	require.ErrorIs(t, e.Apply(context.Background(), singleConvergencePlan(a, model.PlanActionCreate)), want)
 	require.Zero(t, h.creates)
 }
 func TestConvergenceCancellationKeepsDurableIntent(t *testing.T) {
 	e, h, a := convergenceFixture(t, state.ResourceAbsent, false)
 	ctx, cancel := context.WithCancel(context.Background())
 	h.onCreate = cancel
-	require.ErrorIs(t, e.Apply(ctx, singleConvergencePlan(a, controlplane.PlanActionCreate)), context.Canceled)
+	require.ErrorIs(t, e.Apply(ctx, singleConvergencePlan(a, model.PlanActionCreate)), context.Canceled)
 	require.Len(t, e.actions.(*memoryActions).actions, 1)
 	require.NotEqual(t, ActionSucceeded, e.actions.(*memoryActions).actions[0].Status)
 	require.Nil(t, e.state.FindResource(a))
@@ -234,16 +236,16 @@ func TestConvergenceCancellationKeepsDurableIntent(t *testing.T) {
 }
 func TestConvergenceHealthyApplyDoesNotRepeatEffects(t *testing.T) {
 	e, h, a := convergenceFixture(t, state.ResourceAbsent, false)
-	require.NoError(t, e.Apply(context.Background(), singleConvergencePlan(a, controlplane.PlanActionCreate)))
-	require.NoError(t, e.Apply(context.Background(), singleConvergencePlan(a, controlplane.PlanActionNoop)))
+	require.NoError(t, e.Apply(context.Background(), singleConvergencePlan(a, model.PlanActionCreate)))
+	require.NoError(t, e.Apply(context.Background(), singleConvergencePlan(a, model.PlanActionNoop)))
 	require.Equal(t, 1, h.creates)
 	require.Zero(t, h.deletes)
 }
 func TestConvergenceUncertainProvisionerCannotBeReplayed(t *testing.T) {
 	e, h, a := convergenceFixture(t, state.ResourcePresent, false)
 	repo := e.actions.(*memoryActions)
-	repo.actions = []ActionRecord{{ID: "pending", Topology: "test-topology", Resource: a, Action: controlplane.PlanActionCreate, Status: ActionUncertain, ReplayForbidden: true}}
-	require.ErrorIs(t, e.Apply(context.Background(), singleConvergencePlan(a, controlplane.PlanActionCreate)), ErrActionUncertain)
+	repo.actions = []ActionRecord{{ID: "pending", Topology: "test-topology", Resource: a, Action: model.PlanActionCreate, Status: ActionUncertain, ReplayForbidden: true}}
+	require.ErrorIs(t, e.Apply(context.Background(), singleConvergencePlan(a, model.PlanActionCreate)), ErrActionUncertain)
 	require.Zero(t, h.creates)
 }
 
@@ -253,8 +255,8 @@ func TestConvergenceRecoveryDoesNotReplaceCompletedNewGeneration(t *testing.T) {
 	digest, err := desiredHash(e.graph.Get(a))
 	require.NoError(t, err)
 	candidate := cloneResetStateResource(*e.state.FindResource(a))
-	repo.actions = []ActionRecord{{ID: "pending-new", Topology: "test-topology", OwnerUID: "test-uid", ResourceUID: "test-uid/" + a.String(), Generation: 1, Resource: a, Action: controlplane.PlanActionCreate, Status: ActionUncertain, DesiredDigest: digest, Candidate: &candidate, EffectComplete: true, ProviderOperationID: "pending-new", Quiescence: "returned"}}
-	require.NoError(t, e.Apply(context.Background(), singleConvergencePlan(a, controlplane.PlanActionReplace)))
+	repo.actions = []ActionRecord{{ID: "pending-new", Topology: "test-topology", OwnerUID: "test-uid", ResourceUID: "test-uid/" + a.String(), Generation: 1, Resource: a, Action: model.PlanActionCreate, Status: ActionUncertain, DesiredDigest: digest, Candidate: &candidate, EffectComplete: true, ProviderOperationID: "pending-new", Quiescence: "returned"}}
+	require.NoError(t, e.Apply(context.Background(), singleConvergencePlan(a, model.PlanActionReplace)))
 	require.Zero(t, h.creates)
 	require.Zero(t, h.deletes)
 }
@@ -277,7 +279,7 @@ type hierarchyHandler struct {
 	order []string
 }
 
-func (h *hierarchyHandler) Read(_ context.Context, r state.Resource) (ResourceReadResult, error) {
+func (h *hierarchyHandler) Read(_ context.Context, r state.Resource, providers *driver.Registry) (ResourceReadResult, error) {
 	status := state.ResourcePresent
 	if h.gone[r.Address.String()] {
 		status = state.ResourceAbsent
@@ -297,7 +299,7 @@ func TestConvergenceDestroyUsesPersistedDependencies(t *testing.T) {
 	child := address.Resource(h.Type(), "child")
 	st := &state.State{Version: state.SchemaVersion, Resources: []state.Resource{{Address: parent, ExternalID: "parent"}, {Address: child, ExternalID: "child", Dependencies: []address.Address{parent}}}}
 	e := testActionExecutor(t, graph.New(), st)
-	plan := &Plan{Actions: []controlplane.PlannedChange{{Address: parent, Action: controlplane.PlanActionDelete}, {Address: child, Action: controlplane.PlanActionDelete}}}
+	plan := &Plan{Actions: []model.PlannedChange{{Address: parent, Action: model.PlanActionDelete}, {Address: child, Action: model.PlanActionDelete}}}
 	require.NoError(t, e.Destroy(context.Background(), plan))
 	require.Equal(t, []string{child.String(), parent.String()}, h.order)
 }
@@ -312,7 +314,7 @@ func TestConvergenceReplacementCannotDestroyDependencyOfUnchangedResource(t *tes
 	require.NoError(t, g.AddNode(child, []address.Address{parent}))
 	st := &state.State{Version: state.SchemaVersion, Resources: []state.Resource{{Address: parent, ExternalID: "parent"}, {Address: child, ExternalID: "child", Dependencies: []address.Address{parent}}}}
 	e := testActionExecutor(t, g, st)
-	plan := &Plan{Actions: []controlplane.PlannedChange{{Address: parent, Action: controlplane.PlanActionReplace}, {Address: child, Action: controlplane.PlanActionNoop}}}
+	plan := &Plan{Actions: []model.PlannedChange{{Address: parent, Action: model.PlanActionReplace}, {Address: child, Action: model.PlanActionNoop}}}
 	require.ErrorIs(t, e.Apply(context.Background(), plan), ErrPlanStale)
 	require.Empty(t, h.order)
 }
@@ -321,7 +323,7 @@ func TestConvergenceComputedPlanPinsDesiredConfiguration(t *testing.T) {
 	e, h, a := convergenceFixture(t, state.ResourceAbsent, false)
 	cfg := &config.ImageConfig{Source: "/original-image"}
 	require.NoError(t, e.graph.SetData(a, cfg))
-	plan, err := ComputePlan(e.graph, e.state)
+	plan, err := ComputePlan(e.graph, e.state, driver.DefaultRegistry)
 	require.NoError(t, err)
 	cfg.Source = "/changed-image"
 	require.ErrorIs(t, e.Apply(context.Background(), plan), ErrPlanStale)
@@ -330,12 +332,12 @@ func TestConvergenceComputedPlanPinsDesiredConfiguration(t *testing.T) {
 
 func TestConvergenceDeleteMissingStateRequiresObservation(t *testing.T) {
 	e, h, a := convergenceFixture(t, state.ResourceUnknown, false)
-	require.ErrorIs(t, e.Destroy(context.Background(), singleConvergencePlan(a, controlplane.PlanActionDelete)), ErrObservationUnknown)
+	require.ErrorIs(t, e.Destroy(context.Background(), singleConvergencePlan(a, model.PlanActionDelete)), ErrObservationUnknown)
 	require.Zero(t, h.deletes)
 }
 
 func TestRecoveryDoesNotOverwriteOrTombstoneNewerGeneration(t *testing.T) {
-	for _, action := range []controlplane.PlanActionType{controlplane.PlanActionCreate, controlplane.PlanActionDelete} {
+	for _, action := range []model.PlanActionType{model.PlanActionCreate, model.PlanActionDelete} {
 		t.Run(string(action), func(t *testing.T) {
 			e, h, addr := convergenceFixture(t, state.ResourcePresent, true)
 			old := cloneResetStateResource(*e.state.FindResource(addr))
@@ -347,11 +349,11 @@ func TestRecoveryDoesNotOverwriteOrTombstoneNewerGeneration(t *testing.T) {
 			repo.state, err = cloneExecutionState(e.state)
 			require.NoError(t, err)
 			repo.actions = []ActionRecord{{ID: "old", Topology: e.topology, RunID: "old-run", OwnerUID: old.OwnerUID, ResourceUID: old.ResourceUID, Generation: 1, Resource: addr, Action: action, Status: ActionUncertain, Candidate: &old, EffectComplete: true, ProviderOperationID: "old", Quiescence: "returned"}}
-			if action == controlplane.PlanActionDelete {
+			if action == model.PlanActionDelete {
 				h.status = state.ResourceAbsent
-				err = e.Destroy(context.Background(), singleConvergencePlan(addr, controlplane.PlanActionDelete))
+				err = e.Destroy(context.Background(), singleConvergencePlan(addr, model.PlanActionDelete))
 			} else {
-				err = e.Apply(context.Background(), singleConvergencePlan(addr, controlplane.PlanActionNoop))
+				err = e.Apply(context.Background(), singleConvergencePlan(addr, model.PlanActionNoop))
 			}
 			require.ErrorIs(t, err, ErrObservationUnknown)
 			require.Equal(t, "new-instance", e.state.FindResource(addr).ExternalID)
@@ -360,13 +362,13 @@ func TestRecoveryDoesNotOverwriteOrTombstoneNewerGeneration(t *testing.T) {
 		})
 	}
 }
-func singleConvergencePlan(a address.Address, action controlplane.PlanActionType) *Plan {
-	return &Plan{Actions: []controlplane.PlannedChange{{Address: a, Action: action}}}
+func singleConvergencePlan(a address.Address, action model.PlanActionType) *Plan {
+	return &Plan{Actions: []model.PlannedChange{{Address: a, Action: action}}}
 }
 func TestConvergenceUnknownBlocksAllActions(t *testing.T) {
-	for _, action := range []controlplane.PlanActionType{controlplane.PlanActionNoop, controlplane.PlanActionCreate, controlplane.PlanActionReplace, controlplane.PlanActionDelete} {
+	for _, action := range []model.PlanActionType{model.PlanActionNoop, model.PlanActionCreate, model.PlanActionReplace, model.PlanActionDelete} {
 		t.Run(string(action), func(t *testing.T) {
-			e, h, a := convergenceFixture(t, state.ResourceUnknown, action != controlplane.PlanActionCreate)
+			e, h, a := convergenceFixture(t, state.ResourceUnknown, action != model.PlanActionCreate)
 			err := e.Apply(context.Background(), singleConvergencePlan(a, action))
 			require.Error(t, err)
 			require.Zero(t, h.creates)
@@ -377,7 +379,7 @@ func TestConvergenceUnknownBlocksAllActions(t *testing.T) {
 func TestConvergenceCreateMustVerifyBeforeStateCommit(t *testing.T) {
 	e, h, a := convergenceFixture(t, state.ResourceAbsent, false)
 	h.afterCreate = state.ResourceUnknown
-	err := e.Apply(context.Background(), singleConvergencePlan(a, controlplane.PlanActionCreate))
+	err := e.Apply(context.Background(), singleConvergencePlan(a, model.PlanActionCreate))
 	require.Error(t, err)
 	require.Nil(t, e.state.FindResource(a))
 	require.Equal(t, 1, h.creates)
@@ -386,14 +388,14 @@ func TestConvergenceCreateMustVerifyBeforeStateCommit(t *testing.T) {
 func TestConvergenceDeleteMustVerifyBeforeStateRemoval(t *testing.T) {
 	e, h, a := convergenceFixture(t, state.ResourcePresent, true)
 	h.afterDelete = state.ResourcePresent
-	err := e.Destroy(context.Background(), singleConvergencePlan(a, controlplane.PlanActionDelete))
+	err := e.Destroy(context.Background(), singleConvergencePlan(a, model.PlanActionDelete))
 	require.Error(t, err)
 	require.NotNil(t, e.state.FindResource(a))
 	require.Equal(t, 1, h.deletes)
 }
 func TestConvergenceNoopDriftCannotAuthorizeReplacement(t *testing.T) {
 	e, h, a := convergenceFixture(t, state.ResourceAbsent, true)
-	err := e.Apply(context.Background(), singleConvergencePlan(a, controlplane.PlanActionNoop))
+	err := e.Apply(context.Background(), singleConvergencePlan(a, model.PlanActionNoop))
 	require.Error(t, err)
 	require.Zero(t, h.creates)
 	require.Zero(t, h.deletes)
@@ -401,7 +403,7 @@ func TestConvergenceNoopDriftCannotAuthorizeReplacement(t *testing.T) {
 func TestConvergenceLostCreateResponseNeverRollsBack(t *testing.T) {
 	e, h, a := convergenceFixture(t, state.ResourceAbsent, false)
 	h.createErr = errors.New("response lost")
-	err := e.Apply(context.Background(), singleConvergencePlan(a, controlplane.PlanActionCreate))
+	err := e.Apply(context.Background(), singleConvergencePlan(a, model.PlanActionCreate))
 	require.Error(t, err)
 	require.Zero(t, h.deletes)
 	require.Nil(t, e.state.FindResource(a))

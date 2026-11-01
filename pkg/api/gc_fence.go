@@ -4,23 +4,18 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 )
 
-func gcEvidenceHash(v any) string {
-	raw, _ := json.Marshal(v)
-	return fmt.Sprintf("%x", sha256.Sum256(raw))
-}
-
 func (s *Server) handleBeginGCFence(w http.ResponseWriter, r *http.Request) {
 	topology, id, key := r.PathValue("topology"), r.PathValue("reservation"), r.Header.Get("Idempotency-Key")
-	if validatePathSegment(topology, "topology") != nil || validatePathSegment(id, "reservation") != nil || key == "" || len(key) > 128 {
+	if controlstore.ValidatePathSegment(topology, "topology") != nil || controlstore.ValidatePathSegment(id, "reservation") != nil || key == "" || len(key) > 128 {
 		writeError(w, 400, persistence.ErrInvalidRecord)
 		return
 	}
@@ -70,21 +65,23 @@ func (s *Server) handleBeginGCFence(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 202, accepted)
 }
+
 func gcCommandMatches(cmd controlplane.AgentCommand, r persistence.GCReservation) bool {
 	c := r.Candidate
 	return cmd.ID == r.ID && cmd.Type == "gc_delete" && cmd.AgentID == r.AgentID && cmd.ActionID == r.ID && cmd.TopologyUID == c.TopologyUID && cmd.ResourceUID == c.ResourceUID && cmd.Generation == c.Generation && cmd.GCKind == c.Kind && cmd.GCExternalID == c.ExternalID && cmd.GCInventoryDigest == c.InventoryDigest
 }
+
 func (s *Server) handleAuthorizeGCFence(w http.ResponseWriter, r *http.Request) {
 	if err := s.authenticatedGrantAgent(r); err != nil {
 		writeError(w, 401, err)
 		return
 	}
 	id := r.PathValue("fence")
-	if validatePathSegment(id, "fence") != nil {
+	if controlstore.ValidatePathSegment(id, "fence") != nil {
 		writeError(w, 400, persistence.ErrInvalidRecord)
 		return
 	}
-	f, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).ReadHostFence(r.Context(), id)
+	f, err := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore}).ReadHostFence(r.Context(), id)
 	if err != nil || f.Request.Grant.AgentID != r.PathValue("agent") || f.Request.Grant.Operation != "gc_delete" || f.Receipt == nil {
 		writeError(w, 409, persistence.ErrConflict)
 		return
@@ -109,6 +106,7 @@ func (s *Server) handleAuthorizeGCFence(w http.ResponseWriter, r *http.Request) 
 	}
 	writeJSON(w, 200, controlplane.GCDispositionProof{Request: f.Request, Fence: *f.Receipt, Candidate: stored.Candidate})
 }
+
 func (s *Server) handleGCFenceDisposition(w http.ResponseWriter, r *http.Request) {
 	f, err := s.readHostFence(r)
 	if err != nil {
@@ -120,7 +118,7 @@ func (s *Server) handleGCFenceDisposition(w http.ResponseWriter, r *http.Request
 		writeError(w, 400, err)
 		return
 	}
-	if gcEvidenceHash(proof.Request) != gcEvidenceHash(f.Request) {
+	if controlstore.GcEvidenceHash(proof.Request) != controlstore.GcEvidenceHash(f.Request) {
 		writeError(w, 409, persistence.ErrConflict)
 		return
 	}
@@ -130,9 +128,10 @@ func (s *Server) handleGCFenceDisposition(w http.ResponseWriter, r *http.Request
 	}
 	writeJSON(w, 200, map[string]any{"reservation": proof.Request.Grant.CommandID, "execution": "fenced", "operation_result": "unknown", "observed_presence": proof.Presence})
 }
+
 func (s *Server) reconcileGCFence(ctx context.Context, p controlplane.GCDispositionProof) error {
 	key := s.grantHostKeys[p.Request.Grant.AgentID]
-	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
 	if err := authority.PrepareGCDisposition(ctx, p, key); err != nil {
 		return fmt.Errorf("prepare GC disposition: %w", err)
 	}
@@ -177,7 +176,7 @@ func (s *Server) reconcileGCFence(ctx context.Context, p controlplane.GCDisposit
 	// This is retirement, not new work admission: the reservation is already
 	// terminal, so the ordinary pending-GC lifecycle admission check must not
 	// run. Keep command+authority locking and explicit retired identity checks.
-	bound.lifecycle = nil
+	bound.Lifecycle = nil
 	if err = persistence.NewExecutionGrantRepository(bound).FinishGCDisposition(ctx, p, stored.DispositionHash); err != nil {
 		return fmt.Errorf("release GC disposition: %w", err)
 	}
@@ -187,9 +186,11 @@ func (s *Server) reconcileGCFence(ctx context.Context, p controlplane.GCDisposit
 func (s *Server) handleGCCleanupProof(w http.ResponseWriter, r *http.Request) {
 	s.handleGCGrantAction(w, r, false)
 }
+
 func (s *Server) handleGCClaimExecution(w http.ResponseWriter, r *http.Request) {
 	s.handleGCGrantAction(w, r, true)
 }
+
 func (s *Server) handleGCGrantAction(w http.ResponseWriter, r *http.Request, claim bool) {
 	if err := s.authenticatedGrantAgent(r); err != nil {
 		writeError(w, 401, err)
@@ -233,7 +234,7 @@ func (s *Server) handleGCGrantAction(w http.ResponseWriter, r *http.Request, cla
 			writeError(w, 409, err)
 			return
 		}
-		topology, err := grantCommandTopology(record)
+		topology, err := controlstore.GrantCommandTopology(record)
 		if err != nil {
 			writeError(w, 409, err)
 			return

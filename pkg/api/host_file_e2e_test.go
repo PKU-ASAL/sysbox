@@ -25,9 +25,11 @@ import (
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
 	"github.com/oslab/sysbox/pkg/persistence"
+
 	dockerprovider "github.com/oslab/sysbox/pkg/provider/docker"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -84,6 +86,19 @@ func TestHostSupervisorRealFileInstallE2E(t *testing.T) {
 	dropped := make(chan int, 1)
 	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/stopped") && drop.CompareAndSwap(true, false) {
+			raw, err := readAndRestoreBody(r)
+			var receipt controlplane.SignedExecutionStopReceipt
+			if err == nil {
+				err = json.Unmarshal(raw, &receipt)
+			}
+			if err == nil {
+				err = apiProcess.Load().apiStore.DeleteAgentCommand(r.Context(), "owner", receipt.Grant.CommandID)
+			}
+			if err != nil {
+				t.Errorf("retire completed file delivery: %v", err)
+				http.Error(w, "retirement failed", 500)
+				return
+			}
 			rr := httptest.NewRecorder()
 			apiProcess.Load().ServeHTTP(rr, r)
 			c, _, e := w.(http.Hijacker).Hijack()
@@ -131,7 +146,7 @@ func TestHostSupervisorRealFileInstallE2E(t *testing.T) {
 	client := hostsupervisor.NewTaskClient(socket, ref)
 	guestBoot, err := client.GuestFileBootID(ctx)
 	require.NoError(t, err)
-	session, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: api.apiStore}).OpenSession(ctx, "owner", "worker", "")
+	session, err := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: api.apiStore}).OpenSession(ctx, "owner", "worker", "")
 	require.NoError(t, err)
 	var previousEpoch uint64
 	for round := 0; round < 2; round++ {
@@ -145,7 +160,7 @@ func TestHostSupervisorRealFileInstallE2E(t *testing.T) {
 		payloadDir := filepath.Join(runs, "_guest-files")
 		require.NoError(t, os.MkdirAll(payloadDir, 0700))
 		require.NoError(t, os.WriteFile(filepath.Join(payloadDir, id), content, 0600))
-		require.NoError(t, writeLocalObject(filepath.Join(payloadDir, id+".json"), guestFilePayload{AgentID: "owner", ExpiresAt: time.Now().Add(time.Minute)}))
+		require.NoError(t, controlstore.WriteLocalObject(filepath.Join(payloadDir, id+".json"), guestFilePayload{AgentID: "owner", ExpiresAt: time.Now().Add(time.Minute)}))
 		claimed, ok, err := api.apiStore.AcquireAgentCommandLease(ctx, "owner", id, "worker", time.Minute)
 		require.NoError(t, err)
 		require.True(t, ok)
@@ -209,7 +224,7 @@ func TestHostSupervisorRealFileInstallE2E(t *testing.T) {
 		} else {
 			// Retire current authority before the delayed installation reaches
 			// the host. No guest file may be written by this signed old request.
-			require.NoError(t, persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: api.apiStore}).Revoke(ctx, g.Grant))
+			require.NoError(t, persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: api.apiStore}).Revoke(ctx, g.Grant))
 			_, err = client.InstallGuestFile(ctx, spec, g)
 			require.Error(t, err)
 			result, err := client.ObserveGuestFile(ctx, h)

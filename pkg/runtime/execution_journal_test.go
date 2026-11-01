@@ -6,8 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/stretchr/testify/require"
+
+	"github.com/oslab/sysbox/pkg/model"
 )
 
 type stubCheckpointStore struct {
@@ -58,7 +59,7 @@ func TestStoreRecorderReportsFailingCheckpointStore(t *testing.T) {
 	rec := NewStoreRecorder(inner, store, "lab", "run-1", path)
 
 	require.NoError(t, rec.Begin("apply", &Plan{}), "the journal was still healthy at Begin")
-	rec.StepDone(rec.StepStart("sysbox_node.web", controlplane.PlanActionCreate))
+	rec.StepDone(rec.StepStart("sysbox_node.web", model.PlanActionCreate))
 
 	require.ErrorIs(t, rec.Err(), saveErr)
 }
@@ -71,7 +72,7 @@ func TestStoreRecorderStaysCleanWhenPersistenceWorks(t *testing.T) {
 	rec := NewStoreRecorder(inner, store, "lab", "run-1", path)
 
 	require.NoError(t, rec.Begin("apply", &Plan{}))
-	rec.StepDone(rec.StepStart("sysbox_node.web", controlplane.PlanActionCreate))
+	rec.StepDone(rec.StepStart("sysbox_node.web", model.PlanActionCreate))
 
 	require.NoError(t, rec.Err())
 	require.Greater(t, store.saves, 0, "the healthy path must actually persist")
@@ -98,7 +99,7 @@ func TestStoreRecorderWithoutStoreIsNotAnError(t *testing.T) {
 	rec := NewStoreRecorder(NewFileRecorder(path, "run-1", "lab"), nil, "lab", "run-1", path)
 
 	require.NoError(t, rec.Begin("apply", &Plan{}))
-	rec.StepDone(rec.StepStart("sysbox_node.web", controlplane.PlanActionCreate))
+	rec.StepDone(rec.StepStart("sysbox_node.web", model.PlanActionCreate))
 
 	require.NoError(t, rec.Err())
 }

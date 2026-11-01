@@ -13,13 +13,14 @@ import (
 
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
 )
 
 func TestSQLFederatedRetirementRejectsLateRunAndLostConsumer(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
-		if _, file := store.(*localAPIStore); file {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
+		if _, file := store.(*controlstore.Local); file {
 			return
 		}
 		ctx := context.Background()
@@ -59,8 +60,8 @@ func TestSQLFederatedRetirementRejectsLateRunAndLostConsumer(t *testing.T) {
 }
 
 func TestSQLFederationLostAcknowledgementResumesWithoutPrematureCentralDelete(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
-		if _, file := store.(*localAPIStore); file {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
+		if _, file := store.(*controlstore.Local); file {
 			return
 		}
 		ctx := context.Background()
@@ -124,12 +125,12 @@ func TestSQLFederationCorruptMembershipAndRawBypassRejected(t *testing.T) {
 	files := map[string][]byte{"field.sysbox.hcl": []byte("protected")}
 	id := controlplane.ComputeRevisionDigest(files)
 	require.NoError(t, s.apiStore.SaveGlobalRevision(context.Background(), controlplane.GlobalRevision{Revision: id, Files: files, CreatedAt: time.Now().Add(-time.Hour)}))
-	require.Error(t, s.apiStore.(*localAPIStore).DeleteGlobalRevisionAtomic(context.Background(), id, time.Now()))
+	require.Error(t, s.apiStore.(*controlstore.Local).DeleteGlobalRevisionAtomic(context.Background(), id, time.Now()))
 }
 
 func TestSQLFederationRetainsEntireCentralBatchOnConsumerConflict(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
-		if _, file := store.(*localAPIStore); file {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
+		if _, file := store.(*controlstore.Local); file {
 			return
 		}
 		ctx := context.Background()

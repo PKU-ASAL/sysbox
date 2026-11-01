@@ -9,27 +9,30 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
-	"github.com/stretchr/testify/require"
 )
 
 func completedCleanupRun(t *testing.T, s *Server) controlplane.Run {
 	t.Helper()
 	ctx := context.Background()
-	require.NoError(t, s.workspaceService().bindPlacement("lab", "owner", controlplane.AgentProtocolVersion))
-	queued := controlplane.Run{ID: "destroy", Topology: "lab", AgentID: "owner", Op: "destroy", Status: controlplane.RunAssigned, QueuedAt: time.Now().UTC()}
+	require.NoError(t, s.workspaceService().BindPlacement("lab", "owner", controlplane.AgentProtocolVersion))
+	queued := controlplane.Run{ID: "destroy", Topology: "lab", AgentID: "owner", Op: "destroy", Revision: "revision", Status: controlplane.RunAssigned, QueuedAt: time.Now().UTC()}
 	require.NoError(t, s.apiStore.SaveRun(ctx, queued))
 	claimed, err := s.jobs.claim(queued.ID, "owner")
 	require.NoError(t, err)
 	receipt := &controlplane.CleanupReceipt{Version: 1, Topology: "lab", TopologyUID: "owned-topology", AgentID: "owner", RunID: claimed.ID, QueuedAt: claimed.QueuedAt, Revision: claimed.Revision, Attempt: claimed.Attempt, LeaseOwner: claimed.LeaseOwner, StateSerial: 3, ObservedAt: time.Now().UTC(), Empty: true}
 	finished := *claimed
 	finished.MarkFinished(nil, time.Now().UTC())
-	stored, _, err := s.apiStore.CompleteRun(ctx, "owner", claimed.ID, controlplane.RunCompletion{Run: finished, Cleanup: receipt})
-	require.NoError(t, err)
+	finished.Cleanup = receipt
+	fixture := prepareHostRunFixture(t, s, *claimed, receipt.TopologyUID)
+	stored := fixture.complete(t, finished)
 	require.NotNil(t, stored.Cleanup)
 	return *stored
 }
@@ -55,7 +58,7 @@ func TestCleanupReceiptSurvivesReopenAndPermitsMetadataDelete(t *testing.T) {
 			require.NotNil(t, evidence["cleanup_receipt"])
 			require.Equal(t, "unknown", evidence["external_presence"], "receipt is bounded past evidence, not live global absence")
 			require.NoError(t, reopened.workspaceService().Delete(context.Background(), "lab", false))
-			placement, err := reopened.workspaceService().loadPlacement("lab")
+			placement, err := reopened.workspaceService().LoadPlacement("lab")
 			require.NoError(t, err)
 			require.Nil(t, placement)
 		})
@@ -90,11 +93,11 @@ func TestCleanupReceiptCannotOutliveAdmissionOrPlacement(t *testing.T) {
 				}
 				require.NoError(t, s.apiStore.CompareAndSwapNodeOperation(ctx, op, done))
 			case "rebind":
-				require.NoError(t, s.workspaceService().deletePlacement(ctx, "lab"))
-				require.NoError(t, s.workspaceService().bindPlacement("lab", "owner", controlplane.AgentProtocolVersion))
+				require.NoError(t, s.workspaceService().DeletePlacement(ctx, "lab"))
+				require.NoError(t, s.workspaceService().BindPlacement("lab", "owner", controlplane.AgentProtocolVersion))
 			}
 			require.ErrorIs(t, s.workspaceService().Delete(ctx, "lab", false), persistence.ErrConflict)
-			placement, err := s.workspaceService().loadPlacement("lab")
+			placement, err := s.workspaceService().LoadPlacement("lab")
 			require.NoError(t, err)
 			require.NotNil(t, placement)
 		})
@@ -112,13 +115,13 @@ func TestCleanupReceiptDoesNotBypassLocalJournalOrCorruption(t *testing.T) {
 				require.NoError(t, err)
 				st, err := repo.LoadState(ctx, "lab")
 				require.NoError(t, err)
-				require.NoError(t, repo.CommitActionIntent(ctx, runtime.ActionRecord{ID: "pending", RunID: "unknown-run", Topology: "lab", Resource: address.Resource("sysbox_node", "web"), Action: controlplane.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: st.TopologyUID, ResourceUID: "uid", Generation: 1}))
+				require.NoError(t, repo.CommitActionIntent(ctx, runtime.ActionRecord{ID: "pending", RunID: "unknown-run", Topology: "lab", Resource: address.Resource("sysbox_node", "web"), Action: model.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: st.TopologyUID, ResourceUID: "uid", Generation: 1}))
 			} else {
 				require.NoError(t, os.MkdirAll(filepath.Join(s.runsDir, "lab"), 0700))
 				require.NoError(t, os.WriteFile(filepath.Join(s.runsDir, "lab", "state.json"), []byte(`{"version":1}`), 0600))
 			}
 			require.Error(t, s.workspaceService().Delete(ctx, "lab", false))
-			placement, err := s.workspaceService().loadPlacement("lab")
+			placement, err := s.workspaceService().LoadPlacement("lab")
 			require.NoError(t, err)
 			require.NotNil(t, placement)
 		})

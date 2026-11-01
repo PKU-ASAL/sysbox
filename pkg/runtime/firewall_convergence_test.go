@@ -3,14 +3,16 @@ package runtime
 import (
 	"context"
 	"errors"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/state"
-	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 type convergingFirewallPolicy struct {
@@ -54,18 +56,18 @@ func TestFirewallDefaultEngineCreateObserveAndDestroy(t *testing.T) {
 	require.NoError(t, g.SetData(a, &config.FirewallConfig{AttachTo: "sysbox_router.edge"}))
 	st := &state.State{Version: state.SchemaVersion, TopologyUID: "owner"}
 	st.AddResource(state.Resource{Address: address.Resource("sysbox_router", "edge"), OwnerUID: "owner", ResourceUID: "router", Generation: 2, Driver: "policy-test", ExternalID: "container"})
-	e := NewExecutor(g, st)
+	e := NewExecutor(g, st, driver.DefaultRegistry)
 	e.SetRunContext("lab", "run")
 	stored, err := cloneExecutionState(st)
 	require.NoError(t, err)
 	e.SetActionRepository(&memoryActions{state: stored})
-	plan := &Plan{Actions: []controlplane.PlannedChange{{Address: a, Action: controlplane.PlanActionCreate}}}
+	plan := &Plan{Actions: []model.PlannedChange{{Address: a, Action: model.PlanActionCreate}}}
 	require.NoError(t, e.Apply(context.Background(), plan))
 	require.Equal(t, 1, policy.applies)
 	require.NotNil(t, st.FindResource(a))
 	require.ErrorIs(t, e.Apply(context.Background(), plan), ErrPlanStale)
 	require.Equal(t, 1, policy.applies, "stale create plan must not replay apply")
-	deletePlan := &Plan{Actions: []controlplane.PlannedChange{{Address: a, Action: controlplane.PlanActionDelete}}}
+	deletePlan := &Plan{Actions: []model.PlannedChange{{Address: a, Action: model.PlanActionDelete}}}
 	require.NoError(t, e.Apply(context.Background(), deletePlan))
 	require.Equal(t, 1, policy.deletes)
 	require.Nil(t, st.FindResource(a))
@@ -83,13 +85,13 @@ func TestFirewallRecoveryDiscoversLostOutcomeWithoutReplay(t *testing.T) {
 	require.NoError(t, g.SetData(a, &config.FirewallConfig{AttachTo: "sysbox_router.edge"}))
 	st := &state.State{Version: state.SchemaVersion, TopologyUID: "owner"}
 	st.AddResource(state.Resource{Address: address.Resource("sysbox_router", "edge"), OwnerUID: "owner", ResourceUID: "router", Generation: 2, Driver: "policy-test", ExternalID: "container"})
-	e := NewExecutor(g, st)
+	e := NewExecutor(g, st, driver.DefaultRegistry)
 	e.SetRunContext("lab", "run")
 	stored, err := cloneExecutionState(st)
 	require.NoError(t, err)
 	repo := &memoryActions{state: stored, outcomeErr: errors.New("lost outcome")}
 	e.SetActionRepository(repo)
-	plan := &Plan{Actions: []controlplane.PlannedChange{{Address: a, Action: controlplane.PlanActionCreate}}}
+	plan := &Plan{Actions: []model.PlannedChange{{Address: a, Action: model.PlanActionCreate}}}
 	require.Error(t, e.Apply(context.Background(), plan))
 	require.Equal(t, 1, policy.applies)
 	require.Nil(t, st.FindResource(a))
@@ -98,7 +100,7 @@ func TestFirewallRecoveryDiscoversLostOutcomeWithoutReplay(t *testing.T) {
 	repo.outcomeErr = nil
 	reopened, err := cloneExecutionState(repo.state)
 	require.NoError(t, err)
-	recovery := NewExecutor(g, reopened)
+	recovery := NewExecutor(g, reopened, driver.DefaultRegistry)
 	recovery.SetRunContext("lab", "recovery")
 	recovery.SetActionRepository(repo)
 	require.ErrorIs(t, recovery.RecoverActions(context.Background(), plan), ErrActionUncertain)
@@ -112,7 +114,7 @@ func TestFirewallReadInvalidTargetIsUnknown(t *testing.T) {
 	t.Cleanup(func() { driver.DefaultRegistry = previous })
 	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "policy-test", Version: "1", Policy: &convergingFirewallPolicy{}}))
 	res := state.Resource{Address: address.Resource("sysbox_firewall", "edge"), Driver: "policy-test", Attributes: state.MustAttributes(map[string]any{"owner": "owner", "policy_target_state": `{"container_id":"legacy"}`})}
-	observed, err := (FirewallResourceHandler{}).Read(context.Background(), res)
+	observed, err := (FirewallResourceHandler{}).Read(context.Background(), res, driver.DefaultRegistry)
 	require.Error(t, err)
 	require.Equal(t, state.ResourceUnknown, observed.Status)
 }

@@ -1,11 +1,15 @@
 package runtime
 
 import (
-	"github.com/stretchr/testify/require"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestCoreDoesNotDependOnConcreteInfrastructure(t *testing.T) {
@@ -44,5 +48,37 @@ func TestCoreDoesNotExposeActorOrACPResources(t *testing.T) {
 			}
 			return nil
 		}))
+	}
+}
+
+// The resource engine must compile without control-plane request/lease types.
+// Checking imports rather than names also catches renamed import aliases.
+func TestResourceEngineDoesNotImportControlPlane(t *testing.T) {
+	entries, err := os.ReadDir(".")
+	require.NoError(t, err)
+	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), entry.Name(), nil, parser.ImportsOnly)
+		require.NoError(t, err)
+		for _, imported := range file.Imports {
+			path, err := strconv.Unquote(imported.Path.Value)
+			require.NoError(t, err)
+			require.NotEqual(t, "github.com/oslab/sysbox/pkg/controlplane", path, "%s depends on dispatch contracts", entry.Name())
+		}
+	}
+}
+
+func TestResourceEngineDoesNotSelectGlobalProviders(t *testing.T) {
+	entries, err := os.ReadDir(".")
+	require.NoError(t, err)
+	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
+			continue
+		}
+		raw, err := os.ReadFile(entry.Name())
+		require.NoError(t, err)
+		require.NotContains(t, string(raw), "driver.DefaultRegistry", "%s must use the caller's provider registry", entry.Name())
 	}
 }

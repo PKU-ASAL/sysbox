@@ -140,6 +140,7 @@ func (v *vmProcess) snapshot() vmProcessSnapshot {
 // Persisted via MarshalProviderState so cold-destroy and drift refresh can
 // rebuild the VM's working directory without rediscovery.
 type HandleState struct {
+	JailRoot    string              `json:"jail_root,omitempty"`
 	Attachments []managedAttachment `json:"attachments"`
 
 	Version      int    `json:"version"`
@@ -332,10 +333,11 @@ func (s *Substrate) createNodeWithID(ctx context.Context, spec substrate.NodeSpe
 		vcpus = spec.VCPUs
 	}
 
-	socketPath := ownedUnixSocketPath(runDir, vmID, "firecracker.sock", "fc")
-	if err := ensureOwnedSocketDirectory(socketPath); err != nil {
-		return substrate.NodeHandle{}, err
+	jailRoot := filepath.Join(s.jailBase, filepath.Base(s.firecrackerBin), vmID, "root")
+	if !filepath.IsAbs(jailRoot) || len(filepath.Join(jailRoot, "run/firecracker.sock")) > 100 {
+		return substrate.NodeHandle{}, fmt.Errorf("configured jail root must be absolute and fit Unix socket paths")
 	}
+	socketPath := filepath.Join(jailRoot, "run/firecracker.sock")
 	if _, err := os.Lstat(socketPath); err == nil {
 		return substrate.NodeHandle{}, fmt.Errorf("firecracker orphan socket blocks creation")
 	} else if !os.IsNotExist(err) {
@@ -374,7 +376,7 @@ func (s *Substrate) createNodeWithID(ctx context.Context, spec substrate.NodeSpe
 	vsockUDS := ""
 	var vsockCID uint32
 	if sysboxInitEnabled {
-		vsockUDS = ownedUnixSocketPath(runDir, vmID, "vsock.sock", "vs")
+		vsockUDS = filepath.Join(jailRoot, "run/vsock.sock")
 		if _, err := os.Lstat(vsockUDS); err == nil {
 			return substrate.NodeHandle{}, fmt.Errorf("firecracker orphan vsock blocks creation")
 		} else if !os.IsNotExist(err) {
@@ -398,6 +400,7 @@ func (s *Substrate) createNodeWithID(ctx context.Context, spec substrate.NodeSpe
 	vm.mu.Unlock()
 
 	hs := &HandleState{
+		JailRoot:    jailRoot,
 		VMDir:       runDir,
 		Socket:      socketPath,
 		ConfigPath:  cfgPath,

@@ -70,7 +70,6 @@ resource "sysbox_node" "firecracker" {
 
   provider "firecracker" {
     kernel       = sysbox_kernel.linux.id
-    allow_direct = true
   }
 
   link "matrix" {

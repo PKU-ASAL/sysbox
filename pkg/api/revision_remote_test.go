@@ -10,6 +10,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/revisiongate"
 	"github.com/stretchr/testify/require"
 )
@@ -29,7 +30,7 @@ func TestRemoteRegistryProtectsSeparateConsumerRoot(t *testing.T) {
 	files := map[string][]byte{"field.sysbox.hcl": []byte("remote pinned")}
 	id := controlplane.ComputeRevisionDigest(files)
 	require.NoError(t, registry.apiStore.SaveGlobalRevision(ctx, controlplane.GlobalRevision{Revision: id, Files: files, CreatedAt: time.Now().Add(-time.Hour)}))
-	store := registry.apiStore.(*localAPIStore)
+	store := registry.apiStore.(*controlstore.Local)
 	require.Error(t, store.DeleteGlobalRevisionAtomic(ctx, id, time.Now()), "uninitialized remote consumer blocks deletion")
 	consumerCfg := config.DefaultServiceConfig()
 	consumerCfg.Paths.RunsDir = t.TempDir()

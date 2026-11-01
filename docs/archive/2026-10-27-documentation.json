@@ -1,0 +1,345 @@
+{
+  "version": 1,
+  "source_commit": "291890a3229055abbe27010ea73f5a8a2ccb12b8",
+  "purpose": "Historical documentation only; not the current specification. Paths and bytes are preserved.",
+  "archive": "2026-10-27-documentation.tar.gz",
+  "files": {
+    "README.en.md": {
+      "sha256": "f4cca0ec98676b05747c6754fd7d319502378f078f0f74bf653ca6b08fe3a481",
+      "size": 10283
+    },
+    "README.md": {
+      "sha256": "0b50370996202e35d40e5e2fe0f074fa50a69f2eebe69e06c2d0fca6c80f19e2",
+      "size": 9221
+    },
+    "docs/architecture.md": {
+      "sha256": "cd5699bbe0a046a4e7db9c15fe221cfa211df2e4fca847523210e1144c62ccd4",
+      "size": 11828
+    },
+    "docs/design-principles.md": {
+      "sha256": "4d1f66715dee062cba14f131da1cf62de92d94bd74b9a82bc1be45790e1ce69c",
+      "size": 3466
+    },
+    "docs/design/2026-09-06-cidr-functions-var-prescan-design.md": {
+      "sha256": "20a6bde830efcc2b44a60d90f1d4b75527099b9fe20d8aba6e9ad56177a2073e",
+      "size": 6558
+    },
+    "docs/design/2026-09-06-cidr-functions-var-prescan-plan.md": {
+      "sha256": "446a6d10497578bce11e56138c59e4194bf47632fc8e89cb5593b9f86dc8f3c2",
+      "size": 12996
+    },
+    "docs/design/2026-09-07-arch-conventions.md": {
+      "sha256": "c5827072bb1fc2e2c845eaba432369aa03a031e73039473c0fcecbacbcbcf189",
+      "size": 2634
+    },
+    "docs/design/2026-09-07-arch-hardening-design.md": {
+      "sha256": "9b2968320c0890541615b5c14184fbce50ad9593a3e1ee06d7b86ce255646751",
+      "size": 5267
+    },
+    "docs/design/2026-09-07-arch-hardening-plan.md": {
+      "sha256": "cca597cc638bceab25d3c532ac3924b9c90b93cf9a7c0fb170619507b25a87b7",
+      "size": 13349
+    },
+    "docs/design/2026-09-07-firewall-write-only.md": {
+      "sha256": "829145ed4cc62621fa977896b2b455dffd6b98d00bb52cb0b1f8a4cf43718422",
+      "size": 5750
+    },
+    "docs/design/2026-09-07-sysbox-gaps-design.md": {
+      "sha256": "6e9dd7b71f339ef171a6a9aa18d37272ceaacb92811ef43ce98d2d1cf387ab5b",
+      "size": 4142
+    },
+    "docs/design/2026-09-07-sysbox-gaps-plan.md": {
+      "sha256": "4e40dd0bc84aefaaf9ecca4f6781160dea47d6dfcb169f63152de9e1df2534f3",
+      "size": 14140
+    },
+    "docs/design/2026-09-07-topology-syscall-collection.md": {
+      "sha256": "604a38b334b93eeb2cc4aee9016552844ca2b8940f194586cb81262000d3e296",
+      "size": 3333
+    },
+    "docs/design/2026-09-09-gc-command.md": {
+      "sha256": "f1e0263928783a4f7ba2b2df4e3590a5d32ab369fb7646742fa6bab11abbec39",
+      "size": 3604
+    },
+    "docs/design/2026-09-10-nsenter-firewall-design.md": {
+      "sha256": "e9384bc4c6b45c44102e90ed2c686abf60957f33216c19e06433d8d4ac992165",
+      "size": 5395
+    },
+    "docs/design/2026-09-13-heterogeneous-review.md": {
+      "sha256": "d31de7484d63c090df7da90d4b16fc25212e7f602c403aa773b7ed947f6a7b2c",
+      "size": 7449
+    },
+    "docs/design/2026-09-13-project-review.md": {
+      "sha256": "e8817c2e984a59a94b8e98f776c00821d45f4a3c2cc5ffb834db789992717a8b",
+      "size": 3221
+    },
+    "docs/design/2026-09-28-interface-change-inventory.md": {
+      "sha256": "e47ceb9ad14d165209d6b70bf70fcf6cb9f7b53290b10180225bfb2211054608",
+      "size": 61111
+    },
+    "docs/design/2026-09-28-observation-driven-runtime-refactor.md": {
+      "sha256": "bdb7c035e3f819e5243d90c828991603c3cefdce91c9106327355b97e85b0971",
+      "size": 32191
+    },
+    "docs/design/2026-09-28-runtime-refactor-implementation-status.md": {
+      "sha256": "aa923e8f9b80b5ea6000a632c1abd9f996d09b6ddd8be7e7b82553bf782f3bed",
+      "size": 18097
+    },
+    "docs/design/2026-10-07-full-migration-distributed-execution-plan.md": {
+      "sha256": "6e038228b572bc73bbecf4a53402ffcf0d4634d15b584967ec71e1691adab1d1",
+      "size": 44497
+    },
+    "docs/design/2026-10-07-parallel-implementation-tracker.md": {
+      "sha256": "c340980962f264a41bfd94ba0cc1388f5e7c917d3aa1114bdd387f1255311cf1",
+      "size": 88216
+    },
+    "docs/design/2026-10-10-execution-exclusion.md": {
+      "sha256": "8eb2a7c6adf3a7040a29c6242710867ef2a706c2933f30ef85ddeae9d8006dd6",
+      "size": 2297
+    },
+    "docs/design/2026-10-10-managed-ssh-access.md": {
+      "sha256": "b846f0c71c98f55bb866645dc3fdf05fd4b9289ec522d80db25b9f45735a5ce2",
+      "size": 11770
+    },
+    "docs/design/2026-10-10-reset-continuation.md": {
+      "sha256": "51f03da9d0cdafe8cd78d86e877c2ff8ededf782f5e99f0fb2950d8d01ef1a37",
+      "size": 10104
+    },
+    "docs/design/2026-10-12-local-ssh-authority.md": {
+      "sha256": "de24cbeb39eb35d67ba79579695195214bb97843f2ca349ec29335a70a27da07",
+      "size": 3166
+    },
+    "docs/design/2026-10-12-ssh-public-workflow-closure.md": {
+      "sha256": "86976803fc694e6ab174ca6a866d623a74703191c6528c7620198780d1cff276",
+      "size": 2083
+    },
+    "docs/design/2026-10-12-ssh-service-runtime-completion.md": {
+      "sha256": "c987a53cc26e6c253ce154399a23e31a44c05b4b074c15777fe257bc15edcfb3",
+      "size": 5469
+    },
+    "docs/design/2026-10-12-targeted-run-authority.md": {
+      "sha256": "0ced8e908eb92570c92d3c81bd342777b46b64ca2a975bc31f7b2ef97d4aa89e",
+      "size": 1941
+    },
+    "docs/design/2026-10-13-reset-ssh-dependencies.md": {
+      "sha256": "4a7582c47d3e8e56ead8effb7f1aa04b1242fa30644b1438384ac44ab3dd25f8",
+      "size": 2287
+    },
+    "docs/design/2026-10-13-ssh-boot-deployment.md": {
+      "sha256": "33e1c5a1b0692744e3d5787a6940ab0d3981c4d5c181a474bdf82832d142dd59",
+      "size": 2241
+    },
+    "docs/design/2026-10-13-unknown-run-recovery.md": {
+      "sha256": "62dfee804421e73ff1e05d5e3d675b2f29ef263283fb6d66e7fc7ee561cdf2eb",
+      "size": 10157
+    },
+    "docs/design/revision-and-upsert-apply-plan.md": {
+      "sha256": "a563342e89fc60a71187c1b92dd1897c0f515dadf9b0cba6e6fc62ad5662f5f5",
+      "size": 22744
+    },
+    "docs/design/revision-and-upsert-apply.md": {
+      "sha256": "66458933e935bdefad6098f5bca54c84a9e653441006fcb68b590fcfd600b42d",
+      "size": 5523
+    },
+    "docs/design/revision-directory-tree-addressing.md": {
+      "sha256": "4729ef85c10a58f04ea9cb5e18e97c35fa571d877cd55a973dfd3006f7912a3b",
+      "size": 7347
+    },
+    "docs/design/topology-readiness-contract.md": {
+      "sha256": "7a7e0a7a8991413b5eec44cc95edcf01ce36edbac81f7c5f56038a7630665b05",
+      "size": 17770
+    },
+    "docs/development/contributing.md": {
+      "sha256": "8330eee3f093ecec934b4bccb067e1071afd6c7b786c764206628179ad2412a8",
+      "size": 1279
+    },
+    "docs/development/releasing.md": {
+      "sha256": "7da6319aa278289ef7d576fc1b53297ca485dd73d8129de61e789150649df5bb",
+      "size": 4073
+    },
+    "docs/development/testing.md": {
+      "sha256": "26b57ffe7042daaf589fb22b2ef857a4c83e54f51d3093fec1bda26058639cae",
+      "size": 3067
+    },
+    "docs/guides/authoring-topologies.md": {
+      "sha256": "64dd88fa8e187b8ece219433351cc933011d19a0ef0251d3da9a1590e6be2fe9",
+      "size": 2775
+    },
+    "docs/guides/heterogeneous-nodes.md": {
+      "sha256": "9d75ca43f895e0cf1acb40e5d344655284548c016d910e043d81f2690fb35e07",
+      "size": 8429
+    },
+    "docs/guides/lifecycle-and-reset.md": {
+      "sha256": "c5c7286789f4951614c9a017408cfde90357040e787a1d25d42b8a36967669d5",
+      "size": 2016
+    },
+    "docs/guides/networking-and-policy.md": {
+      "sha256": "85b56495e8b4141a637edffe808be95a213884af5601349749f5d0881c6ec1af",
+      "size": 2249
+    },
+    "docs/guides/troubleshooting.md": {
+      "sha256": "df2412f1e2349d33136709a9e7d734eb58b6836d831d881b11ffd2a0ee7e7fe0",
+      "size": 2050
+    },
+    "docs/index.md": {
+      "sha256": "f6a6f5406f1fe5c783a69bfc68d029fb4d43a4c7550b4397aea6d9fac84e800c",
+      "size": 2730
+    },
+    "docs/operations/agent-operations.md": {
+      "sha256": "c95da0115a2dae75b34419324d52c97590a622142edc44baf1bd88a6a722d852",
+      "size": 2474
+    },
+    "docs/operations/artifacts.md": {
+      "sha256": "92efb38acfbb6b5b077806cf3bed4f343a7ddafa17dafa27bb57e1cf872cb9b4",
+      "size": 5119
+    },
+    "docs/operations/control-plane-deployment.md": {
+      "sha256": "bed4ebc12df7ebd8cc5d4dfaceff0e969a9fd9ba67dd7226d62db5d89d2a50be",
+      "size": 3394
+    },
+    "docs/operations/local-ssh-authority.md": {
+      "sha256": "8cc4d468b2c010dd5d56da30098295f9e5256c3063aedd420ae46eca7da23b98",
+      "size": 2661
+    },
+    "docs/operations/managed-ssh-service.md": {
+      "sha256": "9873684fdc09aa59934b7b7d798583b4312fca15bca5364f884404940cb1fe04",
+      "size": 5117
+    },
+    "docs/operations/ownership-transfer.md": {
+      "sha256": "b1f229baf6b3e5fa27421a896c454d934e088a4f090d3c12ea51743ed63ec9e0",
+      "size": 3409
+    },
+    "docs/operations/p9-real-acceptance.md": {
+      "sha256": "04d19fcff6421e72cff696ede6edac1c95880df6569ef2d5be1b7fd5f307f9d4",
+      "size": 341926
+    },
+    "docs/operations/stage2-capability-fault-ledger.md": {
+      "sha256": "50faef00afec57ea9c4e70d46738668a10c055a391cdb0f0c9a51cbf3c6ac783",
+      "size": 8300
+    },
+    "docs/operations/stage2-closure.md": {
+      "sha256": "0f39503b0ca5d8031522abfe10511a753c4c1f74d1289a153a0bfdca537d2352",
+      "size": 9587
+    },
+    "docs/operations/stage3-release-integration.md": {
+      "sha256": "dd1224648f650c7cec609ae50384e3d6633acbd379ddd6ba366b98dfc917cc69",
+      "size": 12297
+    },
+    "docs/operations/two-vm-managed-ssh.md": {
+      "sha256": "6e83b9476f19ff54f7b6a82394327bacbc52bdf1d7e8845595ccd488bfa059ba",
+      "size": 3908
+    },
+    "docs/operations/upgrades-and-recovery.md": {
+      "sha256": "a2b51fe2b1672afb75931b7a7d5947b14474014fed1c318307404410eb4b6e21",
+      "size": 28729
+    },
+    "docs/quickstart.md": {
+      "sha256": "69140d667d4f1a832560a979b8ba6d338971d9aab1b59fc58cfe4b2c818b2c17",
+      "size": 1681
+    },
+    "docs/reference/api.md": {
+      "sha256": "e67aece131133ab89910f9615fc6fc3c0a9b9a5f9912dfa0c6a93873ff6560ef",
+      "size": 67314
+    },
+    "docs/reference/cli.md": {
+      "sha256": "99c122ec5aef105d72e8fb76f1ee69f4db09f6da24778c195754f37374a4c386",
+      "size": 16395
+    },
+    "docs/reference/guest-tasks.md": {
+      "sha256": "7d76d275b516c7e721fee3526f155167e3e77915338fb06bc4d90982e19db24e",
+      "size": 17871
+    },
+    "docs/reference/hcl.md": {
+      "sha256": "49d0787e2a653136bf1aadfd118ebbdb541d8187521525ff99f1cea31b234eea",
+      "size": 8891
+    },
+    "docs/reference/portability.md": {
+      "sha256": "3df6d28bf5f2c98fce981a0e5a6a1447cbe27ed46308eee45031f8630e636c36",
+      "size": 5708
+    },
+    "docs/reference/resource-model.md": {
+      "sha256": "c318449828b24ed297975c418ebfbe8eedfad50b89a3a0f823e765cec1ac4aae",
+      "size": 10790
+    },
+    "docs/superpowers/plans/2026-09-13-lifecycle-closure.md": {
+      "sha256": "a9940582e09333dc6a46457e1aa506be751dbd6fde5a58cf7281e6e31963c37a",
+      "size": 5679
+    },
+    "docs/superpowers/plans/2026-09-28-observation-driven-runtime-implementation-plan.md": {
+      "sha256": "677711d7e926abf8f88cac87311974a693b5fab17b1dafe36e075186ffe27416",
+      "size": 27655
+    },
+    "docs/superpowers/plans/2026-10-07-attachment-target-ownership.md": {
+      "sha256": "49e48f816b73b4101e900104e9535780f4f1c0d0f30e0bccdca8a2819c840e76",
+      "size": 2338
+    },
+    "docs/superpowers/plans/2026-10-07-control-plane-closure.md": {
+      "sha256": "e3a3e7f70ea90c3d6a2a25b87f88be5a3750027b266cef13ca5b351bd0ab8a17",
+      "size": 3631
+    },
+    "docs/superpowers/plans/2026-10-07-destroy-receipt.md": {
+      "sha256": "2a2ca10afecf8443ebb5596274e9f41c362623bca6ce4c0583beb3b081accf0d",
+      "size": 3004
+    },
+    "docs/superpowers/plans/2026-10-07-guest-readiness.md": {
+      "sha256": "0c682f37250f60b933ee7c574228f9bc1b78b8bf3bbd6e53c64a7ae7cc1a45bb",
+      "size": 743
+    },
+    "docs/superpowers/plans/2026-10-14-provider-quiescence.md": {
+      "sha256": "0d4a778779fd9b3853df37db79b0a1831d027a1e65c3b3afb690f8938233c3ca",
+      "size": 3013
+    },
+    "docs/superpowers/plans/2026-10-19-durable-gc-sources.md": {
+      "sha256": "232cb1261581d40563e4139b3ef0b791919822458c0fe9cd6e8b5d4fdf122110",
+      "size": 3064
+    },
+    "docs/superpowers/plans/2026-10-21-three-stage-closure.md": {
+      "sha256": "0d4a632a82e63058bee571945cc0f43f79a0283dfeea912a15ce2ac4b93a64f1",
+      "size": 4165
+    },
+    "docs/superpowers/plans/2026-10-22-three-pr-operational-closure.md": {
+      "sha256": "e29063aa632ba0a5178c29a27dfa7ce138df36c1da0aa5c52371a62a872640c5",
+      "size": 20255
+    },
+    "docs/superpowers/plans/2026-10-26-capability-fault-closure.md": {
+      "sha256": "63d8e0a3eeb084ba786e4883068780d0bd395e9597606525d70edfe3c8efb0d1",
+      "size": 9864
+    },
+    "docs/superpowers/plans/2026-10-27-firecracker-policy.md": {
+      "sha256": "8f55baaa9b598f8ad56ce3ab04b577f6e5425e286c5ccbfc9f391c7d3ae4f993",
+      "size": 4261
+    },
+    "docs/superpowers/plans/2026-10-27-windows-durable-tasks.md": {
+      "sha256": "be94a34ad2c048fc96894f923ccff4fd64d668ac76bec19a569e4708496404ab",
+      "size": 4331
+    },
+    "docs/superpowers/specs/2026-09-13-lifecycle-closure-design.md": {
+      "sha256": "2c9b0fb1ce51ffefbbb41b2ce97df1c8adfddde8f43433327728c322f6ecc711",
+      "size": 4268
+    },
+    "docs/superpowers/specs/2026-09-28-sysbox-architecture-refactor-design.md": {
+      "sha256": "c54deb87c1f460d41bbe5e2064d35590f5666b56640dbcf59af14ad46b5b8be8",
+      "size": 14706
+    },
+    "docs/superpowers/specs/2026-10-22-operational-recovery-closure-design.md": {
+      "sha256": "f91e7bd6dc0446d6a9c03e5b51ee0eaa247b22577b9fabb497447efc48220b8a",
+      "size": 3446
+    },
+    "docs/superpowers/specs/2026-10-27-guest-adaptation-design.md": {
+      "sha256": "52166d2fa1dd24dd151a8c99f5ad449cd3650b176856c525a7321f247512d812",
+      "size": 2184
+    },
+    "examples/controlled-egress/README.md": {
+      "sha256": "a3546cba1e366b79d42ab4dd2c667d2fd768494646c485ee1e3b9f0803c47718",
+      "size": 590
+    },
+    "examples/heterogeneous-matrix/README.md": {
+      "sha256": "72cd070b7e7548863b8c8b37ab5f93a6bb39499b8bd209234981a003033a9320",
+      "size": 592
+    },
+    "examples/microvm/README.md": {
+      "sha256": "c87d16f9a619f462db1cdd90ccdf93e6c5194ed9fd1e483c4d763b30bc17debd",
+      "size": 10000
+    }
+  },
+  "archive_sha256": "51203beb4fb656ffb3805c20320501e6298f859c4a81f77879e2ad46c826b950"
+}

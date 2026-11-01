@@ -15,10 +15,10 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/jackc/pgx/v5"
-	"github.com/stretchr/testify/require"
-
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDestroyHTTPIdempotencyIsAtomicAcrossPostgresServers(t *testing.T) {
@@ -30,7 +30,7 @@ func TestDestroyHTTPIdempotencyIsAtomicAcrossPostgresServers(t *testing.T) {
 	cfg.State.Backend = dsn
 	servers := []*Server{NewServerWithConfig(cfg), NewServerWithConfig(cfg)}
 	for _, server := range servers {
-		pool, err := server.apiStore.(*postgresAPIStore).poolFor(context.Background())
+		pool, err := server.apiStore.(*controlstore.Postgres).PoolFor(context.Background())
 		require.NoError(t, err)
 		t.Cleanup(pool.Close)
 	}
@@ -76,12 +76,12 @@ func TestDestroyHTTPIdempotencyIsAtomicAcrossPostgresServers(t *testing.T) {
 	commands, err := servers[0].apiStore.ListAgentCommands(context.Background(), "host-a")
 	require.NoError(t, err)
 	require.Len(t, commands, 1)
-	require.Equal(t, runCommandID(*commands[0].Run), commands[0].ID)
+	require.Equal(t, controlstore.RunCommandID(*commands[0].Run), commands[0].ID)
 }
 
 func TestPostgresAgentCommandRejectsStaleStatusRegression(t *testing.T) {
 	dsn := isolatedPostgresTestDSN(t)
-	store, err := newAPIStore("", dsn)
+	store, err := controlstore.New("", dsn)
 	require.NoError(t, err)
 	ctx := context.Background()
 	terminal := controlplane.AgentCommand{ID: "cmd-terminal", AgentID: "host-a", Type: "run_assigned", Status: controlplane.AgentCommandStatusCompleted, EndedAt: time.Now().UTC()}
@@ -103,7 +103,7 @@ func TestPostgresAgentCommandRejectsStaleStatusRegression(t *testing.T) {
 
 func TestPostgresGlobalRevisionRoundTrip(t *testing.T) {
 	dsn := isolatedPostgresTestDSN(t)
-	store, err := newAPIStore("", dsn)
+	store, err := controlstore.New("", dsn)
 	require.NoError(t, err)
 	ctx := context.Background()
 
@@ -131,7 +131,7 @@ func TestPostgresGlobalRevisionRoundTrip(t *testing.T) {
 	require.Equal(t, rev.Size, got.Size)
 
 	_, err = store.GetGlobalRevision(ctx, "sha256:unknown")
-	require.ErrorIs(t, err, errGlobalRevisionNotFound)
+	require.ErrorIs(t, err, controlstore.ErrRevisionNotFound)
 }
 
 func TestDestroyHTTPIdempotencyRejectsFingerprintConflictAcrossPostgresServers(t *testing.T) {
@@ -211,7 +211,7 @@ func TestPostgresRunDispatchSurvivesRestartAndIsDeliveredByReconciler(t *testing
 	var command controlplane.AgentCommand
 	require.NoError(t, json.Unmarshal(data, &command))
 	require.NotNil(t, command.Run)
-	require.Equal(t, runCommandID(*command.Run), command.ID)
+	require.Equal(t, controlstore.RunCommandID(*command.Run), command.ID)
 	require.Equal(t, controlplane.AgentCommandStatusDelivered, command.Status)
 	require.NotNil(t, command.Run)
 	require.Equal(t, response.RunID, command.Run.ID)

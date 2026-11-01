@@ -43,7 +43,7 @@ func TestFirecrackerHostPowerDispatcherE2E(t *testing.T) {
 	defer cancel()
 	identity := substrate.OperationIdentity{ActionID: "create-power-vm", OwnerUID: "power-topology", TopologyUID: "power-topology", ResourceUID: "power-node", Generation: 2}
 	creation := substrate.WithOperationIdentity(ctx, identity)
-	handle, err := creator.CreateNode(creation, substrate.NodeSpec{Name: "host-power-e2e", Image: substrate.ArtifactHandle{ID: rootfs}, ProviderConfig: &Config{Kernel: kernel, AllowDirect: true}})
+	handle, err := creator.CreateNode(creation, substrate.NodeSpec{Name: "host-power-e2e", Image: substrate.ArtifactHandle{ID: rootfs}, ProviderConfig: &Config{Kernel: kernel}})
 	require.NoError(t, err)
 	cleanupRealVM(t, creator, handle)
 	require.NoError(t, creator.StartNode(creation, handle))

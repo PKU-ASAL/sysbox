@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/stretchr/testify/require"
@@ -39,8 +40,8 @@ func TestGuestSSHSourceRejectsCurrentStateIndependentOfCommandSnapshot(t *testin
 			}
 			var sourceErr error
 			commit := true
-			storage := apiExecutionGrantStorage{sourceErr: &sourceErr, commitCommand: &commit}
-			err := storage.checkGuestSSHSource(record, func(id string) (*controlplane.NodeOperation, error) {
+			storage := controlstore.AuthorityStorage{SourceErr: &sourceErr, CommitCommand: &commit}
+			err := storage.CheckGuestSSHSource(record, func(id string) (*controlplane.NodeOperation, error) {
 				require.Equal(t, "op", id)
 				if scenario == "missing" {
 					return nil, persistence.ErrNotFound

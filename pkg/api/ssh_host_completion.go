@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 )
 
@@ -68,7 +69,7 @@ func (s *Server) commitHostSSHCompletion(w http.ResponseWriter, r *http.Request,
 	}
 	sum := sha256.Sum256(raw)
 	receiptID := hex.EncodeToString(sum[:])
-	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
 	if err := authority.ValidateHostStop(r.Context(), receipt.Grant, receiptID); err != nil {
 		writeError(w, 409, err)
 		return

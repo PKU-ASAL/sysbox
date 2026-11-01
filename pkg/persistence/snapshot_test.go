@@ -2,12 +2,14 @@ package persistence
 
 import (
 	"context"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+
 	"github.com/oslab/sysbox/pkg/address"
-	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
-	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestAggregateSnapshotRestorePreservesIdentityAndAdvancesSerial(t *testing.T) {
@@ -62,7 +64,7 @@ func TestSnapshotRejectsCorruptionUnresolvedWorkAndDifferentLineage(t *testing.T
 	require.NoError(t, err)
 	snap, err := backend.Snapshot(ctx, "empty")
 	require.NoError(t, err)
-	action := runtime.ActionRecord{ID: "pending", RunID: "run", Topology: "lab", Resource: address.Resource("sysbox_node", "web"), Action: controlplane.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: st.TopologyUID, ResourceUID: "uid", Generation: 1}
+	action := runtime.ActionRecord{ID: "pending", RunID: "run", Topology: "lab", Resource: address.Resource("sysbox_node", "web"), Action: model.PlanActionCreate, Status: runtime.ActionIntentCommitted, OwnerUID: st.TopologyUID, ResourceUID: "uid", Generation: 1}
 	require.NoError(t, r.CommitActionIntent(ctx, action))
 	require.ErrorIs(t, backend.RestoreSnapshot(ctx, snap.ID), ErrConflict)
 	require.NoError(t, r.update(ctx, "lab", func(a *aggregate) error {

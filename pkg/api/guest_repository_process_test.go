@@ -12,6 +12,7 @@ import (
 
 	"github.com/gofrs/flock"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/stretchr/testify/require"
 )
 
@@ -20,7 +21,7 @@ func TestGuestCASChildProcess(t *testing.T) {
 	if root == "" {
 		return
 	}
-	s := &localAPIStore{runsDir: root}
+	s := &controlstore.Local{RunsDir: root}
 	x, err := s.GetGuestExecution(context.Background(), "shared")
 	require.NoError(t, err)
 	fmt.Println("ready")
@@ -33,7 +34,7 @@ func TestGuestCASUsesProcessSharedRecordLock(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	root := t.TempDir()
-	s := &localAPIStore{runsDir: root}
+	s := &controlstore.Local{RunsDir: root}
 	require.NoError(t, s.SaveGuestExecution(ctx, controlplane.GuestExecution{ID: "shared", Version: 1, Topology: "lab", Status: controlplane.GuestExecutionQueued}))
 	lock := flock.New(filepath.Join(root, "_guest-executions", "shared.lock"))
 	require.NoError(t, lock.Lock())

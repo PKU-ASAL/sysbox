@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 )
 
@@ -22,7 +24,7 @@ func (s *Server) inspectTopologyAuthority(ctx context.Context, topology string) 
 	if err != nil {
 		return persistence.AuthorityInspection{}, err
 	}
-	return persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).InspectTopology(ctx, st.TopologyUID)
+	return persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore}).InspectTopology(ctx, st.TopologyUID)
 }
 
 // Force unlock revokes execution authority and waits for actual host stops.
@@ -30,7 +32,7 @@ func (s *Server) inspectTopologyAuthority(ctx context.Context, topology string) 
 // The persistent barrier is the audit record and retry identity.
 func (s *Server) forceUnlockAuthority(ctx context.Context, topology, key string) (authorityUnlockResult, error) {
 	var result authorityUnlockResult
-	if err := validatePathSegment(topology, "topology"); err != nil {
+	if err := controlstore.ValidatePathSegment(topology, "topology"); err != nil {
 		return result, err
 	}
 	if key == "" || len(key) > 128 {
@@ -46,7 +48,7 @@ func (s *Server) forceUnlockAuthority(ctx context.Context, topology, key string)
 	}
 	id := fmt.Sprintf("unlock-%x", sha256.Sum256([]byte(topology+"\x00"+key)))
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte("sysbox.force-unlock.v1\x00"+topology+"\x00"+st.TopologyUID)))
-	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
 	barrier, err := authority.BeginMaintenance(ctx, id, st.TopologyUID, digest)
 	if err != nil {
 		return result, err
@@ -57,7 +59,7 @@ func (s *Server) forceUnlockAuthority(ctx context.Context, topology, key string)
 		return result, nil
 	}
 	result.Status = "waiting_for_stop"
-	if err := s.workspaceService().ensureTopologyQuiescent(ctx, topology); err != nil {
+	if err := s.workspaceService().EnsureTopologyQuiescent(ctx, topology); err != nil {
 		if errors.Is(err, persistence.ErrConflict) {
 			return result, nil
 		}

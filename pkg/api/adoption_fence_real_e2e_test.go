@@ -21,12 +21,15 @@ import (
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/stretchr/testify/require"
+
 	libvirtprovider "github.com/oslab/sysbox/pkg/provider/libvirt"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
-	"github.com/stretchr/testify/require"
 )
 
 // TestAdoptionFenceWholeVMCancellationMatrixE2E fixes every scenario explicitly;
@@ -189,7 +192,7 @@ func TestAdoptionFenceWholeVMRecoveryE2E(t *testing.T) {
 	cmd, ok, err := s.apiStore.AcquireAgentCommandLease(ctx, adopt.AgentID, op.CommandID, "worker", time.Minute)
 	require.NoError(t, err)
 	require.True(t, ok)
-	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
 	session, err := authority.OpenSession(ctx, adopt.AgentID, "process", "")
 	require.NoError(t, err)
 	oldBoot := ssh("cat /proc/sys/kernel/random/boot_id")
@@ -209,7 +212,7 @@ func TestAdoptionFenceWholeVMRecoveryE2E(t *testing.T) {
 	}
 	runProbe()
 	if cancelKind != "" && !sourceOwned {
-		old := runtime.ActionRecord{ID: "canonical-unknown", RunID: adopt.ID, Topology: adopt.Topology, Resource: address.Resource("sysbox_node", "adopted"), Action: controlplane.PlanActionAdopt, Status: runtime.ActionIntentCommitted, OwnerUID: adopt.TopologyUID, ResourceUID: adopt.ResourceUID, Generation: 1, DesiredDigest: "old-intent", Candidate: &state.Resource{Address: address.Resource("sysbox_node", "adopted"), Driver: adopt.Provider, ExternalID: id, OwnerUID: adopt.TopologyUID, ResourceUID: adopt.ResourceUID, Generation: 1}}
+		old := runtime.ActionRecord{ID: "canonical-unknown", RunID: adopt.ID, Topology: adopt.Topology, Resource: address.Resource("sysbox_node", "adopted"), Action: model.PlanActionAdopt, Status: runtime.ActionIntentCommitted, OwnerUID: adopt.TopologyUID, ResourceUID: adopt.ResourceUID, Generation: 1, DesiredDigest: "old-intent", Candidate: &state.Resource{Address: address.Resource("sysbox_node", "adopted"), Driver: adopt.Provider, ExternalID: id, OwnerUID: adopt.TopologyUID, ResourceUID: adopt.ResourceUID, Generation: 1}}
 		require.NoError(t, repo.CommitActionIntent(ctx, old))
 	}
 	digest, err := adopt.Digest()
@@ -299,7 +302,7 @@ func TestAdoptionFenceWholeVMRecoveryE2E(t *testing.T) {
 		require.NoError(t, err)
 		if sourceOwned {
 			require.Empty(t, actions)
-			actions = []runtime.ActionRecord{{ID: "placeholder", Topology: adopt.Topology, Resource: address.Resource("sysbox_node", "adopted"), Action: controlplane.PlanActionAdopt, Status: runtime.ActionIntentCommitted, OwnerUID: adopt.TopologyUID, ResourceUID: adopt.ResourceUID, Generation: adopt.Generation, DesiredDigest: "fresh", Candidate: &state.Resource{Address: address.Resource("sysbox_node", "adopted"), Driver: adopt.Provider, ExternalID: id, OwnerUID: adopt.TopologyUID, ResourceUID: adopt.ResourceUID, Generation: adopt.Generation}}}
+			actions = []runtime.ActionRecord{{ID: "placeholder", Topology: adopt.Topology, Resource: address.Resource("sysbox_node", "adopted"), Action: model.PlanActionAdopt, Status: runtime.ActionIntentCommitted, OwnerUID: adopt.TopologyUID, ResourceUID: adopt.ResourceUID, Generation: adopt.Generation, DesiredDigest: "fresh", Candidate: &state.Resource{Address: address.Resource("sysbox_node", "adopted"), Driver: adopt.Provider, ExternalID: id, OwnerUID: adopt.TopologyUID, ResourceUID: adopt.ResourceUID, Generation: adopt.Generation}}}
 			barrier, err := authority.InspectMaintenance(ctx, adopt.ID)
 			require.NoError(t, err)
 			require.True(t, barrier.Released)

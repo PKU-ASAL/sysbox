@@ -1,11 +1,12 @@
 package persistence
 
 import (
+	"testing"
+	"time"
+
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/stretchr/testify/require"
-	"testing"
-	"time"
 )
 
 func TestLocalRecoveryCommitCannotAdoptRemoteOrChangedRun(t *testing.T) {

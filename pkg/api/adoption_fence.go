@@ -8,12 +8,13 @@ import (
 	"net/http"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 )
 
 func (s *Server) handleBeginAdoptionFence(w http.ResponseWriter, r *http.Request) {
 	topology, id, key := r.PathValue("topology"), r.PathValue("operation"), r.Header.Get("Idempotency-Key")
-	if validatePathSegment(topology, "topology") != nil || validatePathSegment(id, "operation") != nil || key == "" || len(key) > 128 {
+	if controlstore.ValidatePathSegment(topology, "topology") != nil || controlstore.ValidatePathSegment(id, "operation") != nil || key == "" || len(key) > 128 {
 		writeError(w, 400, persistence.ErrInvalidRecord)
 		return
 	}
@@ -63,7 +64,7 @@ func (s *Server) handleAuthorizeAdoptionFence(w http.ResponseWriter, r *http.Req
 		writeError(w, 401, err)
 		return
 	}
-	f, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).ReadHostFence(r.Context(), r.PathValue("fence"))
+	f, err := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore}).ReadHostFence(r.Context(), r.PathValue("fence"))
 	if err != nil || f.Request.Grant.AgentID != r.PathValue("agent") || f.Request.Grant.Operation != "adoption_apply" || f.Receipt == nil {
 		writeError(w, 409, persistence.ErrConflict)
 		return
@@ -99,7 +100,7 @@ func (s *Server) handleAdoptionFenceDisposition(w http.ResponseWriter, r *http.R
 		writeError(w, 400, err)
 		return
 	}
-	if gcEvidenceHash(proof.Request) != gcEvidenceHash(f.Request) {
+	if controlstore.GcEvidenceHash(proof.Request) != controlstore.GcEvidenceHash(f.Request) {
 		writeError(w, 409, persistence.ErrConflict)
 		return
 	}
@@ -115,7 +116,7 @@ func (s *Server) reconcileAdoptionFence(ctx context.Context, p controlplane.Adop
 		return persistence.ErrConflict
 	}
 	transferKey := s.grantSigner.Public().(ed25519.PublicKey)
-	authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore})
+	authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore})
 	if err := authority.PrepareAdoptionDisposition(ctx, p, hostKey); err != nil {
 		return err
 	}
@@ -167,7 +168,7 @@ func (s *Server) reconcileAdoptionFence(ctx context.Context, p controlplane.Adop
 		}
 		return nil
 	})
-	bound.lifecycle = nil
+	bound.Lifecycle = nil
 	if err = persistence.NewExecutionGrantRepository(bound).FinishAdoptionDisposition(ctx, p, hash); err != nil {
 		return err
 	}

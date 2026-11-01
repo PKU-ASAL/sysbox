@@ -2,14 +2,16 @@ package firecracker
 
 import (
 	"context"
+
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/oslab/sysbox/pkg/transport"
 
-	"github.com/stretchr/testify/require"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestGuestPolicyRejectsUnfencedLegacyAdapter(t *testing.T) {

@@ -3,11 +3,12 @@ package firecracker
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"testing"
+
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/stretchr/testify/require"
-	"os"
-	"testing"
 )
 
 func TestOldManifestRequiresExplicitRebuild(t *testing.T) {
@@ -27,6 +28,6 @@ func TestFirecrackerRejectsGuessedDockerBridge(t *testing.T) {
 }
 
 func TestValidateAllowsProvenManagedNetworkAttachments(t *testing.T) {
-	err := (&Substrate{}).Validate(substrate.NodeSpec{ManagedNetwork: true, ProviderConfig: &Config{AllowDirect: true, Kernel: "kernel"}})
+	err := (&Substrate{}).Validate(substrate.NodeSpec{ManagedNetwork: true, ProviderConfig: &Config{Kernel: "kernel"}})
 	require.NoError(t, err)
 }

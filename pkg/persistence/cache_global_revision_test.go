@@ -5,12 +5,13 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCacheGCProtectsUnboundGlobalRevisionContent(t *testing.T) {

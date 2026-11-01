@@ -2,7 +2,9 @@ package api
 
 import (
 	"context"
+
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 )
 
@@ -14,7 +16,7 @@ func (s *Server) cancelFileDispatch(ctx context.Context, op controlplane.GuestFi
 		return false, persistence.ErrConflict
 	}
 	noEffect := true
-	storage := apiExecutionGrantStorage{store: s.apiStore, commandID: op.CommandID, writeCommand: true, validate: func(record *persistence.CommandRecord) error {
+	storage := controlstore.AuthorityStorage{Store: s.apiStore, CommandID: op.CommandID, WriteCommand: true, Validate: func(record *persistence.CommandRecord) error {
 		if record == nil || record.Command.AgentID != op.AgentID || record.Command.Type != "guest_file_put" || record.Command.FilePut == nil || record.Command.FilePut.ID != op.ID {
 			return persistence.ErrConflict
 		}
@@ -22,7 +24,7 @@ func (s *Server) cancelFileDispatch(ctx context.Context, op controlplane.GuestFi
 		return nil
 	}}
 	err := storage.UpdateExecutionAuthority(ctx, func(raw []byte) ([]byte, error) {
-		memory := &grantTransaction{raw: raw}
+		memory := &controlstore.GrantTransaction{Raw: raw}
 		repo := persistence.NewExecutionGrantRepository(memory)
 		grants, err := repo.ListActiveGrants(ctx)
 		if err != nil {
@@ -36,12 +38,12 @@ func (s *Server) cancelFileDispatch(ctx context.Context, op controlplane.GuestFi
 				}
 			}
 		}
-		if memory.raw == nil {
+		if memory.Raw == nil {
 			if err = repo.ObserveTime(ctx); err != nil {
 				return nil, err
 			}
 		}
-		return memory.raw, nil
+		return memory.Raw, nil
 	})
 	return noEffect, err
 }

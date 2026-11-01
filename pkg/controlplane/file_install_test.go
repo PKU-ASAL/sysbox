@@ -3,11 +3,12 @@ package controlplane
 import (
 	"crypto/ed25519"
 	"crypto/rand"
-	"github.com/oslab/sysbox/pkg/substrate"
-	"github.com/stretchr/testify/require"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/substrate"
+	"github.com/stretchr/testify/require"
 )
 
 func TestFileInstallDigestExcludesDeliveryAndStopRequiresQuiescence(t *testing.T) {

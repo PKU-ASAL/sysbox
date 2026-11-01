@@ -9,13 +9,14 @@ import (
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/stretchr/testify/require"
 )
 
 func TestGCGrantRequiresCurrentUnreferencedLifecycle(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		repo, err := s.actionRepository("lab")
@@ -25,7 +26,7 @@ func TestGCGrantRequiresCurrentUnreferencedLifecycle(t *testing.T) {
 		require.NoError(t, err)
 		inventory, err := repo.LoadGCReferences(ctx, "lab")
 		require.NoError(t, err)
-		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		session, err := authority.OpenSession(ctx, "agent", "process", "")
 		require.NoError(t, err)
 		request := func(id, digest string) error {
@@ -66,14 +67,14 @@ func TestGCGrantRequiresCurrentUnreferencedLifecycle(t *testing.T) {
 }
 
 func TestGCGrantCannotAuthorizeOrRenewAfterReferenceChange(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		repo, err := s.actionRepository("lab")
 		require.NoError(t, err)
 		inventory, err := repo.LoadGCReferences(ctx, "lab")
 		require.NoError(t, err)
-		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		session, err := authority.OpenSession(ctx, "agent", "process", "")
 		require.NoError(t, err)
 		cmd := controlplane.AgentCommand{ID: "gc", AgentID: "agent", Type: "gc_delete", Status: controlplane.AgentCommandStatusLeased, TopologyUID: inventory.TopologyUID, ActionID: "gc", ResourceUID: "orphan-uid", Generation: 1, Attempt: 1, LeaseOwner: "worker", LeaseUntil: time.Now().Add(time.Minute), Session: &controlplane.ConsoleSession{ID: session.ID, Topology: "lab", AgentID: "agent"}, GCKind: "container", GCExternalID: "orphan", GCInventoryDigest: inventory.Digest}

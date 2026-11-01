@@ -10,16 +10,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/revisiongate"
 )
 
 func (s *Server) deleteLocalRevisionBatch(ctx context.Context, ids []string, policy RevisionRetentionPolicy) error {
-	store, ok := s.apiStore.(*localAPIStore)
+	store, ok := s.apiStore.(*controlstore.Local)
 	if !ok || s.stateBackend != "" || len(ids) < 1 || len(ids) > 128 || len(ids) > policy.Limit || policy.KeepLast < 0 || policy.KeepLast > 10000 || policy.OlderThan.IsZero() || policy.OlderThan.After(time.Now()) {
 		return persistence.ErrInvalidRecord
 	}
-	root, err := revisiongate.Catalog(store.runsDir)
+	root, err := revisiongate.Catalog(store.RunsDir)
 	if err != nil {
 		return err
 	}
@@ -48,11 +49,11 @@ func (s *Server) deleteLocalRevisionBatch(ctx context.Context, ids []string, pol
 	}
 	seen := map[string]bool{}
 	for _, id := range ids {
-		if !globalRevisionPattern.MatchString(id) || seen[id] || keep[id] {
+		if !controlstore.GlobalRevisionPattern.MatchString(id) || seen[id] || keep[id] {
 			return persistence.ErrConflict
 		}
 		seen[id] = true
-		if err = store.validateLocalRevisionRetirement(ctx, root, id, policy.OlderThan); err != nil {
+		if err = store.ValidateLocalRevisionRetirement(ctx, root, id, policy.OlderThan); err != nil {
 			return err
 		}
 	}
@@ -73,17 +74,17 @@ func (s *Server) deleteLocalRevisionBatch(ctx context.Context, ids []string, pol
 			return fmt.Errorf("batch retired; payload cleanup pending: %w", err)
 		}
 	}
-	return syncDirectory(root)
+	return controlstore.SyncDirectory(root)
 }
 
 // Cleanup only reclaims objects already hidden by a permanent retirement proof.
 // It never authorizes a new retirement or removes the admission evidence.
 func (s *Server) cleanupLocalRevisionPayloads(ctx context.Context) (int, error) {
-	store, ok := s.apiStore.(*localAPIStore)
+	store, ok := s.apiStore.(*controlstore.Local)
 	if !ok || s.stateBackend != "" {
 		return 0, persistence.ErrUnsupportedVersion
 	}
-	root, err := revisiongate.Catalog(store.runsDir)
+	root, err := revisiongate.Catalog(store.RunsDir)
 	if err != nil {
 		return 0, err
 	}
@@ -102,7 +103,7 @@ func (s *Server) cleanupLocalRevisionPayloads(ctx context.Context) (int, error) 
 			continue
 		}
 		id := strings.TrimSuffix(entry.Name(), ".json")
-		if !globalRevisionPattern.MatchString(id) {
+		if !controlstore.GlobalRevisionPattern.MatchString(id) {
 			continue
 		}
 		retired, err := revisiongate.Retired(root, id)
@@ -129,7 +130,7 @@ func (s *Server) cleanupLocalRevisionPayloads(ctx context.Context) (int, error) 
 			return i, err
 		}
 	}
-	return len(targets), syncDirectory(root)
+	return len(targets), controlstore.SyncDirectory(root)
 }
 func (s *Server) handleRevisionRetiredCleanup(w http.ResponseWriter, r *http.Request) {
 	count, err := s.cleanupLocalRevisionPayloads(r.Context())

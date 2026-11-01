@@ -1,6 +1,10 @@
 package controlplane
 
-import "time"
+import (
+	"time"
+
+	"github.com/oslab/sysbox/pkg/model"
+)
 
 // ConditionStatus is the Kubernetes-style tri-state of a readiness condition.
 //
@@ -81,7 +85,7 @@ type AssertionResult struct {
 // the current topology health (nil if not yet observed). assertion is nil until
 // check/assert evaluation has produced a verdict — an unevaluated assertion is
 // Unknown, not False, so it neither blocks nor certifies readiness.
-func ComputeTopologyStatus(latestRun *Run, health *TopologyHealth, assertion *AssertionResult) TopologyStatus {
+func ComputeTopologyStatus(latestRun *Run, health *model.TopologyHealth, assertion *AssertionResult) TopologyStatus {
 	applied := conditionApplied(latestRun)
 	provisioned := conditionProvisioned(health)
 	asserted := conditionAsserted(assertion)
@@ -118,18 +122,18 @@ func conditionApplied(run *Run) Condition {
 	return c
 }
 
-func conditionProvisioned(health *TopologyHealth) Condition {
+func conditionProvisioned(health *model.TopologyHealth) Condition {
 	c := Condition{Type: ConditionProvisioned, Status: ConditionUnknown}
 	if health == nil {
 		return c
 	}
 	switch health.Status {
-	case ResourceHealthHealthy:
+	case model.ResourceHealthHealthy:
 		c.Status = ConditionTrue
-	case ResourceHealthDrifted:
+	case model.ResourceHealthDrifted:
 		c.Status = ConditionFalse
 		c.Reason = "ResourceDrift"
-	case ResourceHealthUnknown:
+	case model.ResourceHealthUnknown:
 		c.Status = ConditionUnknown
 	}
 	return c

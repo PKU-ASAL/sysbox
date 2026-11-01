@@ -22,7 +22,7 @@ class DeploymentTests(unittest.TestCase):
         from pathlib import Path
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory)
-            target={'architecture':'amd64'}
+            target={'os':'linux','architecture':'amd64'}
             for name in ('sysbox','sysbox-init','sysbox-netns'):
                 (root/name).write_bytes(name.encode())
                 target[name.replace('-','_')+'_sha256']=hashlib.sha256(name.encode()).hexdigest()
@@ -32,3 +32,15 @@ class DeploymentTests(unittest.TestCase):
             self.assertEqual(3,len(files))
             (root/'sysbox-netns').write_bytes(b'wrong')
             with self.assertRaises(ValueError):deploy_two_vms.release_files(root/'sysbox',metadata)
+
+    def test_deployment_uses_canonical_host_and_agent_units(self):
+        from pathlib import Path
+        root = Path(__file__).resolve().parents[2]
+        for name in ('host', 'agent'):
+            self.assertEqual((root / 'deploy/systemd' / ('sysbox-' + name + '.service')).read_text(), deploy_two_vms.deployment_unit(name))
+        with self.assertRaises(ValueError):
+            deploy_two_vms.deployment_unit('../api')
+
+    def test_deployment_refuses_unverified_single_binary(self):
+        with self.assertRaisesRegex(ValueError, 'release metadata'):
+            deploy_two_vms.deploy('/unused', '/unused')

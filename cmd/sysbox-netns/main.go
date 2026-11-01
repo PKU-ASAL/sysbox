@@ -27,6 +27,9 @@ func main() {
 }
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	if len(args) > 0 && (args[0] == "--anchor-create" || args[0] == "--anchor-delete" || args[0] == "--anchor-local") {
+		return runAnchor(args, stdout, stderr)
+	}
 	if len(args) < 2 {
 		_, _ = io.WriteString(stderr, "usage: sysbox-netns <netns-path> <nft-args...>\n")
 		return 2

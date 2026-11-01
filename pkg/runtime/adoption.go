@@ -5,16 +5,17 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"time"
+
 	"github.com/oslab/sysbox/pkg/address"
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
-	"time"
 )
 
-func InspectAdoption(ctx context.Context, provider, name string, spec substrate.NodeSpec) (substrate.AdoptionEvidence, error) {
-	p, err := driver.DefaultRegistry.RequireOwnershipAdoption(provider)
+func InspectAdoption(ctx context.Context, provider, name string, spec substrate.NodeSpec, providers *driver.Registry) (substrate.AdoptionEvidence, error) {
+	p, err := providers.RequireOwnershipAdoption(provider)
 	if err != nil {
 		return substrate.AdoptionEvidence{}, err
 	}
@@ -23,18 +24,18 @@ func InspectAdoption(ctx context.Context, provider, name string, spec substrate.
 
 // CommitAdoption journals before provider effects. Existing intents are only
 // observed on retry, never blindly replayed after an uncertain ownership bind.
-func CommitAdoption(ctx context.Context, actions ActionRepository, runID, topology string, addr address.Address, evidence substrate.AdoptionEvidence, resource state.Resource, identity substrate.OperationIdentity, expectedSerial int64) error {
+func CommitAdoption(ctx context.Context, actions ActionRepository, runID, topology string, addr address.Address, evidence substrate.AdoptionEvidence, resource state.Resource, identity substrate.OperationIdentity, expectedSerial int64, providers *driver.Registry) error {
 	if actions == nil || runID == "" || topology == "" || addr.IsZero() || identity.Validate() != nil || evidence.ExternalID == "" || evidence.Fingerprint == "" {
 		return fmt.Errorf("adoption requires complete immutable authorization")
 	}
 	if !resource.Address.Equal(addr) || resource.Driver != evidence.Provider || resource.ExternalID != evidence.ExternalID || resource.OwnerUID != identity.OwnerUID || resource.ResourceUID != identity.ResourceUID || resource.Generation != identity.Generation || identity.TopologyUID != identity.OwnerUID {
 		return fmt.Errorf("adoption candidate identity conflict")
 	}
-	p, err := driver.DefaultRegistry.RequireOwnershipAdoption(evidence.Provider)
+	p, err := providers.RequireOwnershipAdoption(evidence.Provider)
 	if err != nil {
 		return err
 	}
-	codec, err := driver.DefaultRegistry.RequireNodeState(evidence.Provider)
+	codec, err := providers.RequireNodeState(evidence.Provider)
 	if err != nil {
 		return err
 	}
@@ -60,7 +61,7 @@ func CommitAdoption(ctx context.Context, actions ActionRepository, runID, topolo
 	}
 	sum := sha256.Sum256(raw)
 	digest := fmt.Sprintf("%x", sum)
-	action := ActionRecord{ID: "adopt-" + digest, Topology: topology, RunID: runID, Resource: addr, Action: controlplane.PlanActionAdopt, Status: ActionIntentCommitted, DesiredDigest: digest, OwnerUID: identity.OwnerUID, ResourceUID: identity.ResourceUID, Generation: identity.Generation, StateSerial: expectedSerial, ExpectedSerial: expectedSerial, Candidate: &resource}
+	action := ActionRecord{ID: "adopt-" + digest, Topology: topology, RunID: runID, Resource: addr, Action: model.PlanActionAdopt, Status: ActionIntentCommitted, DesiredDigest: digest, OwnerUID: identity.OwnerUID, ResourceUID: identity.ResourceUID, Generation: identity.Generation, StateSerial: expectedSerial, ExpectedSerial: expectedSerial, Candidate: &resource}
 	journal, err := actions.LoadActions(ctx, topology)
 	if err != nil {
 		return err
@@ -122,7 +123,7 @@ func CommitAdoption(ctx context.Context, actions ActionRepository, runID, topolo
 	action.EffectComplete = true
 	action.ExpectedSerial = st.Meta.Serial
 	logged := resourceLog(resource)
-	patch := &StatePatch{Resource: addr.String(), Action: controlplane.PlanActionAdopt, Op: StatePatchUpsert, State: &logged}
+	patch := &StatePatch{Resource: addr.String(), Action: model.PlanActionAdopt, Op: StatePatchUpsert, State: &logged}
 	return actions.CommitActionOutcome(ctx, action, patch)
 }
 
@@ -162,7 +163,7 @@ func CommitAdoptionEvidence(ctx context.Context, actions ActionRepository, runID
 	}
 	sum := sha256.Sum256(raw)
 	digest := fmt.Sprintf("%x", sum)
-	action := ActionRecord{ID: "adopt-" + digest, Topology: topology, RunID: runID, Resource: addr, Action: controlplane.PlanActionAdopt, Status: ActionIntentCommitted, DesiredDigest: digest, OwnerUID: identity.OwnerUID, ResourceUID: identity.ResourceUID, Generation: identity.Generation, StateSerial: expectedSerial, ExpectedSerial: expectedSerial, Candidate: &resource}
+	action := ActionRecord{ID: "adopt-" + digest, Topology: topology, RunID: runID, Resource: addr, Action: model.PlanActionAdopt, Status: ActionIntentCommitted, DesiredDigest: digest, OwnerUID: identity.OwnerUID, ResourceUID: identity.ResourceUID, Generation: identity.Generation, StateSerial: expectedSerial, ExpectedSerial: expectedSerial, Candidate: &resource}
 	journal, err := actions.LoadActions(ctx, topology)
 	if err != nil {
 		return err
@@ -175,7 +176,7 @@ func CommitAdoptionEvidence(ctx context.Context, actions ActionRepository, runID
 		if old.ID != action.ID {
 			continue
 		}
-		if old.DesiredDigest != digest || old.StateSerial != expectedSerial || old.Topology != topology || old.RunID != runID || !old.Resource.Equal(addr) || old.Action != controlplane.PlanActionAdopt || old.OwnerUID != identity.OwnerUID || old.ResourceUID != identity.ResourceUID || old.Generation != identity.Generation || !old.EffectComplete || old.Candidate == nil {
+		if old.DesiredDigest != digest || old.StateSerial != expectedSerial || old.Topology != topology || old.RunID != runID || !old.Resource.Equal(addr) || old.Action != model.PlanActionAdopt || old.OwnerUID != identity.OwnerUID || old.ResourceUID != identity.ResourceUID || old.Generation != identity.Generation || !old.EffectComplete || old.Candidate == nil {
 			return ErrPlanStale
 		}
 		if old.Status == ActionSucceeded {
@@ -220,6 +221,6 @@ func CommitAdoptionEvidence(ctx context.Context, actions ActionRepository, runID
 	action.Status = ActionSucceeded
 	action.EffectComplete = true
 	logged := resourceLog(*action.Candidate)
-	patch := &StatePatch{Resource: addr.String(), Action: controlplane.PlanActionAdopt, Op: StatePatchUpsert, State: &logged}
+	patch := &StatePatch{Resource: addr.String(), Action: model.PlanActionAdopt, Op: StatePatchUpsert, State: &logged}
 	return actions.CommitActionOutcome(ctx, action, patch)
 }

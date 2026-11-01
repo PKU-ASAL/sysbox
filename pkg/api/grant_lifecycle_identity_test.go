@@ -14,6 +14,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
 )
@@ -28,7 +29,7 @@ func grantTestTopologyUID(t *testing.T, s *Server, topology string) string {
 }
 
 func TestGrantIssuanceRejectsCommandForDeletedLifecycle(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		s.agentSvc = newAgentService(s)
@@ -41,7 +42,7 @@ func TestGrantIssuanceRejectsCommandForDeletedLifecycle(t *testing.T) {
 		require.NoError(t, err)
 		before, err := repo.LoadState(ctx, "lab")
 		require.NoError(t, err)
-		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		session, err := authority.OpenSession(ctx, "agent", "process", "")
 		require.NoError(t, err)
 		cmd := controlplane.AgentCommand{ID: "command", AgentID: "agent", Type: "run_assigned", Status: controlplane.AgentCommandStatusLeased, Run: &controlplane.Run{ID: "run", Topology: "lab", Op: "apply", Revision: "revision"}, TopologyUID: before.TopologyUID, ActionID: "action", Attempt: 1, LeaseOwner: "worker", LeaseUntil: time.Now().Add(time.Minute)}
@@ -64,7 +65,7 @@ func TestGrantIssuanceRejectsCommandForDeletedLifecycle(t *testing.T) {
 		require.ErrorIs(t, s.deleteStateWithAuthority(ctx, "lab", before.Meta.Serial, before.TopologyUID), persistence.ErrConflict, "live delivery still excludes API deletion")
 		// Simulate an out-of-band lifecycle rebuild so this test continues to
 		// exercise grant fencing independently of the stronger API delete gate.
-		raw, err := (apiExecutionGrantStorage{store: store}).ReadExecutionAuthority(ctx)
+		raw, err := (controlstore.AuthorityStorage{Store: store}).ReadExecutionAuthority(ctx)
 		require.NoError(t, err)
 		require.NoError(t, repo.DeleteQuiescentLifecycle(ctx, "lab", before.Meta.Serial, before.TopologyUID, raw))
 		// The delivery lease still exists. A fresh epoch must not resurrect the
@@ -78,13 +79,13 @@ func TestGrantIssuanceRejectsCommandForDeletedLifecycle(t *testing.T) {
 }
 
 func TestGrantAndMetadataDeleteCannotBothCommit(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		s := stateDeleteTestServer(t, store)
 		repo, err := s.actionRepository("lab")
 		require.NoError(t, err)
-		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		session, err := authority.OpenSession(ctx, "agent", "process", "")
 		require.NoError(t, err)
 		for attempt := 0; attempt < 8; attempt++ {
@@ -118,11 +119,11 @@ func TestGrantAndMetadataDeleteCannotBothCommit(t *testing.T) {
 }
 
 func TestRejectedGrantOnRetiredLifecycleStillAdvancesClock(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		uid := grantTestTopologyUID(t, s, "lab")
-		storage := apiExecutionGrantStorage{store: store}
+		storage := controlstore.AuthorityStorage{Store: store}
 		authority := persistence.NewExecutionGrantRepository(storage)
 		session, err := authority.OpenSession(ctx, "agent", "process", "")
 		require.NoError(t, err)

@@ -3,14 +3,16 @@ package api
 import (
 	"context"
 	"errors"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRepublishPendingCommandsRebuildsWakeupAfterRestart(t *testing.T) {
-	store := &localAPIStore{runsDir: t.TempDir()}
+	store := &controlstore.Local{RunsDir: t.TempDir()}
 	ctx := context.Background()
 	require.NoError(t, store.SaveAgentCommand(ctx, controlplane.AgentCommand{ID: "restart-command", AgentID: "agent", Type: "node_operation", Status: controlplane.AgentCommandStatusQueued}))
 	registry := newAgentRegistry()
@@ -28,7 +30,7 @@ func TestRepublishPendingCommandsRebuildsWakeupAfterRestart(t *testing.T) {
 }
 
 func TestRepublishPendingCommandsBacksOffWakeupFailure(t *testing.T) {
-	store := &localAPIStore{runsDir: t.TempDir()}
+	store := &controlstore.Local{RunsDir: t.TempDir()}
 	ctx := context.Background()
 	require.NoError(t, store.SaveAgentCommand(ctx, controlplane.AgentCommand{ID: "retry-command", AgentID: "agent", Type: "node_operation", Status: "queued"}))
 	service := &AgentService{store: store, registry: newAgentRegistry(), dispatchRetry: map[string]dispatchRetryState{}, wakeup: func(string, controlplane.AgentCommand) error { return errors.New("stream unavailable") }}

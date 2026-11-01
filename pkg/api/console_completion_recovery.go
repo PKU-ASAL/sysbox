@@ -6,24 +6,28 @@ import (
 	"fmt"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 )
 
 // Resume only durable terminal command outcomes; never reissue session_open or
 // infer a result from an expired lease, a retired delivery alone, or disconnect.
 func (s *AgentService) reconcileConsoleCompletions(ctx context.Context) error {
+	if err := s.reconcileConsoleAuthority(ctx); err != nil {
+		return err
+	}
 	return s.reconcileConsoleCompletion(ctx, "")
 }
 
 func (s *AgentService) reconcileConsoleCompletion(ctx context.Context, sessionID string) error {
 	var storage persistence.CommandStorage
 	switch store := s.store.(type) {
-	case *localAPIStore:
-		storage = localCommandStorage{store: store}
-	case *sqliteAPIStore:
-		storage = sqliteCommandStorage{store: store}
-	case *postgresAPIStore:
-		storage = postgresCommandStorage{store: store}
+	case *controlstore.Local:
+		storage = controlstore.LocalCommandStorage{Store: store}
+	case *controlstore.SQLite:
+		storage = controlstore.SqliteCommandStorage{Store: store}
+	case *controlstore.Postgres:
+		storage = controlstore.PostgresCommandStorage{Store: store}
 	default:
 		return persistence.ErrUnsupportedVersion
 	}

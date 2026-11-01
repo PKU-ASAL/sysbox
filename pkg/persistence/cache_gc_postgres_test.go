@@ -5,13 +5,14 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"github.com/gofrs/flock"
-	"github.com/stretchr/testify/require"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/gofrs/flock"
+	"github.com/stretchr/testify/require"
 )
 
 func cachePGFixture(t *testing.T) (*Repository, CacheGCPlan) {

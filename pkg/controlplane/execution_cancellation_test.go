@@ -3,9 +3,10 @@ package controlplane
 import (
 	"crypto/ed25519"
 	"crypto/rand"
-	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestExecutionCancellationCannotAuthorizeStart(t *testing.T) {

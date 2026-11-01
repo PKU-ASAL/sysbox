@@ -73,5 +73,5 @@ func TestRegisterPersistsIdentityAndRegistersRemote(t *testing.T) {
 	loaded, err := LoadIdentity(path)
 	require.NoError(t, err)
 	require.Equal(t, server.URL, loaded.APIURL)
-	require.Equal(t, "test-token", loaded.Token)
+	require.Empty(t, loaded.Token, "bootstrap administrator token must not be retained")
 }

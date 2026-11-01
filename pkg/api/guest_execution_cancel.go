@@ -7,12 +7,13 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 )
 
 // Notification may reference an already committed cancellation, never create
 // one outside the operation/outbox transaction.
-func committedGuestExecutionCancellation(ctx context.Context, store apiStore, cmd controlplane.AgentCommand) (*controlplane.AgentCommand, error) {
+func committedGuestExecutionCancellation(ctx context.Context, store controlstore.Store, cmd controlplane.AgentCommand) (*controlplane.AgentCommand, error) {
 	cmd = persistence.DurableCommand(cmd)
 	if cmd.CreatedAt.IsZero() {
 		cmd.CreatedAt = time.Now().UTC()

@@ -34,9 +34,6 @@ type Config struct {
 	SSHUser string `hcl:"ssh_user,optional"`
 	SSHPass string `hcl:"ssh_pass,optional"`
 	SSHPort int    `hcl:"ssh_port,optional"`
-	// AllowDirect explicitly opts into running Firecracker without jailer.
-	// It is unsafe and should only be used for trusted local experiments.
-	AllowDirect bool `hcl:"allow_direct,optional"`
 	// SysArmor installs the pinned standalone agent before scenario provisioners.
 	SysArmor bool `hcl:"sysarmor,optional" json:"SysArmor,omitempty"`
 }

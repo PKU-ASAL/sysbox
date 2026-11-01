@@ -11,11 +11,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
-	"github.com/stretchr/testify/require"
 )
 
 func TestFencedIntentDispositionRequiresCanonicalStopAndSignedObservation(t *testing.T) {
@@ -32,7 +34,7 @@ func testFencedIntentDisposition(t *testing.T, mode string) {
 	session, err := authority.OpenSession(ctx, "agent", "process", "")
 	require.NoError(t, err)
 	run := controlplane.Run{ID: "run", Topology: "lab", AgentID: "agent", Op: "apply", Operation: "apply", Status: controlplane.RunRunning, Attempt: 1, QueuedAt: time.Now().UTC(), Revision: "revision"}
-	a := runtime.ActionRecord{ID: "action", Topology: "lab", Revision: 1, ExpectedSerial: 3, RunID: run.ID, RunQueuedAt: run.QueuedAt, RunRevision: run.Revision, Resource: address.Resource("sysbox_node", "node"), Action: controlplane.PlanActionCreate, Status: runtime.ActionUncertain, OwnerUID: "owner", ResourceUID: "resource", Generation: 1, Candidate: &state.Resource{Address: address.Resource("sysbox_node", "node"), Driver: "docker", Private: json.RawMessage(`{"identity":"fixture"}`), ExternalID: "external", OwnerUID: "owner", ResourceUID: "resource", Generation: 1}}
+	a := runtime.ActionRecord{ID: "action", Topology: "lab", Revision: 1, ExpectedSerial: 3, RunID: run.ID, RunQueuedAt: run.QueuedAt, RunRevision: run.Revision, Resource: address.Resource("sysbox_node", "node"), Action: model.PlanActionCreate, Status: runtime.ActionUncertain, OwnerUID: "owner", ResourceUID: "resource", Generation: 1, Candidate: &state.Resource{Address: address.Resource("sysbox_node", "node"), Driver: "docker", Private: json.RawMessage(`{"identity":"fixture"}`), ExternalID: "external", OwnerUID: "owner", ResourceUID: "resource", Generation: 1}}
 	if mode != "" {
 		a.Candidate.Private = nil
 		require.NoError(t, a.Candidate.SetProviderState(json.RawMessage(`{"identity":"fixture"}`)))
@@ -41,7 +43,7 @@ func testFencedIntentDisposition(t *testing.T, mode string) {
 			a.Candidate.Attachments = []state.Attachment{{Name: "eth0", Node: a.Resource, Network: address.Resource("sysbox_network", "lan"), Driver: "docker", MAC: "02:00:00:00:00:01"}}
 		}
 		if mode == "replacement" {
-			a.Action = controlplane.PlanActionReset
+			a.Action = model.PlanActionReset
 			a.Phase = "applying"
 			a.Generation = 2
 			replacement := *a.Candidate
@@ -69,7 +71,7 @@ func testFencedIntentDisposition(t *testing.T, mode string) {
 	require.NoError(t, authority.RecordHostFence(ctx, request.ID, receipt))
 	hostPub, hostKey, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
-	report := controlplane.RunRecoveryReport{CommandID: "observe", RunID: run.ID, AgentID: run.AgentID, QueuedAt: run.QueuedAt, Revision: run.Revision, RunAttempt: 1, Mode: controlplane.RunRecoveryObserve, TopologyUID: "owner", StateSerial: 3, ObservedAt: time.Now().UTC(), Resources: []controlplane.RecoveredResource{{ActionID: a.ID, Resource: a.Resource.String(), OwnerUID: a.OwnerUID, ResourceUID: a.ResourceUID, Generation: 1, ExternalID: "external", Status: "present", JournalStatus: "uncertain", ProviderScope: "local-only"}}}
+	report := controlplane.RunRecoveryReport{CommandID: "observe", RunID: run.ID, AgentID: run.AgentID, QueuedAt: run.QueuedAt, Revision: run.Revision, RunAttempt: 1, Mode: controlplane.RunRecoveryObserve, TopologyUID: "owner", StateSerial: 3, ObservedAt: time.Now().UTC(), Resources: []model.RecoveredResource{{ActionID: a.ID, Resource: a.Resource.String(), OwnerUID: a.OwnerUID, ResourceUID: a.ResourceUID, Generation: 1, ExternalID: "external", Status: "present", JournalStatus: "uncertain", ProviderScope: "local-only"}}}
 	if mode == "replacement" {
 		old := report.Resources[0]
 		old.Status = "absent"
@@ -161,12 +163,12 @@ func testFencedIntentDisposition(t *testing.T, mode string) {
 		retained, err := manager.Load()
 		require.NoError(t, err)
 		require.Len(t, retained.Resources, 1)
-		cleanup := runtime.ActionRecord{ID: "cleanup", Topology: "lab", RunID: "new-run", Resource: resource.Address, Action: controlplane.PlanActionDelete, Status: runtime.ActionIntentCommitted, OwnerUID: resource.OwnerUID, ResourceUID: resource.ResourceUID, Generation: resource.Generation, StateSerial: result.Serial, ExpectedSerial: result.Serial, Candidate: &resource}
+		cleanup := runtime.ActionRecord{ID: "cleanup", Topology: "lab", RunID: "new-run", Resource: resource.Address, Action: model.PlanActionDelete, Status: runtime.ActionIntentCommitted, OwnerUID: resource.OwnerUID, ResourceUID: resource.ResourceUID, Generation: resource.Generation, StateSerial: result.Serial, ExpectedSerial: result.Serial, Candidate: &resource}
 		require.NoError(t, commitActionIntent(result, cleanup))
 		cleanup = result.Actions[cleanup.ID]
 		cleanup.Status = runtime.ActionSucceeded
 		cleanup.EffectComplete = true
-		require.NoError(t, applyActionOutcome(result, cleanup, &runtime.StatePatch{Resource: resource.Address.String(), Action: controlplane.PlanActionDelete, Op: runtime.StatePatchDelete}))
+		require.NoError(t, applyActionOutcome(result, cleanup, &runtime.StatePatch{Resource: resource.Address.String(), Action: model.PlanActionDelete, Op: runtime.StatePatchDelete}))
 		resolved, err := json.Marshal(result)
 		require.NoError(t, err)
 		_, err = decodeAggregate(resolved)
@@ -188,7 +190,7 @@ func testFencedIntentDisposition(t *testing.T, mode string) {
 			d := decision
 			o := observation
 			r := report
-			r.Resources = append([]controlplane.RecoveredResource(nil), report.Resources...)
+			r.Resources = append([]model.RecoveredResource(nil), report.Resources...)
 			o.Recovery = &r
 			signingKey := hostPub
 			clock := now

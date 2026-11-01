@@ -10,6 +10,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/workspace"
 	"github.com/stretchr/testify/require"
 )
 
@@ -53,7 +54,7 @@ func TestWorkspaceCatalogRetainsPlacedRemoteTopologyUntilMetadataRemoval(t *test
 			}
 			s := NewServerWithConfig(cfg)
 			ctx := context.Background()
-			require.NoError(t, s.workspaceService().bindPlacement("lab", "owner", controlplane.AgentProtocolVersion))
+			require.NoError(t, s.workspaceService().BindPlacement("lab", "owner", controlplane.AgentProtocolVersion))
 			require.NoError(t, s.apiStore.SaveRun(ctx, controlplane.Run{ID: "applied", Topology: "lab", AgentID: "owner", Op: "apply", Status: controlplane.RunDone, QueuedAt: time.Now().UTC(), EndedAt: time.Now().UTC()}))
 			listed, err := s.workspaceService().List(ctx)
 			require.NoError(t, err)
@@ -62,7 +63,7 @@ func TestWorkspaceCatalogRetainsPlacedRemoteTopologyUntilMetadataRemoval(t *test
 			rec := httptest.NewRecorder()
 			s.ServeHTTP(rec, httptest.NewRequest("GET", "/v1/topologies/lab", nil))
 			require.Equal(t, 200, rec.Code)
-			var info WorkspaceInfo
+			var info workspace.Info
 			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &info))
 			require.Equal(t, controlplane.TopologyPhase("unknown"), info.Status.Phase)
 			require.False(t, info.HasState)

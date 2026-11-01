@@ -25,6 +25,8 @@ type RunObservation struct {
 
 type runRegistry struct {
 	mu         sync.Mutex
+	workers    sync.WaitGroup
+	stopping   bool
 	active     map[string]*activeRun
 	admissions map[string]*runAdmission
 }
@@ -100,10 +102,21 @@ func (c *RunCoordinator) authorizeBounded(ctx context.Context, grant controlplan
 	if c.Authorize == nil {
 		return effectgate.ErrFenced
 	}
+	registry := c.registry()
+	registry.mu.Lock()
+	if registry.stopping {
+		registry.mu.Unlock()
+		return effectgate.ErrFenced
+	}
+	registry.workers.Add(1)
+	registry.mu.Unlock()
 	bounded, cancel := context.WithTimeout(ctx, c.authorizationTimeout())
 	defer cancel()
 	result := make(chan error, 1)
-	go func() { result <- c.Authorize(bounded, grant) }()
+	go func() {
+		defer registry.workers.Done()
+		result <- c.Authorize(bounded, grant)
+	}()
 	select {
 	case err := <-result:
 		if bounded.Err() != nil {
@@ -143,11 +156,19 @@ func (c *RunCoordinator) StartAsync(requestCtx, serviceCtx context.Context, req 
 	if effect == nil || serviceCtx == nil || serviceCtx.Err() != nil {
 		return RunObservation{}, effectgate.ErrFenced
 	}
+	registry := c.registry()
+	registry.mu.Lock()
+	if registry.stopping {
+		registry.mu.Unlock()
+		return RunObservation{}, effectgate.ErrFenced
+	}
+	registry.workers.Add(1)
+	registry.mu.Unlock()
+	defer registry.workers.Done()
 	gate, err := c.asyncGate(g)
 	if err != nil {
 		return RunObservation{}, err
 	}
-	registry := c.registry()
 	releaseAdmission := registry.admit(runIdentity(g))
 	defer releaseAdmission()
 	// Historical retries may carry an older envelope after a durable renewal.
@@ -210,21 +231,37 @@ func (c *RunCoordinator) StartAsync(requestCtx, serviceCtx context.Context, req 
 	active := &activeRun{grant: g, deadline: deadline, ctx: effectCtx, serviceCtx: serviceCtx, cancel: cancel, cancelCause: cancelCause, changed: make(chan struct{}, 1), done: make(chan struct{})}
 	active.safetyDeadline.Store(&deadline)
 	registry.mu.Lock()
-	registry.active[runIdentity(g)] = active
-	registry.mu.Unlock()
-	if effectCtx.Err() != nil || !time.Now().Before(deadline) {
+	if registry.stopping || effectCtx.Err() != nil || !time.Now().Before(deadline) {
 		cancel()
-		registry.mu.Lock()
-		delete(registry.active, runIdentity(g))
 		registry.mu.Unlock()
 		close(active.done)
 		return RunObservation{Status: "uncertain"}, nil
 	}
-	go c.watchRun(active)
-	go watchRunDeadline(active)
+	registry.active[runIdentity(g)] = active
+	registry.workers.Add(3)
+	registry.mu.Unlock()
+	go func() { defer registry.workers.Done(); c.watchRun(active) }()
+	go func() { defer registry.workers.Done(); watchRunDeadline(active) }()
 	transferred = true
-	go c.executeRun(req, active, effect, unlockExecution)
+	go func() { defer registry.workers.Done(); c.executeRun(req, active, effect, unlockExecution) }()
 	return RunObservation{Status: "running"}, nil
+}
+
+// Shutdown closes admission and waits for owned callbacks, including their
+// final writes and reports. The server must first cancel its service context
+// and join request handlers. A canceled callback is not proof of remote stop.
+func (c *RunCoordinator) Shutdown() {
+	if c == nil {
+		return
+	}
+	registry := c.registry()
+	registry.mu.Lock()
+	registry.stopping = true
+	for _, active := range registry.active {
+		active.cancel()
+	}
+	registry.mu.Unlock()
+	registry.workers.Wait()
 }
 
 func (c *RunCoordinator) findActive(g controlplane.SignedExecutionGrant) *activeRun {

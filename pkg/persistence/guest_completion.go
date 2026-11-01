@@ -2,25 +2,22 @@ package persistence
 
 import (
 	"context"
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
 )
 
 type GuestCompletion struct {
 	HostFile      *controlplane.SignedExecutionStopReceipt
 	HostExecution *controlplane.SignedExecutionStopReceipt
-	File          *controlplane.GuestFileOperationCompletion
 }
 
 func (c GuestCompletion) kind() (guestKind, error) {
-	if c.HostFile != nil && c.HostExecution == nil && c.File == nil {
+	if c.HostFile != nil && c.HostExecution == nil {
 		return guestFileKind, nil
 	}
-	if c.HostExecution != nil && c.HostFile == nil && c.File == nil {
+	if c.HostExecution != nil && c.HostFile == nil {
 		return guestExecutionKind, nil
-	}
-	if c.File != nil && c.HostFile == nil && c.HostExecution == nil {
-		return guestFileKind, nil
 	}
 	return "", ErrInvalidRecord
 }
@@ -38,7 +35,7 @@ func (c GuestCompletion) Binding(raw []byte, id string) (string, string, error) 
 	return x.AgentID, x.CommandID, err
 }
 
-// CompleteGuestRecord accepts host evidence only; worker file claims are rejected.
+// CompleteGuestRecord applies the result bound to a verified host receipt.
 func CompleteGuestRecord(raw []byte, cmd *CommandRecord, agent, id string, c GuestCompletion, now time.Time) ([]byte, error) {
 	if _, err := c.kind(); err != nil {
 		return nil, err
@@ -46,10 +43,7 @@ func CompleteGuestRecord(raw []byte, cmd *CommandRecord, agent, id string, c Gue
 	if c.HostFile != nil {
 		return CompleteFileFromHost(raw, cmd, agent, id, *c.HostFile, now)
 	}
-	if c.HostExecution != nil {
-		return CompleteExecutionFromHost(raw, cmd, agent, id, *c.HostExecution, now)
-	}
-	return nil, ErrConflict
+	return CompleteExecutionFromHost(raw, cmd, agent, id, *c.HostExecution, now)
 }
 
 func (r *GuestRepository) CompleteUnderCommandLock(ctx context.Context, agent, id string, c GuestCompletion, cmd *CommandRecord) ([]byte, error) {

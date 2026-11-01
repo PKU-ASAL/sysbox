@@ -20,6 +20,7 @@ func LiveRunLeaseRequired(ctx context.Context) bool {
 	required, _ := ctx.Value(liveRunLeaseKey{}).(bool)
 	return required
 }
+
 func requireLiveRunLease(ctx context.Context) context.Context {
 	return context.WithValue(ctx, liveRunLeaseKey{}, true)
 }
@@ -27,6 +28,7 @@ func requireLiveRunLease(ctx context.Context) context.Context {
 type RunStorage interface {
 	UpdateRun(context.Context, string, func(*controlplane.Run) (*controlplane.Run, error)) (*controlplane.Run, error)
 }
+
 type RunRepository struct {
 	storage RunStorage
 	now     func() time.Time
@@ -36,30 +38,12 @@ func NewRunRepository(storage RunStorage) *RunRepository {
 	return &RunRepository{storage: storage, now: func() time.Time { return time.Now().UTC() }}
 }
 
-func NormalizeRun(run *controlplane.Run) {
-	if run.Operation == "" {
-		run.Operation = run.Op
-	}
-	if run.Op == "" {
-		run.Op = run.Operation
-	}
-	if run.ProjectID == "" {
-		run.ProjectID = controlplane.DefaultProjectID
-	}
-	if run.Workspace == "" {
-		run.Workspace = run.Topology
-	}
-}
-
 // DurableRun removes transient input values at the storage boundary, even for
 // callers which bypass Jobs.persist. It never mutates the caller's input map.
 func DurableRun(run controlplane.Run) controlplane.Run {
-	NormalizeRun(&run)
+	controlplane.NormalizeRun(&run)
 	run.Inputs = nil
-	if run.CompletionProjection != nil {
-		projection := *run.CompletionProjection
-		run.CompletionProjection = &projection
-	}
+
 	if run.HostCompletion != nil {
 		proof := *run.HostCompletion
 		proof.Evidence = append([]byte(nil), proof.Evidence...)
@@ -71,26 +55,6 @@ func DurableRun(run controlplane.Run) controlplane.Run {
 		run.Cleanup = &proof
 	}
 	return run
-}
-
-// SameRunIncarnation compares the immutable execution binding, not progress
-// timestamps or renewable lease fields. Inputs may only be reused within it.
-func SameRunIncarnation(a, b controlplane.Run) bool {
-	NormalizeRun(&a)
-	NormalizeRun(&b)
-	if runRequestBinding(a.RequestFingerprint) != runRequestBinding(b.RequestFingerprint) {
-		return false
-	}
-	return a.ID == b.ID && a.Topology == b.Topology && a.ProjectID == b.ProjectID && a.Workspace == b.Workspace && a.Operation == b.Operation && a.Op == b.Op && a.AgentID == b.AgentID && a.Revision == b.Revision && a.SnapshotPath == b.SnapshotPath && a.OperationKey == b.OperationKey && a.Target == b.Target && a.ParentID == b.ParentID && a.UnsafeState == b.UnsafeState && a.QueuedAt.Equal(b.QueuedAt) && a.DeadlineAt.Equal(b.DeadlineAt)
-}
-
-// Assignment markers describe the dispatch transition, not client authorization.
-// Request fingerprints, in contrast, are immutable input-hydration authority.
-func runRequestBinding(fingerprint string) string {
-	if strings.HasPrefix(fingerprint, "run-dispatch:") {
-		return ""
-	}
-	return fingerprint
 }
 
 type runClaimIdentityKey struct{}
@@ -126,7 +90,7 @@ func (r *RunRepository) SaveRun(ctx context.Context, run controlplane.Run) error
 	}
 	_, err := r.storage.UpdateRun(ctx, run.ID, func(current *controlplane.Run) (*controlplane.Run, error) {
 		if current == nil {
-			if run.Cleanup != nil || run.HostCompletion != nil || run.CompletionProjection != nil {
+			if run.Cleanup != nil || run.HostCompletion != nil {
 				return nil, ErrConflict
 			}
 			return &run, nil
@@ -140,9 +104,7 @@ func (r *RunRepository) SaveRun(ctx context.Context, run controlplane.Run) error
 		if string(beforeProof) != string(afterProof) {
 			return nil, ErrConflict
 		}
-		if (old.CompletionProjection == nil) != (run.CompletionProjection == nil) || old.CompletionProjection != nil && *old.CompletionProjection != *run.CompletionProjection {
-			return nil, ErrConflict
-		}
+
 		if !sameCleanupReceipt(old.Cleanup, run.Cleanup) {
 			return nil, ErrConflict
 		}
@@ -191,7 +153,7 @@ func (r *RunRepository) RestartRun(ctx context.Context, next controlplane.Run) (
 		return nil, err
 	}
 	next = DurableRun(next)
-	if next.Cleanup != nil || next.HostCompletion != nil || next.CompletionProjection != nil {
+	if next.Cleanup != nil || next.HostCompletion != nil {
 		return nil, ErrConflict
 	}
 	if validateLeaseRun(next.ID, next) != nil || next.Status != controlplane.RunQueued || next.Operation != "apply" || next.OperationKey == "" || next.QueuedAt.IsZero() || next.Attempt != 0 || !next.LeaseUntil.IsZero() {
@@ -218,15 +180,18 @@ func validLeaseRequest(id, agent, owner string, ttl time.Duration) error {
 	}
 	return nil
 }
+
 func validateLeaseRun(id string, run controlplane.Run) error {
 	if run.ID != id || !topologyName.MatchString(run.ID) || !topologyName.MatchString(run.Topology) || run.Attempt < 0 || (!run.Status.IsActive() && !run.Status.IsTerminal()) || len(run.Inputs) > 0 || run.Op != "" && run.Operation != "" && run.Op != run.Operation {
 		return ErrCorruptRecord
 	}
 	return nil
 }
+
 func deadlinePassed(run controlplane.Run, now time.Time) bool {
 	return !run.DeadlineAt.IsZero() && !run.DeadlineAt.After(now)
 }
+
 func leaseEnd(run controlplane.Run, now time.Time, ttl time.Duration) time.Time {
 	end := now.Add(ttl)
 	if !run.DeadlineAt.IsZero() && end.After(run.DeadlineAt) {
@@ -234,6 +199,7 @@ func leaseEnd(run controlplane.Run, now time.Time, ttl time.Duration) time.Time 
 	}
 	return end
 }
+
 func (r *RunRepository) ClaimRun(ctx context.Context, id, agent, owner string, ttl time.Duration) (*controlplane.Run, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
@@ -246,7 +212,7 @@ func (r *RunRepository) ClaimRun(ctx context.Context, id, agent, owner string, t
 		if err := validateLeaseRun(id, run); err != nil {
 			return nil, err
 		}
-		if expected, ok := ctx.Value(runClaimIdentityKey{}).(controlplane.Run); ok && !SameRunIncarnation(expected, run) {
+		if expected, ok := ctx.Value(runClaimIdentityKey{}).(controlplane.Run); ok && !controlplane.SameRunIncarnation(expected, run) {
 			return nil, ErrConflict
 		}
 		now := r.now()
@@ -271,6 +237,7 @@ func (r *RunRepository) ClaimRun(ctx context.Context, id, agent, owner string, t
 	}
 	return out, claimed, nil
 }
+
 func (r *RunRepository) RenewRunLease(ctx context.Context, id, agent, owner string, ttl time.Duration) (*controlplane.Run, bool, error) {
 	ctx = requireLiveRunLease(ctx)
 	if err := ctx.Err(); err != nil {
@@ -301,6 +268,7 @@ func (r *RunRepository) RenewRunLease(ctx context.Context, id, agent, owner stri
 	}
 	return out, renewed, nil
 }
+
 func (r *RunRepository) ExpireRunLease(ctx context.Context, id string, observedAt time.Time) (*controlplane.Run, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, false, err

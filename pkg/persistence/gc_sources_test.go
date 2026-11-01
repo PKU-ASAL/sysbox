@@ -2,11 +2,12 @@ package persistence
 
 import (
 	"context"
-	"github.com/google/uuid"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/stretchr/testify/require"
@@ -139,7 +140,7 @@ func TestGCSourceEnrollmentRemainsVisibleAndCannotBeErased(t *testing.T) {
 
 func TestGCSourceReservationPinsFreshnessUntilReceipt(t *testing.T) {
 	a := newAggregate()
-	a.Format = GCSourceFormatVersion
+	a.Format = FormatVersion
 	now := time.Now()
 	a.GCSources = map[string]GCSource{"remote": {Version: 2, Manifest: GCSourceManifest{Domains: map[string][]string{"revision": {}, "artifact": {}, "cache": {}, "placement": {}}, ValidUntil: now.Add(time.Minute)}}}
 	first, err := gcReferencesAt(a, now)
@@ -156,7 +157,7 @@ func TestGCSourceReservationPinsFreshnessUntilReceipt(t *testing.T) {
 func TestGCSourceRejectsCorruptInitialManifest(t *testing.T) {
 	for _, s := range []GCSource{{Version: 3, Updating: true}, {Version: 1, Updating: true, Manifest: GCSourceManifest{References: []GCResourceReference{{Source: "hidden"}}}}} {
 		a := newAggregate()
-		a.Format = GCSourceFormatVersion
+		a.Format = FormatVersion
 		a.GCSources = map[string]GCSource{"remote": s}
 		require.ErrorIs(t, validateAggregate(a, "lab"), ErrCorruptRecord)
 	}

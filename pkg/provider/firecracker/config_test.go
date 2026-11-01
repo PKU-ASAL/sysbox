@@ -34,15 +34,8 @@ func TestPrepareHandlePersistsSSHCredentials(t *testing.T) {
 	require.NotContains(t, string(raw), "secret")
 }
 
-func TestValidateRequiresExplicitDirectModeOptIn(t *testing.T) {
-	s := New("/tmp/kernel", t.TempDir())
-	err := s.Validate(substrate.NodeSpec{ProviderConfig: &Config{}})
-	require.ErrorContains(t, err, "allow_direct")
-	require.NoError(t, s.Validate(substrate.NodeSpec{ProviderConfig: &Config{AllowDirect: true}}))
-}
-
 func TestDecodeSysArmorProviderOption(t *testing.T) {
-	parsed, diags := hclsyntax.ParseConfig([]byte("sysarmor = true\nallow_direct = true\n"), "vm.hcl", hcl.InitialPos)
+	parsed, diags := hclsyntax.ParseConfig([]byte("sysarmor = true\n"), "vm.hcl", hcl.InitialPos)
 	require.False(t, diags.HasErrors(), diags.Error())
 	decoded, err := New("/tmp/kernel", t.TempDir()).DecodeProviderConfig(parsed.Body, nil)
 	require.NoError(t, err)

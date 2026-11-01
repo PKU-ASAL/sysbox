@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/oslab/sysbox/pkg/address"
-	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/runtime"
 )
 
@@ -21,10 +21,10 @@ func TestSensitiveInputDoesNotEnterActionLog(t *testing.T) {
 		RunID:     "run-1",
 		Topology:  "lab",
 		Operation: "apply",
-		Plan: []controlplane.PlannedChange{{
+		Plan: []model.PlannedChange{{
 			Address: address.Resource("sysbox_node", "web"),
-			Action:  controlplane.PlanActionCreate,
-			Changes: []controlplane.FieldChange{{
+			Action:  model.PlanActionCreate,
+			Changes: []model.FieldChange{{
 				Path:      "env.FLAG",
 				Before:    "secret://input/flag",
 				After:     "secret://input/flag",

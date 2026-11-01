@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/stretchr/testify/require"
 )
 
@@ -21,7 +22,7 @@ func TestRunLeaseClaimChild(t *testing.T) {
 	if root == "" {
 		return
 	}
-	s := &localAPIStore{runsDir: root}
+	s := &controlstore.Local{RunsDir: root}
 	fmt.Println("ready")
 	var token [1]byte
 	_, err := os.Stdin.Read(token[:])
@@ -46,7 +47,7 @@ func assertLeaseHasOneWinnerAcrossProcesses(t *testing.T, kind string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	root := t.TempDir()
-	store := &localAPIStore{runsDir: root}
+	store := &controlstore.Local{RunsDir: root}
 	if kind == "command" {
 		require.NoError(t, store.SaveAgentCommand(ctx, controlplane.AgentCommand{ID: "shared", AgentID: "agent", Type: "node_operation"}))
 	} else {
@@ -128,16 +129,16 @@ func assertLeaseHasOneWinnerAcrossProcesses(t *testing.T, kind string) {
 	require.Equal(t, controlplane.RunRunning, got.Status)
 }
 func TestRunLeaseHasOneWinnerAcrossStoreInstances(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, s apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, s controlstore.Store) {
 		ctx := context.Background()
 		require.NoError(t, s.SaveRun(ctx, controlplane.Run{ID: "claim", Topology: "lab", AgentID: "agent", Status: controlplane.RunAssigned}))
 		other := s
-		if local, ok := s.(*localAPIStore); ok {
-			other = &localAPIStore{runsDir: local.runsDir}
+		if local, ok := s.(*controlstore.Local); ok {
+			other = &controlstore.Local{RunsDir: local.RunsDir}
 		}
-		if db, ok := s.(*sqliteAPIStore); ok {
-			copy := &sqliteAPIStore{dbPath: db.dbPath, runsDir: db.runsDir}
-			pool, err := copy.open()
+		if db, ok := s.(*controlstore.SQLite); ok {
+			copy := &controlstore.SQLite{DbPath: db.DbPath, RunsDir: db.RunsDir}
+			pool, err := copy.OpenDB()
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, pool.Close()) })
 			other = copy
@@ -146,7 +147,7 @@ func TestRunLeaseHasOneWinnerAcrossStoreInstances(t *testing.T) {
 		results := make(chan bool, 2)
 		errs := make(chan error, 2)
 		var wg sync.WaitGroup
-		for i, store := range []apiStore{s, other} {
+		for i, store := range []controlstore.Store{s, other} {
 			wg.Go(func() {
 				<-start
 				_, ok, err := store.ClaimRun(ctx, "claim", "agent", fmt.Sprintf("worker-%d", i), time.Minute)

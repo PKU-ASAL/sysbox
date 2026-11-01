@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"encoding/base64"
+
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 

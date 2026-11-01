@@ -18,7 +18,7 @@ import (
 // latency an operator observes stays unbounded no matter how well the exec path
 // itself honours the deadline.
 func TestGuestOperationContextBoundsTheWholeOperation(t *testing.T) {
-	ctx, cancel := guestOperationContext(context.Background(), controlplane.GuestExecutionRequest{TimeoutSeconds: 1})
+	ctx, cancel := controlplane.GuestOperationContext(context.Background(), controlplane.GuestExecutionRequest{TimeoutSeconds: 1})
 	defer cancel()
 
 	deadline, ok := ctx.Deadline()
@@ -32,7 +32,7 @@ func TestGuestOperationContextLeavesUndeclaredTimeoutAlone(t *testing.T) {
 	parent, parentCancel := context.WithCancel(context.Background())
 	defer parentCancel()
 
-	ctx, cancel := guestOperationContext(parent, controlplane.GuestExecutionRequest{})
+	ctx, cancel := controlplane.GuestOperationContext(parent, controlplane.GuestExecutionRequest{})
 	defer cancel()
 
 	_, ok := ctx.Deadline()
@@ -53,7 +53,7 @@ func TestGuestOperationContextKeepsTighterParentDeadline(t *testing.T) {
 	parent, parentCancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer parentCancel()
 
-	ctx, cancel := guestOperationContext(parent, controlplane.GuestExecutionRequest{TimeoutSeconds: 3600})
+	ctx, cancel := controlplane.GuestOperationContext(parent, controlplane.GuestExecutionRequest{TimeoutSeconds: 3600})
 	defer cancel()
 
 	select {

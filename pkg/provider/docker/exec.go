@@ -10,10 +10,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
-	dockertypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/pkg/stdcopy"
@@ -142,115 +140,6 @@ func (c *dockerConn) Exec(ctx context.Context, req substrate.ExecRequest, stdout
 	return result, nil
 }
 
-func (s *Substrate) OpenConsole(ctx context.Context, h substrate.NodeHandle, req substrate.ConsoleRequest) (substrate.ConsoleSession, error) {
-	if err := s.validateManagedHandle(ctx, &h); err != nil {
-		return nil, err
-	}
-	cmd := req.Cmd
-	if len(cmd) == 0 {
-		shell := req.Shell
-		if shell == "" {
-			shell = "/bin/sh"
-		}
-		cmd = []string{shell}
-	}
-	ex, err := s.cli.ContainerExecCreate(ctx, h.ID, container.ExecOptions{
-		Cmd:          cmd,
-		Env:          util.EnvToSlice(req.Env),
-		WorkingDir:   req.WorkDir,
-		AttachStdin:  true,
-		AttachStdout: true,
-		AttachStderr: true,
-		Tty:          req.TTY,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("exec create console: %w", err)
-	}
-	att, err := s.cli.ContainerExecAttach(ctx, ex.ID, container.ExecStartOptions{Tty: req.TTY})
-	if err != nil {
-		return nil, fmt.Errorf("exec attach console: %w", err)
-	}
-	if req.TTY && req.Cols > 0 && req.Rows > 0 {
-		_ = s.cli.ContainerExecResize(ctx, ex.ID, container.ResizeOptions{Width: uint(req.Cols), Height: uint(req.Rows)})
-	}
-	return &dockerConsoleSession{
-		sub:    s,
-		execID: ex.ID,
-		attach: att,
-		tty:    req.TTY,
-		done:   make(chan struct{}),
-	}, nil
-}
-
-type dockerConsoleSession struct {
-	sub    *Substrate
-	execID string
-	attach dockertypes.HijackedResponse
-	tty    bool
-
-	closeOnce sync.Once
-	done      chan struct{}
-}
-
-func (s *dockerConsoleSession) Stdin() io.WriteCloser { return s.attach.Conn }
-func (s *dockerConsoleSession) Stdout() io.Reader {
-	if s.tty {
-		return s.attach.Reader
-	}
-	pr, pw := io.Pipe()
-	go func() {
-		_, err := stdcopy.StdCopy(pw, pw, s.attach.Reader)
-		_ = pw.CloseWithError(err)
-	}()
-	return pr
-}
-func (s *dockerConsoleSession) Stderr() io.Reader { return nil }
-func (s *dockerConsoleSession) Resize(ctx context.Context, cols, rows int) error {
-	if !s.tty || cols <= 0 || rows <= 0 {
-		return nil
-	}
-	return s.sub.cli.ContainerExecResize(ctx, s.execID, container.ResizeOptions{Width: uint(cols), Height: uint(rows)})
-}
-
-// waitForExecExit polls inspect until the exec finishes, the daemon errors, or
-// stop is closed.
-//
-// stop is what makes the wait bounded. The loop used to run forever on
-// context.Background(): when a console's websocket relay returned — a timeout,
-// a disconnect — this goroutine kept inspecting every 100ms for the lifetime of
-// the process, holding the session with it, and nothing could reclaim it
-// because the context it carried could never be cancelled.
-func waitForExecExit(stop <-chan struct{}, poll time.Duration, inspect func() (container.ExecInspect, error)) (int, error) {
-	for {
-		ins, err := inspect()
-		if err != nil {
-			return -1, err
-		}
-		if !ins.Running {
-			return ins.ExitCode, nil
-		}
-		select {
-		case <-stop:
-			return -1, fmt.Errorf("console session closed while exec was still running")
-		case <-time.After(poll):
-		}
-	}
-}
-
-func (s *dockerConsoleSession) Wait() (int, error) {
-	return waitForExecExit(s.done, 100*time.Millisecond, func() (container.ExecInspect, error) {
-		return s.sub.cli.ContainerExecInspect(context.Background(), s.execID)
-	})
-}
-func (s *dockerConsoleSession) Close() error {
-	// Unblocks Wait: without this the poll loop outlives the session.
-	s.closeOnce.Do(func() { close(s.done) })
-	s.attach.Close()
-	return nil
-}
-
-var _ substrate.ConsoleProvider = (*Substrate)(nil)
-
 // CopyToNode copies the local file at srcPath into the container at dstPath.
 // dstPath must be an absolute path inside the container; the filename is
 // preserved from srcPath if dstPath ends with "/".
@@ -330,6 +219,10 @@ func (c *dockerConn) Start(ctx context.Context, req substrate.ExecRequest) (subs
 
 func (c *dockerConn) tasks() *transport.TaskClient {
 	return transport.NewTaskClient(c, c.handle.ID, c.handle.Generation)
+}
+
+func (c *dockerConn) ControlExecution(ctx context.Context, h substrate.ExecutionHandle, control substrate.TerminalControl) error {
+	return c.tasks().ControlExecution(ctx, h, control)
 }
 func (c *dockerConn) ObserveExecution(ctx context.Context, h substrate.ExecutionHandle) (substrate.ExecResult, error) {
 	return c.tasks().ObserveExecution(ctx, h)

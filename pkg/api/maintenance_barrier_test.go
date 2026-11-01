@@ -7,14 +7,15 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
 )
 
 func TestMaintenanceAndGrantAdmissionSerialize(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
-		repo := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		repo := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		session, err := repo.OpenSession(ctx, "agent", "session", "")
 		require.NoError(t, err)
 		request := controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: "topology"}, AgentID: "agent", SessionID: session.ID, ActionID: "action", CommandID: "command", Attempt: 1, Operation: "run_apply", Digest: "digest", TargetBootID: "host"}
@@ -33,7 +34,7 @@ func TestMaintenanceAndGrantAdmissionSerialize(t *testing.T) {
 		close(start)
 		workers.Wait()
 		require.NoError(t, barrierErr)
-		cold := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		cold := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		_, err = cold.Issue(ctx, request, time.Minute)
 		require.ErrorIs(t, err, persistence.ErrConflict)
 		if grantErr == nil {

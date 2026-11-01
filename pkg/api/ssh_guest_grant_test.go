@@ -12,6 +12,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/stretchr/testify/require"
@@ -53,7 +54,7 @@ func TestGuestSSHGrantUsesDurableMutationAndLease(t *testing.T) {
 }
 
 func TestGuestSSHGrantHTTPBindsAcceptedCASAndRejectsPayloadOverride(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		s.agentSvc = newAgentService(s)
@@ -61,7 +62,7 @@ func TestGuestSSHGrantHTTPBindsAcceptedCASAndRejectsPayloadOverride(t *testing.T
 		require.NoError(t, err)
 		require.NoError(t, s.ConfigureExecutionGrantSigner(key))
 		require.NoError(t, store.SaveAgent(ctx, controlplane.Agent{ID: "agent", AuthSecret: "secret", SecretHash: agent.SecretHash("secret")}))
-		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		session, err := authority.OpenSession(ctx, "agent", "session", "")
 		require.NoError(t, err)
 		mutation := substrate.SSHAccessMutation{ID: "delete", Delete: true, ExpectedRevision: 4, Config: substrate.SSHAccessConfig{User: "ubuntu", AccessID: "admin"}}

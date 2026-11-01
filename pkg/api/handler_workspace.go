@@ -9,7 +9,9 @@ import (
 
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/diag"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/runtime"
 	"github.com/oslab/sysbox/pkg/state"
@@ -18,7 +20,7 @@ import (
 // GET /v1/topologies/{topology}/hcl — return the raw HCL content.
 func (s *Server) handleGetHCL(w http.ResponseWriter, r *http.Request) {
 	topology := r.PathValue("topology")
-	if err := validatePathSegment(topology, "topology"); err != nil {
+	if err := controlstore.ValidatePathSegment(topology, "topology"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -36,7 +38,7 @@ func (s *Server) handleGetHCL(w http.ResponseWriter, r *http.Request) {
 // GET /v1/topologies/{topology} — return metadata for a single topology.
 func (s *Server) handleGetTopology(w http.ResponseWriter, r *http.Request) {
 	topology := r.PathValue("topology")
-	if err := validatePathSegment(topology, "topology"); err != nil {
+	if err := controlstore.ValidatePathSegment(topology, "topology"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -169,7 +171,7 @@ func (s *Server) latestRun(topology string) *controlplane.Run {
 
 // healthFor returns the most recent health observation for a topology, or nil
 // if the supervisor has not observed it yet.
-func (s *Server) healthFor(topology string) *controlplane.TopologyHealth {
+func (s *Server) healthFor(topology string) *model.TopologyHealth {
 	if snap, err := s.loadHealthSnapshot(topology); err == nil && snap != nil {
 		return &snap.Health
 	}
@@ -184,7 +186,7 @@ func (s *Server) healthFor(topology string) *controlplane.TopologyHealth {
 // touching external resources.
 func (s *Server) handleDeleteTopology(w http.ResponseWriter, r *http.Request) {
 	topology := r.PathValue("topology")
-	if err := validatePathSegment(topology, "topology"); err != nil {
+	if err := controlstore.ValidatePathSegment(topology, "topology"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}

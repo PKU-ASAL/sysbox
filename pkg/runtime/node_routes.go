@@ -7,7 +7,6 @@ import (
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
@@ -24,7 +23,7 @@ func (e *Executor) configureNodeRoutes(ctx context.Context, step int, id address
 	if target == nil {
 		return fmt.Errorf("route setup for %s has no staged resource", id)
 	}
-	guestNetwork, err := driver.DefaultRegistry.RequireGuestNetwork(driverName)
+	guestNetwork, err := e.providers.RequireGuestNetwork(driverName)
 	if err != nil {
 		return err
 	}

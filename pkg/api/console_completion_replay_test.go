@@ -6,12 +6,13 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
 )
 
-func TestConsoleCompletionReplayRepairsFailedSessionSave(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+func TestConsoleDeliveryReplayPreservesUnconfirmedExecution(t *testing.T) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		hub := newConsoleSessionHub(store)
 		sess, err := hub.Create(ctx, "lab", "node", "agent", controlplane.ConsoleRequest{})
@@ -23,7 +24,7 @@ func TestConsoleCompletionReplayRepairsFailedSessionSave(t *testing.T) {
 		require.True(t, ok)
 		event := controlplane.AgentCommandEvent{AgentID: "agent", CommandID: cmd.ID, Type: cmd.Type, Status: "completed", LeaseOwner: lease.LeaseOwner, Attempt: lease.Attempt}
 		svc := &AgentService{store: store, consoles: hub}
-		hub.store = failingConsoleSave{apiStore: store}
+		hub.store = failingConsoleSave{Store: store}
 		require.Error(t, svc.updateCommandFromEvent(ctx, event))
 		accepted, err := store.ApplyAgentCommandEvent(ctx, event)
 		require.NoError(t, err)
@@ -36,9 +37,11 @@ func TestConsoleCompletionReplayRepairsFailedSessionSave(t *testing.T) {
 		require.NoError(t, svc.reconcileConsoleCompletions(ctx))
 		completed, err := store.GetConsoleSession(ctx, sess.ID)
 		require.NoError(t, err)
-		require.Equal(t, controlplane.ConsoleSessionStatusClosed, completed.Status)
-		require.Empty(t, completed.Err, "successful recovery clears restart transport diagnostic")
-		require.True(t, accepted.EndedAt.Equal(completed.EndedAt), "recovery must use original durable outcome time")
+		require.Equal(t, controlplane.ConsoleSessionStatusLost, completed.Status)
+		require.NotEmpty(t, completed.Err)
+		require.False(t, completed.TerminationConfirmed)
+		require.Empty(t, completed.HostCompletion)
+		require.False(t, completed.EndedAt.Before(accepted.EndedAt), "delivery replay must preserve uncertainty")
 		require.NoError(t, svc.reconcileConsoleCompletions(ctx), "scan retry does not create a new effect")
 		for _, field := range []string{"status", "agent", "attempt", "lease", "error"} {
 			bad := event
@@ -59,7 +62,8 @@ func TestConsoleCompletionReplayRepairsFailedSessionSave(t *testing.T) {
 		require.NoError(t, svc.updateCommandFromEvent(ctx, event))
 		again, err := store.GetConsoleSession(ctx, sess.ID)
 		require.NoError(t, err)
-		require.Equal(t, completed.EndedAt, again.EndedAt)
+		require.Equal(t, completed.Status, again.Status)
+		require.False(t, again.TerminationConfirmed)
 	})
 }
 
@@ -67,7 +71,7 @@ func TestConsoleRecoveryRefusesAmbiguousOrUnconfirmedOutcome(t *testing.T) {
 	for _, scenario := range []string{"retired_only", "duplicate", "foreign_node", "foreign_creation"} {
 		t.Run(scenario, func(t *testing.T) {
 			ctx := context.Background()
-			store := &localAPIStore{runsDir: t.TempDir()}
+			store := &controlstore.Local{RunsDir: t.TempDir()}
 			hub := newConsoleSessionHub(store)
 			sess := createConsoleForTest(t, hub)
 			commandSession := sess

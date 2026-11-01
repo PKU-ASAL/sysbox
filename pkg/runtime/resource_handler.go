@@ -10,9 +10,9 @@ import (
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
@@ -21,8 +21,8 @@ import (
 type ResourceHandler interface {
 	Type() string
 	Schema() ResourceSchema
-	Read(ctx context.Context, current state.Resource) (ResourceReadResult, error)
-	PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error)
+	Read(ctx context.Context, current state.Resource, providers *driver.Registry) (ResourceReadResult, error)
+	PlanDiff(desired *graph.Node, current *state.Resource) (model.PlannedChange, error)
 	Create(ctx context.Context, pc *ProviderContext, desired *graph.Node) (state.Resource, error)
 	Delete(ctx context.Context, pc *ProviderContext, current state.Resource) error
 	ExternalID(current state.Resource) string
@@ -32,11 +32,11 @@ type ResourceHandler interface {
 // identity and provider connection. Plain Read remains for resources whose
 // persisted state is sufficient.
 type StateAwareResourceReader interface {
-	ReadWithState(context.Context, state.Resource, *state.State) (ResourceReadResult, error)
+	ReadWithState(context.Context, state.Resource, *state.State, *driver.Registry) (ResourceReadResult, error)
 }
 
 type ResourceGraphDecoder interface {
-	DecodeResource(r config.ResourceBlock, name string, ctx *hcl.EvalContext) (data any, deps []address.Address, err error)
+	DecodeResource(r config.ResourceBlock, name string, ctx *hcl.EvalContext, providers *driver.Registry) (data any, deps []address.Address, err error)
 }
 
 type CapabilityRequirement struct {
@@ -44,26 +44,26 @@ type CapabilityRequirement struct {
 	Capability driver.Capability
 }
 type CapabilityDeclarer interface {
-	RequiredCapabilities(*graph.Node) ([]CapabilityRequirement, error)
+	RequiredCapabilities(*graph.Node, *driver.Registry) ([]CapabilityRequirement, error)
 }
 type DataGraphDecoder interface {
-	DecodeData(d config.DataBlock, ctx *hcl.EvalContext) (data any, deps []address.Address, err error)
+	DecodeData(d config.DataBlock, ctx *hcl.EvalContext, providers *driver.Registry) (data any, deps []address.Address, err error)
 }
 
 type ResourceReadResult struct {
 	Status      state.ResourceStatus
 	Resource    state.Resource
 	Reason      string
-	Decision    controlplane.RecoveryDecision
+	Decision    model.RecoveryDecision
 	Observation *substrate.NodeObservation
-	Checks      map[string]controlplane.ResourceCheckHealth
+	Checks      map[string]model.ResourceCheckHealth
 }
 
 func resourceReadOK(current state.Resource) ResourceReadResult {
 	return ResourceReadResult{
 		Resource: current,
 		Status:   state.ResourcePresent,
-		Decision: controlplane.RecoveryDecisionNoop,
+		Decision: model.RecoveryDecisionNoop,
 	}
 }
 

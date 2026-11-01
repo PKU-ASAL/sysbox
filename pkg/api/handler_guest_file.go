@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
@@ -92,7 +93,7 @@ func (s *Server) handlePutGuestFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	meta := guestFilePayload{AgentID: agentID, ExpiresAt: time.Now().UTC().Add(15 * time.Minute)}
-	if err := writeLocalObject(filepath.Join(dir, id+".json"), meta); err != nil {
+	if err := controlstore.WriteLocalObject(filepath.Join(dir, id+".json"), meta); err != nil {
 		_ = os.Remove(filepath.Join(dir, id))
 		writeError(w, 500, err)
 		return
@@ -205,36 +206,6 @@ func (s *Server) handleStartGuestFileOperation(w http.ResponseWriter, r *http.Re
 		writeError(w, guestOperationErrorStatus(err), err)
 		return
 	}
-	writeJSON(w, http.StatusOK, publicGuestFileOperation(updated))
-}
-
-func (s *Server) handleCompleteGuestFileOperation(w http.ResponseWriter, r *http.Request) {
-	agentID := r.PathValue("agent")
-	if err := s.verifyAgentRequest(r, agentID); err != nil {
-		writeError(w, http.StatusUnauthorized, err)
-		return
-	}
-	op, err := s.apiStore.GetGuestFileOperation(r.Context(), r.PathValue("operation"))
-	if err != nil {
-		writeError(w, guestOperationErrorStatus(err), err)
-		return
-	}
-	if op.AgentID != agentID {
-		writeError(w, http.StatusForbidden, fmt.Errorf("file operation ownership mismatch"))
-		return
-	}
-	var completion controlplane.GuestFileOperationCompletion
-	if err := json.NewDecoder(r.Body).Decode(&completion); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("decode completion"))
-		return
-	}
-	updated, err := s.apiStore.CompleteGuestFileOperation(r.Context(), agentID, op.ID, completion)
-	if err != nil {
-		writeError(w, guestOperationErrorStatus(err), err)
-		return
-	}
-	_ = os.Remove(filepath.Join(s.runsDir, "_guest-files", op.ID))
-	_ = os.Remove(filepath.Join(s.runsDir, "_guest-files", op.ID+".json"))
 	writeJSON(w, http.StatusOK, publicGuestFileOperation(updated))
 }
 

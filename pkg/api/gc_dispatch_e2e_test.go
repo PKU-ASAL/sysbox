@@ -21,6 +21,8 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/errdefs"
+	"github.com/stretchr/testify/require"
+
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/agentexec"
 	"github.com/oslab/sysbox/pkg/config"
@@ -28,7 +30,6 @@ import (
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
 	"github.com/oslab/sysbox/pkg/persistence"
 	dockerprovider "github.com/oslab/sysbox/pkg/provider/docker"
-	"github.com/stretchr/testify/require"
 )
 
 func TestRemoteDockerGCDispatchAndLostReceiptE2E(t *testing.T)  { testRemoteDockerGCDispatch(t, false) }
@@ -70,7 +71,7 @@ func testRemoteDockerGCDispatch(t *testing.T, batch bool, external ...bool) {
 	require.NoError(t, err)
 	refs, err := repo.LoadGCReferences(ctx, "gc-lab")
 	require.NoError(t, err)
-	require.NoError(t, first.workspaceService().bindPlacement("gc-lab", "gc-agent", controlplane.AgentProtocolVersion))
+	require.NoError(t, first.workspaceService().BindPlacement("gc-lab", "gc-agent", controlplane.AgentProtocolVersion))
 	refs, err = repo.LoadGCReferences(ctx, "gc-lab")
 	require.NoError(t, err)
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
@@ -155,19 +156,17 @@ func testRemoteDockerGCDispatch(t *testing.T, batch bool, external ...bool) {
 		}
 		return json.RawMessage(`{"deleted":true}`), nil
 	}}
+	hostPublicFile := wireTestHostObserver(t, host, cfg, "gc-agent", []string{"docker"}, hostKey)
 	hostCtx, stopHost := context.WithCancel(ctx)
 	hostDone := make(chan error, 1)
 	go func() { hostDone <- host.Serve(hostCtx) }()
 	defer func() { stopHost(); require.NoError(t, <-hostDone) }()
 	require.Eventually(t, func() bool { _, err := os.Stat(socket); return err == nil }, time.Second, 10*time.Millisecond)
-	workerCfg := cfg
-	workerCfg.Paths.RunsDir = private()
-	workerCfg.Paths.WorkspacesDir = private()
-	workerCfg.State.Backend = "sqlite://" + filepath.Join(private(), "worker.db")
 	workerCtx, stopWorker := context.WithCancel(ctx)
 	workerDone := make(chan error, 1)
-	opts := agentexec.Options{ID: "gc-agent", Secret: "gc-secret", APIURL: httpServer.URL, Capabilities: []string{"docker"}, PollInterval: 20 * time.Millisecond, ExecutionSessionFile: filepath.Join(private(), "session.json"), ExecutionGrantPublicKeyFile: keyFile, HostSupervisorSocket: socket, RequireHostSupervisor: true}
-	go func() { workerDone <- agentexec.Run(workerCtx, opts, NewExecutionBridge(workerCfg)) }()
+	opts := agentexec.Options{ID: "gc-agent", Secret: "gc-secret", APIURL: httpServer.URL, Capabilities: []string{"docker"}, PollInterval: 20 * time.Millisecond, ExecutionSessionFile: filepath.Join(private(), "session.json"), ExecutionGrantPublicKeyFile: keyFile, HostSupervisorSocket: socket}
+	opts.HostPublicKeyFile = hostPublicFile
+	go func() { workerDone <- agentexec.Run(workerCtx, opts) }()
 	defer func() {
 		stopWorker()
 		select {

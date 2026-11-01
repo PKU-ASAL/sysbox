@@ -4,13 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+
 	"github.com/oslab/sysbox/pkg/address"
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
-	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 type resetDispositionObserver struct {
@@ -35,9 +37,9 @@ func TestResetSourceAbsenceUsesProviderResidualProof(t *testing.T) {
 	source := state.Resource{Address: addr, Driver: sub.name, ExternalID: "source", OwnerUID: "owner", ResourceUID: "resource", Generation: 1}
 	require.NoError(t, source.SetProviderState(json.RawMessage(`{}`)))
 	st := &state.State{Version: state.SchemaVersion, TopologyUID: "owner", Resources: []state.Resource{source}}
-	action := ActionRecord{ID: "reset", RunID: "run", Resource: addr, Action: controlplane.PlanActionReset, Status: ActionUncertain, OwnerUID: "owner", ResourceUID: "resource", Generation: 2, Candidate: &source, Phase: "destroying", ReplayForbidden: true}
+	action := ActionRecord{ID: "reset", RunID: "run", Resource: addr, Action: model.PlanActionReset, Status: ActionUncertain, OwnerUID: "owner", ResourceUID: "resource", Generation: 2, Candidate: &source, Phase: "destroying", ReplayForbidden: true}
 	repo := &memoryActions{state: st, actions: []ActionRecord{action}}
-	_, items, err := ObserveRunActions(context.Background(), repo, "lab", "run")
+	_, items, err := ObserveRunActions(context.Background(), repo, "lab", "run", driver.DefaultRegistry)
 	require.NoError(t, err)
 	require.Len(t, items, 1)
 	require.NotNil(t, items[0].ResetSource)
@@ -56,13 +58,13 @@ func TestIntentObservationDistinguishesStoppedPresenceFromHealth(t *testing.T) {
 	addr := address.Resource("sysbox_node", "node")
 	source := state.Resource{Address: addr, Driver: sub.name, ExternalID: "source", OwnerUID: "owner", ResourceUID: "resource", Generation: 1}
 	require.NoError(t, source.SetProviderState(json.RawMessage(`{}`)))
-	action := ActionRecord{ID: "a", RunID: "run", Resource: addr, Action: controlplane.PlanActionCreate, Status: ActionUncertain, OwnerUID: "owner", ResourceUID: "resource", Generation: 1, Candidate: &source, ReplayForbidden: true}
+	action := ActionRecord{ID: "a", RunID: "run", Resource: addr, Action: model.PlanActionCreate, Status: ActionUncertain, OwnerUID: "owner", ResourceUID: "resource", Generation: 1, Candidate: &source, ReplayForbidden: true}
 	st := &state.State{Version: state.SchemaVersion, TopologyUID: "owner"}
-	observed := observeIntentResource(context.Background(), action, &source, st)
+	observed := observeIntentResource(context.Background(), action, &source, st, driver.DefaultRegistry)
 	require.Equal(t, "present", observed.Status)
 	require.Equal(t, ActionUncertain, action.Status)
 	sub.nodeObservation.OwnerUID = "foreign"
-	require.Equal(t, "unknown", observeIntentResource(context.Background(), action, &source, st).Status)
+	require.Equal(t, "unknown", observeIntentResource(context.Background(), action, &source, st, driver.DefaultRegistry).Status)
 }
 
 func TestAttachmentAbsenceRequiresExactProviderResidueProof(t *testing.T) {
@@ -74,23 +76,23 @@ func TestAttachmentAbsenceRequiresExactProviderResidueProof(t *testing.T) {
 	addr := address.Resource("sysbox_node", "node")
 	r := state.Resource{Address: addr, Driver: sub.name, ExternalID: "source", OwnerUID: "owner", ResourceUID: "resource", Generation: 1, Attachments: []state.Attachment{{Name: "lan", Node: addr, Driver: sub.name, DriverState: json.RawMessage(`{"proof":"exact"}`)}}}
 	require.NoError(t, r.SetProviderState(json.RawMessage(`{}`)))
-	a := ActionRecord{ID: "delete", RunID: "run", Resource: addr, Action: controlplane.PlanActionDelete, Status: ActionUncertain, OwnerUID: r.OwnerUID, ResourceUID: r.ResourceUID, Generation: 1, Candidate: &r}
+	a := ActionRecord{ID: "delete", RunID: "run", Resource: addr, Action: model.PlanActionDelete, Status: ActionUncertain, OwnerUID: r.OwnerUID, ResourceUID: r.ResourceUID, Generation: 1, Candidate: &r}
 	st := &state.State{TopologyUID: "owner", Resources: []state.Resource{r}}
-	o := observeIntentResource(context.Background(), a, &r, st)
+	o := observeIntentResource(context.Background(), a, &r, st, driver.DefaultRegistry)
 	require.Equal(t, 1, o.AttachmentCount)
 	require.True(t, o.AttachmentResidueAbsent)
 	require.Equal(t, []string{"lan"}, sub.attachments)
-	require.Equal(t, []string{"effect_stop_proof_required"}, PlanIntentDisposition(a, []controlplane.RecoveredResource{o}).Blockers)
+	require.Equal(t, []string{"effect_stop_proof_required"}, PlanIntentDisposition(a, []model.RecoveredResource{o}).Blockers)
 	second := r.Attachments[0]
 	second.Name = "wan"
 	second.DriverState = json.RawMessage(`{"unproven":true}`)
 	r.Attachments = append(r.Attachments, second)
-	o = observeIntentResource(context.Background(), a, &r, st)
+	o = observeIntentResource(context.Background(), a, &r, st, driver.DefaultRegistry)
 	require.False(t, o.AttachmentResidueAbsent, "one proven attachment cannot hide an unproven second")
 	sub.fail = true
-	o = observeIntentResource(context.Background(), a, &r, st)
+	o = observeIntentResource(context.Background(), a, &r, st, driver.DefaultRegistry)
 	require.False(t, o.AttachmentResidueAbsent)
-	require.Contains(t, PlanIntentDisposition(a, []controlplane.RecoveredResource{o}).Blockers, "attachment_absence_proof_required")
+	require.Contains(t, PlanIntentDisposition(a, []model.RecoveredResource{o}).Blockers, "attachment_absence_proof_required")
 }
 
 type attachmentAbsentObserver struct {

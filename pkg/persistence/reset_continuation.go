@@ -7,7 +7,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/runtime"
 )
 
@@ -31,7 +31,7 @@ func resetContinuationMembers(req runtime.ResetContinuationRequest) (map[string]
 	members := map[string]runtime.ActionRecord{}
 	for _, group := range [][]runtime.ActionRecord{req.Existing, req.Missing} {
 		for _, action := range group {
-			if validateAction(action) != nil || action.Action != controlplane.PlanActionReset || action.OwnerUID != req.TopologyUID || action.Topology != cp.Topology || action.RunID != cp.RunID || !action.RunQueuedAt.Equal(req.RunQueuedAt) || action.RunRevision != req.RunRevision || !scope[action.Resource.String()] {
+			if validateAction(action) != nil || action.Action != model.PlanActionReset || action.OwnerUID != req.TopologyUID || action.Topology != cp.Topology || action.RunID != cp.RunID || !action.RunQueuedAt.Equal(req.RunQueuedAt) || action.RunRevision != req.RunRevision || !scope[action.Resource.String()] {
 				return nil, ErrConflict
 			}
 			if _, exists := members[action.ID]; exists {

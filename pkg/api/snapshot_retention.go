@@ -1,8 +1,10 @@
 package api
 
 import (
-	"github.com/oslab/sysbox/pkg/persistence"
 	"net/http"
+
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/persistence"
 )
 
 func (s *Server) handleSnapshotRetentionPlan(w http.ResponseWriter, r *http.Request) {
@@ -11,7 +13,7 @@ func (s *Server) handleSnapshotRetentionPlan(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	topology := r.PathValue("topology")
-	if validatePathSegment(topology, "topology") != nil {
+	if controlstore.ValidatePathSegment(topology, "topology") != nil {
 		writeError(w, 400, persistence.ErrInvalidRecord)
 		return
 	}
@@ -38,7 +40,7 @@ func (s *Server) handleSnapshotRetentionApply(w http.ResponseWriter, r *http.Req
 		return
 	}
 	topology := r.PathValue("topology")
-	if validatePathSegment(topology, "topology") != nil {
+	if controlstore.ValidatePathSegment(topology, "topology") != nil {
 		writeError(w, 400, persistence.ErrInvalidRecord)
 		return
 	}

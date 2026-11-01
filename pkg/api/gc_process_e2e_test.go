@@ -155,7 +155,7 @@ func TestNonDockerGCProcessCrashBoundariesE2E(t *testing.T) {
 						proofs := map[string]gcProcessProof{}
 						create := func(uid string) string {
 							scoped := substrate.WithOperationIdentity(ctx, substrate.OperationIdentity{OwnerUID: owner, TopologyUID: owner, ResourceUID: uid, Generation: 1, ActionID: "create"})
-							h, err := provider.CreateNode(scoped, substrate.NodeSpec{Name: uid, Image: substrate.ArtifactHandle{ID: os.Getenv("SYSBOX_FIRECRACKER_ROOTFS")}, ProviderConfig: &fc.Config{Kernel: kernel, AllowDirect: true}})
+							h, err := provider.CreateNode(scoped, substrate.NodeSpec{Name: uid, Image: substrate.ArtifactHandle{ID: os.Getenv("SYSBOX_FIRECRACKER_ROOTFS")}, ProviderConfig: &fc.Config{Kernel: kernel}})
 							require.NoError(t, err)
 							t.Cleanup(func() {
 								cleanup, cancel := context.WithTimeout(context.Background(), 20*time.Second)

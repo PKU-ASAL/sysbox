@@ -3,8 +3,9 @@ package persistence
 import (
 	"context"
 	"encoding/json"
-	"github.com/stretchr/testify/require"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestRunMaintenanceRejectsUnknownOwnerDuringFreeze(t *testing.T) {

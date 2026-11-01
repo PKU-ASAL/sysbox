@@ -9,12 +9,13 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
 )
 
 func TestGuestCancellationBlocksGrantTransaction(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		x := controlplane.GuestExecution{ID: "execution", CommandID: "command", AgentID: "agent", Topology: "lab", Node: "node", Version: 1, Status: "running", CreatedAt: time.Now().UTC()}
 		require.NoError(t, store.SaveGuestExecution(ctx, x))
@@ -25,9 +26,9 @@ func TestGuestCancellationBlocksGrantTransaction(t *testing.T) {
 		calls := 0
 		transition := func(raw []byte) ([]byte, error) {
 			calls++
-			memory := &grantTransaction{raw: raw}
+			memory := &controlstore.GrantTransaction{Raw: raw}
 			err := persistence.NewExecutionGrantRepository(memory).ObserveTime(ctx)
-			return memory.raw, err
+			return memory.Raw, err
 		}
 		require.NoError(t, storage.UpdateExecutionAuthority(ctx, transition))
 		require.Equal(t, 1, calls)
@@ -40,14 +41,14 @@ func TestGuestCancellationBlocksGrantTransaction(t *testing.T) {
 }
 
 func TestGuestCancellationRejectsIssueAuthorizeRenewButAllowsStop(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		x := controlplane.GuestExecution{ID: "execution", CommandID: "command", AgentID: "agent", Topology: "lab", Node: "node", Version: 1, Status: "running", CreatedAt: time.Now().UTC()}
 		require.NoError(t, store.SaveGuestExecution(ctx, x))
 		cmd := controlplane.AgentCommand{ID: x.CommandID, AgentID: x.AgentID, Type: "guest_execution", Execution: &x, ExecutionRequest: controlplane.GuestExecutionRequest{Argv: []string{"sleep", "30"}}, TopologyUID: grantTestTopologyUID(t, s, "lab"), ResourceUID: "node-uid", Generation: 1, ActionID: x.ID, Attempt: 1, LeaseOwner: "worker", LeaseUntil: time.Now().UTC().Add(time.Minute), Status: "leased"}
 		require.NoError(t, store.SaveAgentCommand(ctx, cmd))
-		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		session, err := authority.OpenSession(ctx, "agent", "process", "")
 		require.NoError(t, err)
 		proof := ExecutionGrantRequest{SessionID: session.ID, LeaseOwner: "worker", Attempt: 1, BootID: "boot"}
@@ -58,7 +59,7 @@ func TestGuestCancellationRejectsIssueAuthorizeRenewButAllowsStop(t *testing.T) 
 			record.Command.LeaseUntil = record.Command.LeaseUntil.Add(time.Hour)
 			return err
 		})
-		storage.writeCommand = true
+		storage.WriteCommand = true
 		checked := persistence.NewExecutionGrantRepository(storage)
 		_, err = newGuestExecutionService(store, nil, nil).Cancel(ctx, x.ID)
 		require.NoError(t, err)
@@ -77,7 +78,7 @@ func TestGuestCancellationRejectsIssueAuthorizeRenewButAllowsStop(t *testing.T) 
 		require.Len(t, commands, 2)
 		require.Equal(t, cmd.ID, commands[0].ID)
 		require.True(t, cmd.LeaseUntil.Equal(commands[0].LeaseUntil), "denied source cannot extend delivery lease")
-		raw, err := (apiExecutionGrantStorage{store: store}).ReadExecutionAuthority(ctx)
+		raw, err := (controlstore.AuthorityStorage{Store: store}).ReadExecutionAuthority(ctx)
 		require.NoError(t, err)
 		var clock struct {
 			ObservedAt time.Time `json:"observed_at"`
@@ -89,7 +90,7 @@ func TestGuestCancellationRejectsIssueAuthorizeRenewButAllowsStop(t *testing.T) 
 }
 
 func TestGuestGrantSourcePreservesEarlierRejection(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		cmd := controlplane.AgentCommand{ID: "command", AgentID: "agent", Type: "guest_execution", Execution: &controlplane.GuestExecution{ID: "missing", Topology: "lab", Node: "node"}}
@@ -104,7 +105,7 @@ func TestGuestGrantSourcePreservesEarlierRejection(t *testing.T) {
 }
 
 func TestGuestCancellationSerializesWithGrantCommit(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		// SQLite's busy handler can outlast the statement context while waiting
 		// for BEGIN IMMEDIATE. Keep the owner alive past that storage timeout.
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -128,9 +129,9 @@ func TestGuestCancellationSerializesWithGrantCommit(t *testing.T) {
 				case <-ctx.Done():
 					return nil, ctx.Err()
 				}
-				memory := &grantTransaction{raw: raw}
+				memory := &controlstore.GrantTransaction{Raw: raw}
 				err := persistence.NewExecutionGrantRepository(memory).ObserveTime(ctx)
-				return memory.raw, err
+				return memory.Raw, err
 			})
 		}()
 		select {
@@ -159,7 +160,7 @@ func TestGuestCancellationSerializesWithGrantCommit(t *testing.T) {
 func TestGuestGrantSourceRejectsMissingTerminalAndReboundRecords(t *testing.T) {
 	for _, kind := range []string{"missing", "terminal", "agent", "command", "node", "topology", "incarnation"} {
 		t.Run(kind, func(t *testing.T) {
-			eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+			eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 				ctx := context.Background()
 				s := stateDeleteTestServer(t, store)
 				x := controlplane.GuestExecution{ID: "execution", CommandID: "command", AgentID: "agent", Topology: "lab", Node: "node", Version: 1, Status: "running", CreatedAt: time.Now().UTC()}

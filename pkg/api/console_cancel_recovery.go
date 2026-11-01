@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 )
 
@@ -38,7 +39,7 @@ func (s *AgentService) reconcileConsoleCancellations(ctx context.Context) error 
 }
 
 func (s *AgentService) reconcileConsoleCancellation(ctx context.Context, sess controlplane.ConsoleSession) error {
-	if sess.CreatedAt.IsZero() || sess.Node == "" || validatePathSegment(sess.ID, "session") != nil || validatePathSegment(sess.AgentID, "agent") != nil || validatePathSegment(sess.Topology, "topology") != nil {
+	if sess.CreatedAt.IsZero() || sess.Node == "" || controlstore.ValidatePathSegment(sess.ID, "session") != nil || controlstore.ValidatePathSegment(sess.AgentID, "agent") != nil || controlstore.ValidatePathSegment(sess.Topology, "topology") != nil {
 		return persistence.ErrInvalidRecord
 	}
 	cmd := persistence.ConsoleCancellationCommand(sess)

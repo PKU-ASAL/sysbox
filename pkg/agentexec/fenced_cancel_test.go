@@ -2,14 +2,15 @@ package agentexec
 
 import (
 	"context"
+	"testing"
+
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestCancellationRequestDoesNotReportTargetStopped(t *testing.T) {
 	for _, fenced := range []bool{false, true} {
-		r := newCommandRunner(nil, Options{})
+		r := newCommandRunner(Options{})
 		target := controlplane.AgentCommand{ID: "target", Type: "node_operation", LeaseOwner: "owner", Attempt: 2}
 		if fenced {
 			target.ActionID = "action"
@@ -35,7 +36,7 @@ func TestCancellationRequestDoesNotReportTargetStopped(t *testing.T) {
 }
 
 func TestOldRunnerCleanupKeepsReplacementCancellationTarget(t *testing.T) {
-	r := newCommandRunner(nil, Options{})
+	r := newCommandRunner(Options{})
 	cmd := controlplane.AgentCommand{ID: "command", Type: "guest_execution", Execution: &controlplane.GuestExecution{ID: "operation"}}
 	oldCtx, oldCancel := context.WithCancel(context.Background())
 	defer oldCancel()

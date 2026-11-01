@@ -7,6 +7,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/stretchr/testify/require"
 )
@@ -37,7 +38,7 @@ func consoleAdmissionTestServer(t *testing.T) *Server {
 
 func TestConsoleCreateStorageFailurePreventsDispatch(t *testing.T) {
 	s := consoleAdmissionTestServer(t)
-	s.consoles.store = failingConsoleSave{apiStore: s.apiStore}
+	s.consoles.store = failingConsoleSave{Store: s.apiStore}
 	s.consoleService().wakeCommand = func(string, controlplane.AgentCommand) error {
 		t.Fatal("session_open dispatched without durable session")
 		return nil
@@ -53,8 +54,8 @@ func TestConsoleCreateStorageFailurePreventsDispatch(t *testing.T) {
 }
 
 func TestConsoleCreateRequiresDurableRecord(t *testing.T) {
-	hub := newConsoleSessionHub(&localAPIStore{runsDir: t.TempDir()})
-	hub.store = failingConsoleSave{apiStore: hub.store}
+	hub := newConsoleSessionHub(&controlstore.Local{RunsDir: t.TempDir()})
+	hub.store = failingConsoleSave{Store: hub.store}
 	session, err := hub.Create(context.Background(), "lab", "node", "agent", controlplane.ConsoleRequest{})
 	require.Error(t, err)
 	require.Empty(t, session.ID)
@@ -64,7 +65,7 @@ func TestConsoleCreateRequiresDurableRecord(t *testing.T) {
 func TestConsoleCreateRejectsCancelledContextAndMissingStore(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	hub := newConsoleSessionHub(&localAPIStore{runsDir: t.TempDir()})
+	hub := newConsoleSessionHub(&controlstore.Local{RunsDir: t.TempDir()})
 	_, err := hub.Create(ctx, "lab", "node", "agent", controlplane.ConsoleRequest{})
 	require.ErrorIs(t, err, context.Canceled)
 	require.Empty(t, hub.sessions)
@@ -73,7 +74,7 @@ func TestConsoleCreateRejectsCancelledContextAndMissingStore(t *testing.T) {
 }
 
 func TestConsoleCreatePersistsBeforeItCanBeDiscovered(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		hub := newConsoleSessionHub(store)
 		session, err := hub.Create(context.Background(), "lab", "node", "agent", controlplane.ConsoleRequest{})
 		require.NoError(t, err)

@@ -52,7 +52,7 @@ func ValidateRecoveryCommit(proof controlplane.AgentCommandEvent, expected contr
 			current = run
 		}
 	}
-	if current == nil || current.QueuedAt.IsZero() || !SameRunIncarnation(*current, expected) || !SameRunIncarnation(*current, *cmd.Run) || current.AgentID != expected.AgentID || current.Attempt != expected.Attempt || current.Attempt != cmd.Run.Attempt || current.LeaseOwner != expected.LeaseOwner || current.LeaseOwner != cmd.Run.LeaseOwner || current.Status != controlplane.RunFailed || !current.Recoverable || current.LeaseUntil.After(now) {
+	if current == nil || current.QueuedAt.IsZero() || !controlplane.SameRunIncarnation(*current, expected) || !controlplane.SameRunIncarnation(*current, *cmd.Run) || current.AgentID != expected.AgentID || current.Attempt != expected.Attempt || current.Attempt != cmd.Run.Attempt || current.LeaseOwner != expected.LeaseOwner || current.LeaseOwner != cmd.Run.LeaseOwner || current.Status != controlplane.RunFailed || !current.Recoverable || current.LeaseUntil.After(now) {
 		return ErrConflict
 	}
 	if action.RunID != current.ID || action.Topology != current.Topology || !action.RunQueuedAt.Equal(current.QueuedAt) || action.RunRevision != current.Revision {
@@ -77,7 +77,7 @@ func ValidateLocalRecoveryCommit(expected controlplane.Run, runs []controlplane.
 			current = run
 		}
 	}
-	if current == nil || current.AgentID != "" || !SameRunIncarnation(*current, expected) || current.Attempt != expected.Attempt || current.LeaseOwner != expected.LeaseOwner || current.Status != controlplane.RunFailed || !current.Recoverable || current.LeaseUntil.After(now) {
+	if current == nil || current.AgentID != "" || !controlplane.SameRunIncarnation(*current, expected) || current.Attempt != expected.Attempt || current.LeaseOwner != expected.LeaseOwner || current.Status != controlplane.RunFailed || !current.Recoverable || current.LeaseUntil.After(now) {
 		return ErrConflict
 	}
 	if action.Topology != current.Topology || action.RunID != current.ID || !action.RunQueuedAt.Equal(current.QueuedAt) || action.RunRevision != current.Revision {

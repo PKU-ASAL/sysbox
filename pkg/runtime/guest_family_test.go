@@ -7,6 +7,7 @@ import (
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -48,7 +49,7 @@ func TestComputePlanRejectsGuestFamilyConflictBeforeProviderLookup(t *testing.T)
 	require.NoError(t, g.AddNode(nodeAddr, []address.Address{imageAddr}))
 	require.NoError(t, g.SetData(nodeAddr, &config.NodeConfig{Substrate: "missing", Image: "sysbox_image.windows.id", GuestFamily: "linux"}))
 
-	_, err := ComputePlan(g, &state.State{Version: state.SchemaVersion})
+	_, err := ComputePlan(g, &state.State{Version: state.SchemaVersion}, driver.DefaultRegistry)
 	require.ErrorContains(t, err, "conflicts")
 }
 
@@ -64,6 +65,6 @@ func TestComputePlanRejectsUnknownFamilyProvisioning(t *testing.T) {
 		Provisioners: []config.ProvisionerConfig{{Type: "exec", Program: "true", Shell: "none"}},
 	}))
 
-	_, err := ComputePlan(g, &state.State{Version: state.SchemaVersion})
+	_, err := ComputePlan(g, &state.State{Version: state.SchemaVersion}, driver.DefaultRegistry)
 	require.ErrorContains(t, err, "unknown guest family")
 }

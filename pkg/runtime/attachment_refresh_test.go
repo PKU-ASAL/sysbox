@@ -10,8 +10,8 @@ import (
 
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
@@ -60,7 +60,7 @@ func attachmentTopology() *state.State {
 func TestObserveAttachmentsUpdatesDeviceWithoutDrift(t *testing.T) {
 	withObservingNIC(t, observingNIC{result: driver.AttachmentResult{GuestDevice: "eth7", State: json.RawMessage(`{"id":"new"}`)}})
 	r := attachmentResource()
-	status, _, err := observeAttachments(context.Background(), substrate.NodeHandle{ID: "node"}, &r, attachmentTopology())
+	status, _, err := observeAttachments(context.Background(), substrate.NodeHandle{ID: "node"}, &r, attachmentTopology(), driver.DefaultRegistry)
 	require.NoError(t, err)
 	require.Equal(t, state.ResourcePresent, status)
 	require.Equal(t, "eth7", r.Attachments[0].Observation.GuestDevice)
@@ -71,7 +71,7 @@ func TestObserveAttachmentsClassifiesNotFoundAndUnavailable(t *testing.T) {
 	t.Run("not found", func(t *testing.T) {
 		withObservingNIC(t, observingNIC{err: driver.Wrap(driver.ErrorNotFound, "test", "missing", nil)})
 		r := attachmentResource()
-		status, _, err := observeAttachments(context.Background(), substrate.NodeHandle{}, &r, attachmentTopology())
+		status, _, err := observeAttachments(context.Background(), substrate.NodeHandle{}, &r, attachmentTopology(), driver.DefaultRegistry)
 		require.NoError(t, err)
 		require.Equal(t, state.ResourceDrifted, status)
 	})
@@ -79,7 +79,7 @@ func TestObserveAttachmentsClassifiesNotFoundAndUnavailable(t *testing.T) {
 		withObservingNIC(t, observingNIC{err: driver.Wrap(driver.ErrorUnavailable, "test", "offline", errors.New("down"))})
 		r := attachmentResource()
 		before := append([]byte(nil), r.Attachments[0].DriverState...)
-		status, _, err := observeAttachments(context.Background(), substrate.NodeHandle{}, &r, attachmentTopology())
+		status, _, err := observeAttachments(context.Background(), substrate.NodeHandle{}, &r, attachmentTopology(), driver.DefaultRegistry)
 		require.Error(t, err)
 		require.Equal(t, state.ResourceUnknown, status)
 		require.Equal(t, before, []byte(r.Attachments[0].DriverState))
@@ -116,7 +116,7 @@ func TestResourceObservationIncludesCanonicalNetworkProof(t *testing.T) {
 			r.ExternalID = "node"
 			r.OwnerUID, r.ResourceUID, r.Generation = "owner", "node-uid", 2
 			st := &state.State{Resources: []state.Resource{network, r}}
-			e := &Executor{state: st}
+			e := &Executor{state: st, providers: driver.DefaultRegistry}
 			switch path {
 			case "refresh":
 				result, err := e.observeResource(context.Background(), r.Address)
@@ -127,7 +127,7 @@ func TestResourceObservationIncludesCanonicalNetworkProof(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, state.ResourcePresent, result.Status)
 			case "health":
-				EvaluateTopologyHealth(context.Background(), st)
+				EvaluateTopologyHealth(context.Background(), st, driver.DefaultRegistry)
 			}
 			require.Equal(t, 1, calls)
 		})
@@ -159,7 +159,7 @@ func TestAttachmentObservationFailsClosedWithoutCurrentNetworkProof(t *testing.T
 				st = attachmentTopology()
 				st.Resources[0].ResourceUID = "replacement"
 			}
-			result, err := readResourceWithAttachments(context.Background(), NodeResourceHandler{}, r, st)
+			result, err := readResourceWithAttachments(context.Background(), NodeResourceHandler{}, r, st, driver.DefaultRegistry)
 			require.Error(t, err)
 			require.Equal(t, state.ResourceUnknown, result.Status)
 			require.Equal(t, before.Attachments, r.Attachments)
@@ -169,8 +169,8 @@ func TestAttachmentObservationFailsClosedWithoutCurrentNetworkProof(t *testing.T
 				require.Zero(t, calls)
 			}
 			if scenario == "missing topology" {
-				health := EvaluateResourceHealth(context.Background(), &r)
-				require.Equal(t, controlplane.ResourceHealthUnknown, health.Status)
+				health := EvaluateResourceHealth(context.Background(), &r, driver.DefaultRegistry)
+				require.Equal(t, model.ResourceHealthUnknown, health.Status)
 				require.Contains(t, health.Reason, "topology state required")
 			}
 		})
@@ -229,18 +229,18 @@ func TestRouteDriftDoesNotMaskAttachmentUncertainty(t *testing.T) {
 				st.Resources = nil
 			}
 			st.AddResource(r)
-			result, err := (&Executor{state: st}).observeTarget(context.Background(), r.Address)
+			result, err := (&Executor{state: st, providers: driver.DefaultRegistry}).observeTarget(context.Background(), r.Address)
 			if scenario == "present network" {
 				require.NoError(t, err)
 				require.Equal(t, state.ResourceDrifted, result.Status)
 				require.Equal(t, "route missing", result.Reason)
-				require.Equal(t, controlplane.RecoveryDecisionMarkDrift, result.Decision)
+				require.Equal(t, model.RecoveryDecisionMarkDrift, result.Decision)
 			} else {
 				require.ErrorIs(t, err, ErrObservationUnknown)
 				require.Equal(t, state.ResourceUnknown, result.Status)
-				require.Equal(t, controlplane.RecoveryDecisionUnknown, result.Decision)
+				require.Equal(t, model.RecoveryDecisionUnknown, result.Decision)
 				action, _ := planActionForObservedStatus(result.Status)
-				require.Equal(t, controlplane.PlanActionUnknown, action)
+				require.Equal(t, model.PlanActionUnknown, action)
 			}
 			if scenario == "missing network" {
 				require.Zero(t, calls)

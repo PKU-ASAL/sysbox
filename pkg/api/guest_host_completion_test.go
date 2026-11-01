@@ -6,13 +6,15 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/guesttask"
-	"github.com/oslab/sysbox/pkg/persistence"
-	"github.com/stretchr/testify/require"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/guesttask"
+	"github.com/oslab/sysbox/pkg/persistence"
+	"github.com/stretchr/testify/require"
 )
 
 func guestHostReceiptForTest(t *testing.T, cmd controlplane.AgentCommand, result controlplane.GuestExecutionResult) controlplane.SignedExecutionStopReceipt {
@@ -26,7 +28,7 @@ func guestHostReceiptForTest(t *testing.T, cmd controlplane.AgentCommand, result
 }
 
 func TestHostGuestHTTPCompletionAfterCancellationRetirementAndRestart(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		pub, key, err := ed25519.GenerateKey(rand.Reader)
@@ -38,7 +40,7 @@ func TestHostGuestHTTPCompletionAfterCancellationRetirementAndRestart(t *testing
 		leased, ok, err := store.AcquireAgentCommandLease(ctx, "agent", cmd.ID, "worker", time.Minute)
 		require.NoError(t, err)
 		require.True(t, ok)
-		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		session, err := authority.OpenSession(ctx, "agent", "host", "")
 		require.NoError(t, err)
 		receipt := guestHostReceiptForTest(t, cmd, controlplane.GuestExecutionResult{ExitCode: 7, Stdout: "b3V0"})
@@ -98,8 +100,8 @@ func TestHostGuestHTTPCompletionAfterCancellationRetirementAndRestart(t *testing
 func TestHostGuestCompletionCommitsResultAndReleaseAtomically(t *testing.T) {
 	for _, stage := range []string{"completion", "release"} {
 		t.Run(stage, func(t *testing.T) {
-			eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
-				if _, local := store.(*localAPIStore); local {
+			eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
+				if _, local := store.(*controlstore.Local); local {
 					t.Skip("SQL write fault injection")
 				}
 				ctx := context.Background()
@@ -110,7 +112,7 @@ func TestHostGuestCompletionCommitsResultAndReleaseAtomically(t *testing.T) {
 				x := controlplane.GuestExecution{ID: "execution", CommandID: "command", AgentID: "agent", Topology: "lab", Node: "node", Version: 1, Status: "queued", CreatedAt: time.Now().UTC(), Request: controlplane.GuestExecutionRequest{Argv: []string{"true"}}}
 				cmd := controlplane.AgentCommand{ID: x.CommandID, AgentID: x.AgentID, Type: "guest_execution", Execution: &x, ExecutionRequest: x.Request, TopologyUID: grantTestTopologyUID(t, s, "lab"), ResourceUID: "resource", Generation: 1, ActionID: x.ID}
 				require.NoError(t, store.CreateGuestExecutionDispatch(ctx, x, cmd))
-				authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+				authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 				session, err := authority.OpenSession(ctx, "agent", "host", "")
 				require.NoError(t, err)
 				receipt := guestHostReceiptForTest(t, cmd, controlplane.GuestExecutionResult{ExitCode: 7})
@@ -122,8 +124,8 @@ func TestHostGuestCompletionCommitsResultAndReleaseAtomically(t *testing.T) {
 				require.NoError(t, err)
 				var remove func()
 				switch dbstore := store.(type) {
-				case *sqliteAPIStore:
-					db, err := dbstore.open()
+				case *controlstore.SQLite:
+					db, err := dbstore.OpenDB()
 					require.NoError(t, err)
 					table, when := "sysbox_guest_executions", ""
 					if stage == "release" {
@@ -133,8 +135,8 @@ func TestHostGuestCompletionCommitsResultAndReleaseAtomically(t *testing.T) {
 					_, err = db.ExecContext(ctx, "CREATE TRIGGER reject_host_commit BEFORE UPDATE ON "+table+when+" BEGIN SELECT RAISE(ABORT,'injected host commit failure'); END")
 					require.NoError(t, err)
 					remove = func() { _, err := db.ExecContext(ctx, "DROP TRIGGER reject_host_commit"); require.NoError(t, err) }
-				case *postgresAPIStore:
-					pool, err := dbstore.poolFor(ctx)
+				case *controlstore.Postgres:
+					pool, err := dbstore.PoolFor(ctx)
 					require.NoError(t, err)
 					table, check := "sysbox_guest_executions", "TRUE"
 					if stage == "release" {
@@ -173,13 +175,13 @@ func TestHostGuestCompletionCommitsResultAndReleaseAtomically(t *testing.T) {
 }
 
 func TestHostRunChildStopDoesNotRequireStandaloneExecution(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		pub, key, err := ed25519.GenerateKey(rand.Reader)
 		require.NoError(t, err)
 		s.grantHostKeys = map[string]ed25519.PublicKey{"agent": pub}
-		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		session, err := authority.OpenSession(ctx, "agent", "host", "")
 		require.NoError(t, err)
 		parent, err := authority.Issue(ctx, controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: "topology"}, AgentID: "agent", SessionID: session.ID, CommandID: "run-command", ActionID: "run", Attempt: 1, Operation: "run_apply", Digest: "run-digest"}, time.Minute)
@@ -198,14 +200,14 @@ func TestHostRunChildStopDoesNotRequireStandaloneExecution(t *testing.T) {
 }
 
 func TestHostGuestRebootReceiptClosesOldEpochWithUnknownResult(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		pub, key, err := ed25519.GenerateKey(rand.Reader)
 		require.NoError(t, err)
 		s.grantHostKeys = map[string]ed25519.PublicKey{"agent": pub}
 		x, cmd, digest := admitGuestStopCandidate(t, store, "agent", 0)
-		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		session, err := authority.OpenSession(ctx, "agent", "host", "")
 		require.NoError(t, err)
 		grant, err := authority.Issue(ctx, controlplane.ExecutionGrant{Scope: controlplane.ExecutionScope{TopologyUID: cmd.TopologyUID, ResourceUID: cmd.ResourceUID, Generation: cmd.Generation}, AgentID: "agent", SessionID: session.ID, CommandID: cmd.ID, ActionID: x.ID, Attempt: 1, Operation: "guest_task", Digest: digest, TargetBootID: "old-guest"}, time.Minute)

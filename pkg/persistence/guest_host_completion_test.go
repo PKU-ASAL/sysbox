@@ -2,12 +2,13 @@ package persistence
 
 import (
 	"context"
-	"github.com/oslab/sysbox/pkg/controlplane"
-	"github.com/oslab/sysbox/pkg/guesttask"
-	"github.com/stretchr/testify/require"
 	"math"
 	"testing"
 	"time"
+
+	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/guesttask"
+	"github.com/stretchr/testify/require"
 )
 
 func hostGuestFixture(t *testing.T) ([]byte, CommandRecord, controlplane.SignedExecutionStopReceipt) {

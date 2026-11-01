@@ -5,10 +5,12 @@ import (
 	"fmt"
 
 	"github.com/hashicorp/hcl/v2"
+
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
-	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
@@ -22,28 +24,28 @@ func (SSHAccessResourceHandler) Schema() ResourceSchema {
 	s.Version = 2
 	return s
 }
-func (SSHAccessResourceHandler) Read(_ context.Context, current state.Resource) (ResourceReadResult, error) {
+func (SSHAccessResourceHandler) Read(_ context.Context, current state.Resource, providers *driver.Registry) (ResourceReadResult, error) {
 	return ResourceReadResult{Status: state.ResourceUnknown, Resource: current}, fmt.Errorf("%w: SSH access observation requires canonical node state", ErrConvergenceUnsupported)
 }
 
-func (SSHAccessResourceHandler) PlanDiff(desired *graph.Node, current *state.Resource) (controlplane.PlannedChange, error) {
+func (SSHAccessResourceHandler) PlanDiff(desired *graph.Node, current *state.Resource) (model.PlannedChange, error) {
 	if desired == nil {
-		return controlplane.PlannedChange{}, fmt.Errorf("SSH access desired config required")
+		return model.PlannedChange{}, fmt.Errorf("SSH access desired config required")
 	}
 	_, _, err := sshDesired(desired, "validation", "validation")
 	if err != nil {
-		return controlplane.PlannedChange{}, err
+		return model.PlannedChange{}, err
 	}
 	return planDiffByDesiredHash(desired, current)
 }
 
-func (SSHAccessResourceHandler) ReadWithState(ctx context.Context, current state.Resource, st *state.State) (ResourceReadResult, error) {
+func (SSHAccessResourceHandler) ReadWithState(ctx context.Context, current state.Resource, st *state.State, providers *driver.Registry) (ResourceReadResult, error) {
 	result := ResourceReadResult{Status: state.ResourceUnknown, Resource: current}
 	saved, err := decodeSSHState(current, st)
 	if err != nil {
 		return result, err
 	}
-	ctx, connection, query, err := sshNodeConnection(ctx, st, saved.Node, saved.Handle.AccessID)
+	ctx, connection, query, err := sshNodeConnection(ctx, st, saved.Node, saved.Handle.AccessID, providers)
 	if err != nil {
 		return result, err
 	}
@@ -94,7 +96,7 @@ func (h SSHAccessResourceHandler) Discover(ctx context.Context, pc *ProviderCont
 	if !ok {
 		return ResourceReadResult{}, fmt.Errorf("SSH discovery requires action identity")
 	}
-	nodeCtx, connection, query, err := sshNodeConnection(ctx, pc.State(), ref, n.Address.Name)
+	nodeCtx, connection, query, err := sshNodeConnection(ctx, pc.State(), ref, n.Address.Name, pc.exec.providers)
 	if err != nil {
 		return ResourceReadResult{Status: state.ResourceUnknown}, err
 	}
@@ -133,7 +135,7 @@ func (h SSHAccessResourceHandler) Create(ctx context.Context, pc *ProviderContex
 	if err != nil {
 		return state.Resource{}, err
 	}
-	nodeCtx, connection, query, err := sshNodeConnection(ctx, pc.State(), ref, n.Address.Name)
+	nodeCtx, connection, query, err := sshNodeConnection(ctx, pc.State(), ref, n.Address.Name, pc.exec.providers)
 	if err != nil {
 		return state.Resource{}, err
 	}
@@ -176,7 +178,7 @@ func (h SSHAccessResourceHandler) Delete(ctx context.Context, pc *ProviderContex
 	if !ok || identity.Validate() != nil || identity.OwnerUID != current.OwnerUID || identity.ResourceUID != current.ResourceUID || identity.Generation != current.Generation {
 		return fmt.Errorf("SSH delete requires exact resource action identity")
 	}
-	nodeCtx, connection, query, err := sshNodeConnection(ctx, pc.State(), saved.Node, saved.Handle.AccessID)
+	nodeCtx, connection, query, err := sshNodeConnection(ctx, pc.State(), saved.Node, saved.Handle.AccessID, pc.exec.providers)
 	if err != nil {
 		return err
 	}
@@ -201,7 +203,7 @@ func (h SSHAccessResourceHandler) Delete(ctx context.Context, pc *ProviderContex
 	return validateSSHMutationResult(query, req, result)
 }
 func (SSHAccessResourceHandler) ExternalID(current state.Resource) string { return current.ExternalID }
-func (SSHAccessResourceHandler) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext) (any, []address.Address, error) {
+func (SSHAccessResourceHandler) DecodeResource(r config.ResourceBlock, _ string, ctx *hcl.EvalContext, providers *driver.Registry) (any, []address.Address, error) {
 	cfg := &config.SSHAccessConfig{}
 	if err := config.DecodeResource(&r, cfg, ctx); err != nil {
 		return nil, nil, err

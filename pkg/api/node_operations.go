@@ -6,15 +6,15 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 )
 
 type nodeOperationStore struct {
-	store apiStore
+	store controlstore.Store
 }
 
-func newNodeOperationStore(store apiStore) *nodeOperationStore {
+func newNodeOperationStore(store controlstore.Store) *nodeOperationStore {
 	return &nodeOperationStore{store: store}
 }
 

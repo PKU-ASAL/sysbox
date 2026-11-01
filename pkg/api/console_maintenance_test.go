@@ -8,18 +8,19 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
 )
 
 func TestConsoleWritesRespectMaintenanceAndAllowDrain(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		uid := grantTestTopologyUID(t, s, "lab")
 		sess := controlplane.ConsoleSession{ID: "session", AgentID: "agent", Topology: "lab", Node: "node", Status: "queued", CreatedAt: time.Now().UTC()}
 		require.NoError(t, store.SaveConsoleSession(ctx, sess))
-		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		barrier, err := authority.BeginMaintenance(ctx, "freeze", uid, "plan")
 		require.NoError(t, err)
 		fresh := sess
@@ -51,11 +52,11 @@ func TestConsoleWritesRespectMaintenanceAndAllowDrain(t *testing.T) {
 }
 
 func TestConsoleAdmissionAndMaintenanceSerializePublication(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		uid := grantTestTopologyUID(t, s, "lab")
-		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		for attempt := 0; attempt < 8; attempt++ {
 			id := fmt.Sprintf("session-%d", attempt)
 			sess := controlplane.ConsoleSession{ID: id, AgentID: "agent", Topology: "lab", Status: "queued", CreatedAt: time.Now().UTC()}
@@ -88,14 +89,14 @@ func TestConsoleAdmissionAndMaintenanceSerializePublication(t *testing.T) {
 }
 
 func TestConsoleMaintenanceUsesLifecycleIdentityAndPreservesLostEvidence(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		uid := grantTestTopologyUID(t, s, "lab")
 		grantTestTopologyUID(t, s, "other")
 		lost := controlplane.ConsoleSession{ID: "lost", Topology: "lab", Status: "lost", CreatedAt: time.Now().UTC()}
 		require.NoError(t, store.SaveConsoleSession(ctx, lost))
-		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		barrier, err := authority.BeginMaintenance(ctx, "freeze", uid, "plan")
 		require.NoError(t, err)
 		other := lost
@@ -115,7 +116,7 @@ func TestConsoleMaintenanceUsesLifecycleIdentityAndPreservesLostEvidence(t *test
 }
 
 func TestConsoleAdmissionWaitsForUncommittedFirstBarrier(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		uid := grantTestTopologyUID(t, s, "lab")
@@ -125,12 +126,12 @@ func TestConsoleAdmissionWaitsForUncommittedFirstBarrier(t *testing.T) {
 		defer unblock()
 		done := make(chan error, 1)
 		go func() {
-			done <- (apiExecutionGrantStorage{store: store}).UpdateExecutionAuthority(ctx, func(raw []byte) ([]byte, error) {
-				memory := &grantTransaction{raw: raw}
+			done <- (controlstore.AuthorityStorage{Store: store}).UpdateExecutionAuthority(ctx, func(raw []byte) ([]byte, error) {
+				memory := &controlstore.GrantTransaction{Raw: raw}
 				_, err := persistence.NewExecutionGrantRepository(memory).BeginMaintenance(ctx, "freeze", uid, "plan")
 				close(locked)
 				<-release
-				return memory.raw, err
+				return memory.Raw, err
 			})
 		}()
 		select {
@@ -155,7 +156,7 @@ func TestConsoleAdmissionWaitsForUncommittedFirstBarrier(t *testing.T) {
 }
 
 func TestConsoleAdmissionRejectsInvalidWorkspaceAcrossStores(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		sess := controlplane.ConsoleSession{ID: "session", Topology: "lab", Workspace: "../outside", Status: "queued", CreatedAt: time.Now().UTC()}
 		require.ErrorIs(t, store.SaveConsoleSession(context.Background(), sess), persistence.ErrInvalidRecord)
 		items, err := store.ListConsoleSessions(context.Background(), "")

@@ -3,6 +3,7 @@ package persistence
 import (
 	"bytes"
 	"encoding/json"
+
 	"github.com/oslab/sysbox/pkg/controlplane"
 )
 

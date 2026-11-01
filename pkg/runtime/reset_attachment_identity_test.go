@@ -5,12 +5,13 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
-	"github.com/stretchr/testify/require"
 )
 
 type resetIdentityNIC struct {
@@ -58,7 +59,7 @@ func TestResetAttachmentDeletionUsesAuthorizedOldGeneration(t *testing.T) {
 			if fault == "missing" {
 				ctx = context.Background()
 			}
-			err := NewExecutor(graph.New(), st).destroyResetNode(ctx, item)
+			err := NewExecutor(graph.New(), st, driver.DefaultRegistry).destroyResetNode(ctx, item)
 			if fault != "none" {
 				require.Error(t, err)
 				require.Empty(t, nic.seen)

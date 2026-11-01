@@ -12,13 +12,14 @@ import (
 
 	"github.com/oslab/sysbox/pkg/agent"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/stretchr/testify/require"
 )
 
 func TestRunTaskStopDiscoveryChecksRetiredParentSource(t *testing.T) {
-	eachRunLeaseStore(t, func(t *testing.T, store apiStore) {
+	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := stateDeleteTestServer(t, store)
 		s.agentSvc = newAgentService(s)
@@ -26,7 +27,7 @@ func TestRunTaskStopDiscoveryChecksRetiredParentSource(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, s.ConfigureExecutionGrantSigner(key))
 		require.NoError(t, store.SaveAgent(ctx, controlplane.Agent{ID: "agent", AuthSecret: "secret", SecretHash: agent.SecretHash("secret")}))
-		authority := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: store})
+		authority := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: store})
 		session, err := authority.OpenSession(ctx, "agent", "host", "")
 		require.NoError(t, err)
 		for _, good := range []bool{true, false} {

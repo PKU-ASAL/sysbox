@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"github.com/oslab/sysbox/pkg/address"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,12 +10,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
-
+	"github.com/oslab/sysbox/pkg/address"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/controlstore"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/persistence"
 	"github.com/oslab/sysbox/pkg/state"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSupervisorScanWritesHealthSnapshot(t *testing.T) {
@@ -43,10 +44,10 @@ func TestSupervisorScanWritesHealthSnapshot(t *testing.T) {
 
 	raw, err := os.ReadFile(filepath.Join(runs, "mixed", "health.json"))
 	require.NoError(t, err)
-	var snap HealthSnapshot
+	var snap controlstore.HealthSnapshot
 	require.NoError(t, json.Unmarshal(raw, &snap))
 	require.Equal(t, "mixed", snap.Topology)
-	require.Equal(t, controlplane.ResourceHealthHealthy, snap.Health.Status)
+	require.Equal(t, model.ResourceHealthHealthy, snap.Health.Status)
 	require.Equal(t, SupervisorPolicyObserveOnly, snap.Policy)
 	require.Equal(t, "observe", snap.Action)
 }
@@ -77,15 +78,15 @@ func TestSupervisorScanUsesAgentProjectionForNodeHealth(t *testing.T) {
 		Workspace:  "web",
 		Topology:   "web",
 		ObservedAt: time.Now().UTC(),
-		Resources: []controlplane.ResourceHealth{{
+		Resources: []model.ResourceHealth{{
 			Resource: "sysbox_node.web",
 			Type:     "sysbox_node",
 			Name:     "web",
 			Provider: "docker",
-			Status:   controlplane.ResourceHealthHealthy,
+			Status:   model.ResourceHealthHealthy,
 		}},
 	}
-	session, err := persistence.NewExecutionGrantRepository(apiExecutionGrantStorage{store: s.apiStore}).OpenSession(context.Background(), "agent-1", "supervisor-process", "")
+	session, err := persistence.NewExecutionGrantRepository(controlstore.AuthorityStorage{Store: s.apiStore}).OpenSession(context.Background(), "agent-1", "supervisor-process", "")
 	require.NoError(t, err)
 	proj.SessionID = session.ID
 	proj.Sequence = 1
@@ -96,9 +97,9 @@ func TestSupervisorScanUsesAgentProjectionForNodeHealth(t *testing.T) {
 
 	raw, err := os.ReadFile(filepath.Join(runs, "web", "health.json"))
 	require.NoError(t, err)
-	var snap HealthSnapshot
+	var snap controlstore.HealthSnapshot
 	require.NoError(t, json.Unmarshal(raw, &snap))
-	require.Equal(t, controlplane.ResourceHealthHealthy, snap.Health.Status)
+	require.Equal(t, model.ResourceHealthHealthy, snap.Health.Status)
 }
 
 func TestGetTopologyHealthCached(t *testing.T) {
@@ -106,11 +107,11 @@ func TestGetTopologyHealthCached(t *testing.T) {
 	runs := filepath.Join(dir, "runs")
 	workspaces := filepath.Join(dir, "workspaces")
 	s := NewServer(runs, workspaces)
-	snap := HealthSnapshot{
+	snap := controlstore.HealthSnapshot{
 		Topology: "mixed",
 		Observed: time.Now().UTC(),
-		Health: controlplane.TopologyHealth{
-			Status: controlplane.ResourceHealthHealthy,
+		Health: model.TopologyHealth{
+			Status: model.ResourceHealthHealthy,
 		},
 		Policy: SupervisorPolicyObserveOnly,
 	}
@@ -121,10 +122,10 @@ func TestGetTopologyHealthCached(t *testing.T) {
 	s.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	var body HealthSnapshot
+	var body controlstore.HealthSnapshot
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	require.Equal(t, "mixed", body.Topology)
-	require.Equal(t, controlplane.ResourceHealthHealthy, body.Health.Status)
+	require.Equal(t, model.ResourceHealthHealthy, body.Health.Status)
 }
 
 func TestSupervisorRestartOnCrashRequiresApprovedActionPlan(t *testing.T) {

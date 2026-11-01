@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/runtime"
 )
 
@@ -91,7 +92,7 @@ func ApplyHostFenceRelease(authorityRaw, lifecycleRaw []byte, run controlplane.R
 		return commitFenceRelease(a, fence, lifecycleRaw, request, rec.HostPublicKey, rec.Observation, now)
 	}
 	c := command.Command
-	if !command.Retired || c.Status != controlplane.AgentCommandStatusCompleted || c.ID != request.ObservationCommandID || c.Type != controlplane.RunRecoveryCommand || c.RecoveryMode != controlplane.RunRecoveryObserve || c.ActionID != request.FenceID || c.AgentID != run.AgentID || c.TopologyUID != lifecycle.State.TopologyUID || c.ExpectedSerial != lifecycle.Serial || c.Run == nil || !SameRunIncarnation(*c.Run, run) || c.Run.Attempt != run.Attempt || c.Run.LeaseOwner != run.LeaseOwner || validateRecoveryReport(c, command.Recovery) != nil {
+	if !command.Retired || c.Status != controlplane.AgentCommandStatusCompleted || c.ID != request.ObservationCommandID || c.Type != controlplane.RunRecoveryCommand || c.RecoveryMode != controlplane.RunRecoveryObserve || c.ActionID != request.FenceID || c.AgentID != run.AgentID || c.TopologyUID != lifecycle.State.TopologyUID || c.ExpectedSerial != lifecycle.Serial || c.Run == nil || !controlplane.SameRunIncarnation(*c.Run, run) || c.Run.Attempt != run.Attempt || c.Run.LeaseOwner != run.LeaseOwner || validateRecoveryReport(c, command.Recovery) != nil {
 		return nil, zero, ErrConflict
 	}
 	report := command.Recovery
@@ -111,7 +112,7 @@ func ApplyHostFenceRelease(authorityRaw, lifecycleRaw []byte, run controlplane.R
 		if action.RunID != run.ID {
 			continue
 		}
-		if action.Action != controlplane.PlanActionDelete || action.OwnerUID != lifecycle.State.TopologyUID || !action.RunQueuedAt.Equal(run.QueuedAt) || action.RunRevision != run.Revision {
+		if action.Action != model.PlanActionDelete || action.OwnerUID != lifecycle.State.TopologyUID || !action.RunQueuedAt.Equal(run.QueuedAt) || action.RunRevision != run.Revision {
 			return nil, zero, ErrConflict
 		}
 		selected[action.ID] = action

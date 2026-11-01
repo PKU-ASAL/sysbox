@@ -33,7 +33,7 @@ func initializeLocalAuthority(directory string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	names := []string{"issuer.key", "issuer.pub", "host.key", "sysbox.json"}
+	names := []string{"issuer.key", "issuer.pub", "host.key", "host.pub", "sysbox.json"}
 	defer func() {
 		for _, name := range names {
 			_ = os.Remove(filepath.Join(staging, name))
@@ -44,7 +44,7 @@ func initializeLocalAuthority(directory string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	_, host, err := ed25519.GenerateKey(rand.Reader)
+	hostPublic, host, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		return "", err
 	}
@@ -65,7 +65,7 @@ func initializeLocalAuthority(directory string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	for i, raw := range [][]byte{issuer, public, host, configBytes} {
+	for i, raw := range [][]byte{issuer, public, host, hostPublic, configBytes} {
 		file, err := os.OpenFile(filepath.Join(staging, names[i]), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 		if err != nil {
 			return "", err

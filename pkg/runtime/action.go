@@ -3,12 +3,13 @@ package runtime
 import (
 	"context"
 	"errors"
+	"time"
+
 	"github.com/oslab/sysbox/pkg/address"
-	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/graph"
+	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/state"
 	"github.com/oslab/sysbox/pkg/substrate"
-	"time"
 )
 
 var ErrAdoptionAtomicFallback = errors.New("adoption atomic replay requires legacy recovery")
@@ -25,23 +26,23 @@ const (
 // ActionRecord preserves authorized identity and the best available recovery
 // evidence. A provider error is not proof that its effect did not happen.
 type ActionRecord struct {
-	DispositionID  string                      `json:"disposition_id,omitempty"`
-	RunQueuedAt    time.Time                   `json:"run_queued_at,omitempty"`
-	RunRevision    string                      `json:"run_revision,omitempty"`
-	Revision       int64                       `json:"revision"`
-	ID             string                      `json:"id"`
-	Topology       string                      `json:"topology"`
-	RunID          string                      `json:"run_id"`
-	Resource       address.Address             `json:"resource"`
-	Action         controlplane.PlanActionType `json:"action"`
-	Status         ActionStatus                `json:"status"`
-	DesiredDigest  string                      `json:"desired_digest,omitempty"`
-	OwnerUID       string                      `json:"owner_uid"`
-	ResourceUID    string                      `json:"resource_uid"`
-	Generation     int64                       `json:"generation"`
-	StateSerial    int64                       `json:"state_serial"`
-	ExpectedSerial int64                       `json:"expected_serial"`
-	Candidate      *state.Resource             `json:"candidate,omitempty"`
+	DispositionID  string               `json:"disposition_id,omitempty"`
+	RunQueuedAt    time.Time            `json:"run_queued_at,omitempty"`
+	RunRevision    string               `json:"run_revision,omitempty"`
+	Revision       int64                `json:"revision"`
+	ID             string               `json:"id"`
+	Topology       string               `json:"topology"`
+	RunID          string               `json:"run_id"`
+	Resource       address.Address      `json:"resource"`
+	Action         model.PlanActionType `json:"action"`
+	Status         ActionStatus         `json:"status"`
+	DesiredDigest  string               `json:"desired_digest,omitempty"`
+	OwnerUID       string               `json:"owner_uid"`
+	ResourceUID    string               `json:"resource_uid"`
+	Generation     int64                `json:"generation"`
+	StateSerial    int64                `json:"state_serial"`
+	ExpectedSerial int64                `json:"expected_serial"`
+	Candidate      *state.Resource      `json:"candidate,omitempty"`
 	// Replacement identifies the new reset generation before guest setup has
 	// completed. Candidate retains the old handle until EffectComplete; this
 	// field is task routing evidence, never permission to replay setup.
@@ -66,8 +67,8 @@ type ActionRecord struct {
 // it names. Deletion verifies removal of that reference only.
 type ReferenceOnlyResource interface{ ReferenceOnly() }
 
-func requiresCompositeCompletion(resourceType string, action controlplane.PlanActionType) bool {
-	return (action == controlplane.PlanActionCreate || action == controlplane.PlanActionReset) && (resourceType == "sysbox_node" || resourceType == "sysbox_router")
+func requiresCompositeCompletion(resourceType string, action model.PlanActionType) bool {
+	return (action == model.PlanActionCreate || action == model.PlanActionReset) && (resourceType == "sysbox_node" || resourceType == "sysbox_router")
 }
 
 // ActionRepository owns the atomic journal/resource boundary. Intent writes
@@ -91,11 +92,6 @@ type ResetIntentCommitter interface {
 // repositories can retain the primitive intent/outcome implementation.
 type AdoptionEvidenceCommitter interface {
 	CommitAdoptionEvidenceAtomic(context.Context, string, string, address.Address, substrate.AdoptionEvidence, state.Resource, substrate.OperationIdentity, int64) error
-}
-
-// CleanupProver reads state and journal atomically after a managed destroy.
-type CleanupProver interface {
-	ProveCleanup(context.Context, controlplane.Run) (*controlplane.CleanupReceipt, error)
 }
 
 // ResourceDiscoverer must make a bounded external query. State absence alone
