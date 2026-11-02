@@ -132,6 +132,4 @@ python3 -m unittest discover -s scripts/acceptance -p 'test_*.py'
 
 ## 历史文档
 
-原有文档完整保存在 [归档](docs/archive/2026-10-27-documentation.tar.gz)，
-原路径和 SHA-256 在 [归档清单](docs/archive/2026-10-27-documentation.json)。
-归档中的历史设计、完成声明和命令不覆盖当前三份文档；使用恢复记录前核对来源版本。
+历史设计和阶段记录通过 Git 历史查阅，不再随当前文档保存归档副本。

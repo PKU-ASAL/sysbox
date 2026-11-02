@@ -34,29 +34,21 @@ class CampaignTests(unittest.TestCase):
         copied=json.loads(json.dumps(catalog));copied['gates'][0]['tests']=['TestDoesNotExist']
         with self.assertRaises(ValueError): campaign.validate_catalog(copied,root)
 
-    def test_archived_requirements_reject_corrupted_archive_or_source_digest(self):
+    def test_requirements_work_without_archive_and_reject_changed_catalog(self):
         repository = Path(__file__).resolve().parents[2]
-        original = repository / 'docs/archive'
-        archive_name = '2026-10-27-documentation.tar.gz'
-        manifest_name = '2026-10-27-documentation.json'
-        source = 'docs/design/2026-10-07-full-migration-distributed-execution-plan.md'
+        original = repository / 'scripts/acceptance/campaign.json'
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            target = root / 'docs/archive'
+            target = root / 'scripts/acceptance'
             target.mkdir(parents=True)
-            raw = (original / archive_name).read_bytes()
-            manifest = json.loads((original / manifest_name).read_text())
-            (target / archive_name).write_bytes(raw)
-            (target / manifest_name).write_text(json.dumps(manifest))
+            catalog = json.loads(original.read_text())
+            path = target / 'campaign.json'
+            path.write_text(json.dumps(catalog))
             self.assertEqual(campaign.original_requirements(root),
                              campaign.original_requirements(repository))
-            (target / archive_name).write_bytes(raw + b'corrupted')
-            with self.assertRaisesRegex(ValueError, 'archive digest mismatch'):
-                campaign.original_requirements(root)
-            (target / archive_name).write_bytes(raw)
-            manifest['files'][source]['sha256'] = '0' * 64
-            (target / manifest_name).write_text(json.dumps(manifest))
-            with self.assertRaisesRegex(ValueError, 'source digest mismatch'):
+            catalog['requirements'][0]['text'] += ' changed'
+            path.write_text(json.dumps(catalog))
+            with self.assertRaisesRegex(ValueError, 'requirement.*digest'):
                 campaign.original_requirements(root)
 
     def test_evidence_requires_matching_source_and_untampered_raw_events(self):

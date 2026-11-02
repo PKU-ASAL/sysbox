@@ -52,3 +52,7 @@ __pycache__/
 # fresh clone), but `make build-init[-all]` overwrites them with real ELF
 # binaries. Use `make setup-init-skip-worktree` to suppress the resulting
 # `git status` noise locally.
+
+# Local planning drafts and retired documentation archives
+/docs/superpowers/
+/docs/archive/
