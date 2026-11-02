@@ -1,7 +1,7 @@
 # Sysbox 快速开始
 
 Sysbox 用 HCL 声明并管理 Docker、Firecracker、libvirt 和 Linux 网络实验拓扑。
-当前 dev 的 Plan/Apply/Reset/Destroy 和 pause/resume CLI 已改为服务客户端，统一经宿主执行。部分维护入口和部署权限仍待收敛。
+Plan/Apply/Reset/Destroy 和 pause/resume 通过 API 与宿主服务执行，CLI 不直接操作 provider。
 
 只维护三份文档：本快速开始、[架构设计与执行路径清单](docs/architecture.md)、[接口文档](docs/interfaces.md)。
 
@@ -37,8 +37,50 @@ cp "$sysbox_release_dir/sysbox" "$sysbox_release_dir/sysbox-init" "$sysbox_relea
 ./bin/sysbox version
 ```
 
-随后从下方第一个拓扑开始，不执行源码构建。若发布源取不到 metadata 中的 commit，先解决制品来源不一致，
-不要改用最新分支的配置。发布包内的相对文档链接需要在这份对应源码 checkout 中打开。
+接着完成首次部署，再运行示例，无需重新编译。若无法取得 metadata 指定的 commit，不要用最新分支替代。
+
+## 首次部署
+
+Agent 现在必须以普通用户运行，只负责 API 与宿主服务之间的通信。它没有 Docker socket、数据库凭据或签名私钥。
+`deploy/docker/compose.agent.yml` 和 `deploy/systemd/sysbox-agent.service` 都按这个边界配置。
+宿主服务仍以 root 运行，持有 provider 权限与 host 私钥。
+
+首次部署先完成下面四步；已有环境按“停止旧服务 → 确认并清理旧资源 → 归档旧数据 → 重新部署”迁移，不覆盖旧身份和密钥。
+
+1. 宿主准备 Python 3（安装脚本使用），构建同版本二进制，创建 UID/GID 32000 的 `sysbox-agent` 用户。将同版本的 `sysbox`、`sysbox-init`、`sysbox-netns` 全部安装到 `/usr/local/bin/`（root 所有、0755）。
+   宿主须提供 `ip`、`nsenter`、`nft`；启用 Docker 时还需要 Docker CLI 和 `iptables`。
+   用 `sudo sysbox init --authority-dir /etc/sysbox-api` 生成新密钥。
+   建立 root 专用的 `/etc/sysbox-host`，把生成的 `host.key` 移到该目录；API 目录只保留 issuer 私钥和公钥材料。
+2. 配置并启动 API。Compose 模板使用 `/etc/sysbox-api/issuer.key` 和 `host.pub`，默认 Agent ID 为 `local-docker`。
+   设置 `SYSBOX_API_TOKEN`、数据库密码和对应配置；不要把这些环境变量传给 Agent。
+3. 用管理员身份注册，再安装 worker 所需文件：
+
+   ```sh
+   export SYSBOX_API_URL=http://127.0.0.1:9876
+   # 设置 SYSBOX_API_TOKEN 后注册。
+   mkdir -p .sysbox/enrollment
+   test ! -e .sysbox/enrollment/identity.json
+   ./bin/sysbox agent register --api "$SYSBOX_API_URL" --token "$SYSBOX_API_TOKEN" \
+     --id local-docker --name local-docker --substrates docker \
+     --identity .sysbox/enrollment/identity.json
+   sudo deploy/prepare-worker.sh .sysbox/enrollment/identity.json /etc/sysbox-api/issuer.pub /etc/sysbox-api/host.pub
+   ```
+
+   注册使用 `SYSBOX_API_TOKEN`，生成的 identity 只保存 Agent 自己的通信凭据。
+   先设置 `SYSBOX_API_URL`；该地址须同时能从宿主与 Agent 访问。Makefile 注册入口使用 `AGENT_API_URL`。
+4. 将 [宿主配置模板](deploy/systemd/sysbox-host.yaml) 安装为 `/etc/sysbox-host/sysbox.yaml`（root、0600），
+   填写与 API 相同的数据库、issuer 公钥及实际 provider 配置。
+   安装两个 [systemd 单元](deploy/systemd)，先启动 `sysbox-host`，再启动 `sysbox-agent`。
+   使用 Compose worker 时，以 `make api deploy-full` 启动；它要求身份、公钥和宿主 socket 已准备好。
+   先设置 `SYSBOX_IMAGE` 为选定版本并拉取该镜像；部署命令不再构建源码镜像。
+   源码开发时显式执行 `make api build-api`。注册和生命周期 Makefile 入口只使用现有 binary，缺少时明确报错。
+
+`prepare-worker.sh` 只安装身份与公钥，不启动服务，也不覆盖已有身份。更多字段见[宿主协议](docs/interfaces.md#host-protocol)。
+
+Firecracker 只通过 jailer 启动，需要 root 宿主服务、配套的 Firecracker/jailer 1.15.1、KVM、cgroup v2 委派，以及匹配架构的 kernel/rootfs 和 helper。安装要求见[接口文档](docs/interfaces.md#hcl-firecracker-provider-块)。
+Libvirt 需要可用的 libvirt/QEMU、guest 镜像和管理权限。Windows 持久任务需 QGA 和单节点安装的签名任务 helper。
+支持范围、文件/任务限制和升级要求见 [接口文档](docs/interfaces.md)。
+
 
 ## 第一个 Docker 拓扑
 
@@ -73,46 +115,6 @@ curl 地址应指向实际执行宿主。Plan 比较配置和服务中的 state�
 默认等待结果，`--detach` 在受理后返回。Ctrl-C 仅停止等待；需要取消时显式调用 run cancel，并查询结果确认。
 遇到 unknown/未确认停止，保留服务中的 state 和 journal，按[恢复契约](docs/interfaces.md#recovery-contract)处理，不能删库重来。
 
-## API、Agent 与其他 Provider
-
-Agent 现在必须以普通用户运行，只负责 API 与宿主服务之间的通信。它没有 Docker socket、数据库凭据或签名私钥。
-`deploy/docker/compose.agent.yml` 和 `deploy/systemd/sysbox-agent.service` 都按这个边界配置。
-宿主服务仍以 root 运行，持有 provider 权限与 host 私钥。
-
-首次部署先完成下面四步；已有环境按“停止旧服务 → 确认并清理旧资源 → 归档旧数据 → 重新部署”迁移，不覆盖旧身份和密钥。
-
-1. 宿主准备 Python 3（安装脚本使用），构建同版本二进制，创建 UID/GID 32000 的 `sysbox-agent` 用户。将同版本的 `sysbox`、`sysbox-init`、`sysbox-netns` 全部安装到 `/usr/local/bin/`（root 所有、0755）。
-   宿主须提供 `ip`、`nsenter`、`nft`；启用 Docker 时还需要 Docker CLI 和 `iptables`。
-   用 `sudo sysbox init --authority-dir /etc/sysbox-api` 生成新密钥。
-   建立 root 专用的 `/etc/sysbox-host`，把生成的 `host.key` 移到该目录；API 目录只保留 issuer 私钥和公钥材料。
-2. 配置并启动 API。Compose 模板使用 `/etc/sysbox-api/issuer.key` 和 `host.pub`，默认 Agent ID 为 `local-docker`。
-   设置 `SYSBOX_API_TOKEN`、数据库密码和对应配置；不要把这些环境变量传给 Agent。
-3. 用管理员身份注册，再安装 worker 所需文件：
-
-   ```sh
-   mkdir -p .sysbox/enrollment
-   test ! -e .sysbox/enrollment/identity.json
-   ./bin/sysbox agent register --api "$SYSBOX_API_URL" --token "$SYSBOX_API_TOKEN" \
-     --id local-docker --name local-docker --substrates docker \
-     --identity .sysbox/enrollment/identity.json
-   sudo deploy/prepare-worker.sh .sysbox/enrollment/identity.json /etc/sysbox-api/issuer.pub /etc/sysbox-api/host.pub
-   ```
-
-   注册使用 `SYSBOX_API_TOKEN`，生成的 identity 只保存 Agent 自己的通信凭据。
-   默认 API 地址为 `http://127.0.0.1:9876`；其他地址通过 `AGENT_API_URL` 指定，须同时能从宿主与 Agent 访问。
-4. 将 [宿主配置模板](deploy/systemd/sysbox-host.yaml) 安装为 `/etc/sysbox-host/sysbox.yaml`（root、0600），
-   填写与 API 相同的数据库、issuer 公钥及实际 provider 配置。
-   安装两个 [systemd 单元](deploy/systemd)，先启动 `sysbox-host`，再启动 `sysbox-agent`。
-   使用 Compose worker 时，以 `make api deploy-full` 启动；它要求身份、公钥和宿主 socket 已准备好。
-   先设置 `SYSBOX_IMAGE` 为选定版本并拉取该镜像；部署命令不再构建源码镜像。
-   源码开发时显式执行 `make api build-api`。注册和生命周期 Makefile 入口只使用现有 binary，缺少时明确报错。
-
-`prepare-worker.sh` 只安装身份与公钥，不启动服务，也不覆盖已有身份。更多字段见[宿主协议](docs/interfaces.md#host-protocol)。
-
-Firecracker 只通过 jailer 启动，需要 root 宿主服务、配套的 Firecracker/jailer 1.15.1、KVM、cgroup v2 委派，以及匹配架构的 kernel/rootfs 和 helper。安装要求见[接口文档](docs/interfaces.md#hcl-firecracker-provider-块)。
-Libvirt 需要可用的 libvirt/QEMU、guest 镜像和管理权限。Windows 持久任务需 QGA 和单节点安装的签名任务 helper。
-支持范围、文件/任务限制和升级要求见 [接口文档](docs/interfaces.md)。
-
 ## 开发验证
 
 ```sh
@@ -124,14 +126,9 @@ python3 -m unittest discover -s scripts/acceptance -p 'test_*.py'
 ```
 
 默认 Go 测试不等于真实 provider/Windows/断电验收；受环境限制而 skip 的测试不能算通过对应能力门槛。
-真实宿主测试只在隔离实验环境运行。Docker 启动/DNS 和 Windows 域启动专项脚本在所属执行宿主运行，
-要求设置 `SYSBOX_E2E_BINARY`、`SYSBOX_API_URL`、`SYSBOX_API_TOKEN` 和 `SYSBOX_E2E_AGENT_ID`，
-并检查 API 只有这一台在线执行宿主、本机身份匹配，以及隔离部署生成的 `acceptance-lab.json` 标记；
-不自动编译 binary，也不在失败时自动销毁未知状态。
-异构矩阵使用独立双虚拟机、发布 metadata 与预先发布的 revision，环境字段见架构文档的收尾记录。
-发布构建与验收入口：
-[scripts/release](scripts/release)、[scripts/acceptance](scripts/acceptance)、[Makefile](Makefile)。
-Release 镜像应使用已校验归档并核对 CLI/helper 哈希；同源构建不能替代同制品验收。
+真实宿主测试只在隔离实验环境运行，使用固定制品并独立验证回收结果。入口见
+[发布脚本](scripts/release)、[验收脚本](scripts/acceptance) 和 [Makefile](Makefile)。
+当前验证范围与剩余缺口见[架构文档](docs/architecture.md#发布与验收)。
 
 ## 历史文档
 
