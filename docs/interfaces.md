@@ -1,8 +1,8 @@
 # Sysbox 接口文档
 
 本文是当前 CLI、HCL、HTTP、宿主/guest 协议、provider SPI 和存储兼容边界的唯一接口文档。
-基线 `dev@291890a`；[架构设计](architecture.md)记录当前执行路径与收敛目标，[快速开始](../README.md)提供本地示例。
-本文描述现有实现，目标架构的未来统一入口不能当作已经存在的接口。
+[架构设计](architecture.md)说明当前职责与限制，[快速开始](../README.md)提供构建、部署和使用步骤。
+本文保留字段、路由与恢复约束；版本差异以对应提交的源码和 binary help 为准。
 
 - [HCL](#hcl)
 - [CLI](#cli)
@@ -24,18 +24,18 @@ Ed25519 原始私钥 64 字节、公钥 32 字节；不要把 host 私钥交给 
 
 ```yaml
 paths:
-  runs_dir: /var/lib/sysbox/canonical
+  runs_dir: /var/lib/sysbox-host/runs
 agent:
-  execution_grant_public_key_file: /etc/sysbox/issuer.pub
+  execution_grant_public_key_file: /etc/sysbox-worker/issuer.pub
 host_supervisor:
-  socket: /run/sysbox-supervisor/host.sock
-  root: /var/lib/sysbox/host-tasks
-  signing_key_file: /etc/sysbox/host.key
+  socket: /run/sysbox-host/host.sock
+  root: /var/lib/sysbox-host/tasks
+  signing_key_file: /etc/sysbox-host/host.key
   worker_group_id: 32000
 ```
 
 上面仅展示 supervisor 相关字段，部署还需配置 API 地址、Agent identity 和对应 repository。
-使用 `sysbox host-supervisor --config /etc/sysbox/supervisor.yaml --identity /etc/sysbox/supervisor-identity.json` 启动。
+使用 `sysbox host-supervisor --config /etc/sysbox-host/sysbox.yaml --identity /etc/sysbox-host/identity.json` 启动。
 私有配置、key 和 canonical repository 必须位于可信绝对路径，不能经可写祖先或 symlink 替换；
 socket 目录 root 拥有，worker group 只能连接 socket，不能修改目录。
 
@@ -92,7 +92,7 @@ QGA 请求 envelope 上限 32 KiB（含 base64 和签名元数据）。不支持
 
 Firecracker Policy 使用签名固定 built-in `sysbox-policy.v1`，普通任务仍不得任意 root 执行。
 绑定 node/policy 身份、digest 与授权，guest journal 保留 generation 和 deletion tombstone；
-内核需支持 nftables/netfilter，并准备匹配的 nft userspace。guest policy 能力不代表 VMM jailer 隔离已实现。
+内核需支持 nftables/netfilter，并准备匹配的 nft userspace。guest policy 与 VMM jailer 是独立的隔离层。
 
 <a id="artifacts"></a>
 ## 制品与可移植性
@@ -118,7 +118,7 @@ VM `source` 可为本地路径或 URL；`pull_source` 提供同字节的远端�
 
 | 数据层 | 当前格式 / 来源 | 升级规则 |
 |---|---|---|
-| API SQLite / PostgreSQL | schema 15，[api_store.go](../pkg/controlstore/store.go) | 空库初始化/当前版本重开；旧 API 表不自动迁移 |
+| API SQLite / PostgreSQL | schema 15，[store.go](../pkg/controlstore/store.go) | 空库初始化/当前版本重开；旧 API 表不自动迁移 |
 | Lifecycle aggregate | format 16 | 只接受当前格式；旧数据归档并重建，不在线导入 |
 | Execution authority | 基线 5；GC disposition 6、adoption disposition 7、intent disposition 8 | [authority_validation.go](../pkg/persistence/authority_validation.go)校验；不能仅看基线常量 |
 | Guest task | record 2；Linux RPC 1、scope 2/3 | 旧 helper 不支持的新 scope 必须拒绝，不能修改 version 绕过 |
@@ -127,7 +127,7 @@ VM `source` 可为本地路径或 URL；`pull_source` 提供同字节的远端�
 
 版本各自属于不同故障域，不能合并成一个总数字。生命周期已统一为 format 16；执行授权记录仍有自己的版本校验，不能手改字段绕过。
 
-旧 aggregate format 4/5 只读时直接拒绝；升级流程先停止旧 writer、归档原始数据，再按当前格式重新部署。
+旧 lifecycle 格式直接拒绝；升级前须停止旧 writer、确认并清理旧资源，再归档原始数据并重新部署。
 归档不解除 unknown、不证明外部资源 absent。先用原版本确认并清理旧资源，再部署新版本。
 同步升级 API、Agent、supervisor、CLI 和 guest helper；无法迁移的旧现场使用原 binary/原证据进行独立处置。
 
@@ -161,18 +161,13 @@ API 的 [capabilities](../pkg/api/capabilities.go)不会无条件声称 external
 | Repository | atomic action/state、CAS、锁/租约、maintenance barrier；后端实现实际原子性，业务转换共享 |
 
 当前资源核心入口为 `runtime.PrepareOperation(ctx, OperationRequest, OperationDependencies)`，
-返回的 Operation 提供 Plan/Execute；Dependencies 显式提供 Providers、Manager、Actions，可提供 Recorder、Log、Secrets。
+返回的 Operation 提供 Plan(ctx)/Execute(ctx, plan)；Dependencies 显式提供 Providers、Manager、Actions，可提供 Recorder、Log、Secrets。
 调用方从准备到最终结果认证持有 topology execution lock。该入口不是新的 HTTP endpoint。
 规划/健康/资源观察类型位于 `pkg/model`；workspace、planner、observer 和 executor 的 Go API 显式接收 provider registry，
 不再通过 runtime 内部的全局 registry 选择 provider。HTTP JSON 字段和既有请求语义没有因此更名。
 
-`api.NewExecutionBridge(cfg)` 现在返回 `(bridge, error)`，Agent 与 supervisor 共用此执行环境。
-它不启动 API 服务，也不持有 API issuer 私钥；初始化错误必须由调用者处理，不存在隐式本地 fallback。
-`Finish` 仅生成待认证的执行结果，canonical Run 仍由 API 接收完成回执后提交。
-`Close` 只可在所有使用者已经停止后调用，不能把取消 context 当作全部异步 callback 已退出。
-
-生产安全收敛涉及接口变更时，在本文件更新版本和拒绝行为，不增加第二份接口手册。
-下面保留已有 HCL、CLI 与 HTTP 字段/路由参考；历史阶段进度以架构文档为准。
+`hostexec.Open(cfg)` 创建宿主执行环境，初始化失败返回错误。它不启动 API 服务，也不持有 issuer 私钥。
+Agent 只转发请求，不创建执行环境。Run 最终状态由 API 验证宿主完成回执后提交；关闭执行环境前必须等待所有使用者退出。
 
 <a id="hcl"></a>
 <a id="hcl-hcl-参考"></a>
@@ -424,26 +419,26 @@ Current policy family is IPv4. Unsupported IPv6 input fails validation.
 
 Required `node` and `authorized_keys`; optional `bind_ip` and `port`. Authorized keys are sensitive execution input and must not leak into logs/state plaintext.
 
-The refactored runtime does not support managing this resource until a verifiable guest configuration lifecycle exists. Create/Read/Delete explicitly reject the operation; deletion does not silently drop its state. Configure guest SSH in the image or through the provider's supported boot configuration.
+通过宿主 SSH dispatcher 和支持该能力的 guest helper 管理，使用 revision CAS、签名授权与停止回执。观察依赖 canonical node state；不支持的 transport 明确拒绝。配置字段见 [SSH resource handler](../pkg/runtime/resource_ssh_access.go)。
 
 <a id="hcl-导入数据形状"></a>
 ### 导入数据形状
 
-Managed import is unsupported until explicit ownership adoption is implemented. Read-only provider inspection does not grant management ownership; import requests are rejected before dispatch.
+资源接管使用 [adoption 检查与确认](#cli-owning-agent-adoption-inspection)。只读检查不授予管理权；确认必须重新验证原始证据、归属和状态版本，不支持的 provider 场景明确拒绝。
 
 <a id="cli"></a>
 <a id="cli-cli-reference"></a>
-## CLI Reference
+## CLI 参考
 
 本页对应当前 `sysbox --help`。具体版本以正在运行的 binary help 为准。
 
-> 重构分支的生命周期写入要求原子 repository；`--allow-unsafe-state` 不能绕过这个要求。旧 state 格式需显式重建，`gc --dry-run` 仅预览本地候选；`gc submit` 将显式候选交给 owning Agent 删除。完整能力缺口见[实施状态](architecture.md)。
+生命周期命令通过服务执行；本地维护命令与升级限制见[存储与恢复](#recovery-contract)。
 
 <a id="cli-host-supervisor"></a>
-### Host Supervisor
+### 宿主服务
 
 ```text
-sysbox host-supervisor --config /etc/sysbox/supervisor.yaml --identity /etc/sysbox/supervisor-identity.json
+sysbox host-supervisor --config /etc/sysbox-host/sysbox.yaml --identity /etc/sysbox-host/identity.json
 ```
 
 Serve signed Run lifecycle, guest task/file, power, SSH, adoption and GC operations over a local Unix socket. Requires root, an explicit
@@ -453,18 +448,18 @@ direct-provider fallback. See [guest tasks](#host-protocol) for configuration,
 recovery semantics and the remaining console and foreground execution boundaries.
 
 <a id="cli-global-options"></a>
-### Global Options
+### 全局选项
 
 | Flag | Default | Meaning |
 |---|---|---|
 | `-f, --file PATH` | `field.sysbox.hcl` | HCL topology file |
-| `--state PATH_OR_URL` | `.sysbox/runs/default/state.json` | 仅尚未迁移的本地维护命令使用；生命周期及 pause/resume 拒绝 |
+| `--state PATH_OR_URL` | `.sysbox/runs/default/state.json` | 仅本地维护命令使用；生命周期及 pause/resume 拒绝 |
 | `--backend URL` | empty | 本地维护命令的存储位置；生命周期命令拒绝 |
 | `--auto-approve` | false | Skip mutation confirmation |
 | `--allow-unsafe-state` | false | Legacy flag; cannot bypass the atomic lifecycle repository requirement |
 
 <a id="cli-workspace-and-validation"></a>
-### Workspace And Validation
+### 配置与验证
 
 <a id="cli-init"></a>
 #### `init`
@@ -488,7 +483,7 @@ sysbox plan --api URL --topology NAME [-f FILE | --revision SHA256] [--include P
 ```
 
 在服务上比较所选配置版本和正式 state，不访问本机 provider，也不切换当前 workspace。
-不再提供旧 `--refresh`：这里的预览不声称已重新观察真实资源；执行阶段由宿主核对。
+不支持 `--refresh`。宿主在 Apply 规划时观察选定的受管资源，执行前再次核对；依赖替换范围不完整时拒绝，不自动扩大删除范围。
 
 <a id="cli-mutation"></a>
 ### 生命周期操作
@@ -543,16 +538,11 @@ Ctrl-C 只退出客户端等待，宿主已受理的 Run 继续执行。cancel �
 <a id="cli-import"></a>
 #### `import`
 
-```text
-sysbox import ADDRESS EXTERNAL_ID --substrate NAME
-```
-
-The legacy local state mutation path has been removed. Managed adoption must use
-the API adoption plan/confirm workflow so an owning agent proves provider
-ownership before the state repository is changed.
+本地 `sysbox import ADDRESS EXTERNAL_ID` 已停用。接管现有资源使用
+[owning-agent inspection](#cli-owning-agent-adoption-inspection)及 API adoption plan/confirm，不能直接写 state。
 
 <a id="cli-runtime-control"></a>
-### Runtime Control
+### 运行控制
 
 <a id="cli-pause--resume"></a>
 #### `pause` / `resume`
@@ -602,7 +592,7 @@ sysbox state show 'module.lab.sysbox_node.web["blue"]'
 ```
 
 <a id="cli-service-commands"></a>
-### Service Commands
+### 服务命令
 
 <a id="cli-serve"></a>
 #### `serve`
@@ -615,14 +605,14 @@ Start the HTTP API server using the selected Sysbox config.
 Manage or run the host Agent. Use `sysbox agent --help` for the version-specific registration and execution subcommands.
 
 <a id="cli-other-commands"></a>
-### Other Commands
+### 其他命令
 
 - `version [--json]`: build version, commit, time and Go version.
 - `completion`: shell completion generation.
 - `help`: command help.
 
 <a id="cli-safety-notes"></a>
-### Safety Notes
+### 安全约束
 
 - Mutation rejects backends without locking and CAS unless `--allow-unsafe-state` is explicit.
 - `state rm` is not cleanup; it removes the ownership record needed for safe destroy.
@@ -642,12 +632,6 @@ resource_uid、generation、inventory_digest。摘要来自 canonical lifecycle 
 输出为持久受理回执，不表示删除完成。同 key/同候选重试返回原操作；改参冲突。
 API 与执行宿主必须消费同一 canonical reservation。宿主失联或未知删除结果保持冻结，
 不能用新 key 绕过。已有 owning-host inventory 与批量 GC 路径；真实验收范围与当前发布状态见架构文档。
-
-<a id="cli-旧 aggregate 升级"></a>
-### 旧 aggregate 升级
-
-旧 aggregate format 4/5/更早版本不进入当前程序的执行或读取路径。升级前停止旧 writer，保留原始数据库、journal 和 provider 证据；确认资源已清理后，用当前版本从空 catalog 重新部署。
-禁止手改 format/version 字段，也不能把归档内容直接写回当前 catalog。
 
 <a id="cli-owning-agent-adoption-inspection"></a>
 ### Owning-agent adoption inspection
@@ -819,28 +803,17 @@ provides a separate, explicit single-object SQL revision retirement endpoint.
 
 <a id="http-api"></a>
 <a id="http-api-sysbox-api"></a>
-## sysbox API
+## HTTP API
 
-> 重构分支的 recover/cleanup 以固定 revision 和 canonical action 为准，不再用 checkpoint patch 授权恢复。远端 run 必须在 owning agent 上观测；尚未实现派发的入口明确拒绝本机恢复。HTTP v1 的 `error` 仍是字符串。参见[实施状态](architecture.md)。
+HTTP API 位于 `/v1`，错误响应中的 `error` 为字符串。配置验证失败返回 HTTP 422 和 `diagnostics` 数组。
+Plan 使用 canonical `address`，是配置/state 预览；宿主执行计划另行绑定资源身份并观察实际对象。
+资源状态为 `present/absent/drifted/degraded/unknown`；API 不返回 driver-private payload 或已解析秘密值。
 
-Plan action 使用 canonical `address`。Stored plan 带完整输入指纹；配置、
-state、schema、driver、artifact 或变量变化时，会在执行前拒绝。配置验证
-错误返回 HTTP 422 和结构化 `diagnostics` 数组。参见
-[`architecture.md`](architecture.md)。
+Run 完成仅接受宿主签名回执，Agent 事件不决定成功。回执、观察与恢复规则统一见
+[宿主协议](#host-protocol)和[恢复契约](#recovery-contract)。
+`GET /v1/agents/{agent_id}/projections` 来自持久化宿主清单；过期健康为 unknown，不由 Run 完成回调刷新。
 
-State v4 的 observation status 为 `present/absent/drifted/degraded/unknown`。
-API 不返回 driver-private payload 或已解析秘密值。
-
-The sysbox API exposes product-level control plane objects over `/v1`.
-
-Run 最终结果由 host-supervisor 提交到 `POST /v1/hosts/{agent}/runs/{run}/completed`。
-API 核验宿主签名、原执行授权和结果内容，先保存结果再释放执行范围；回复丢失时，同一凭据可重试。
-Agent 的命令事件只记录投递进度，不能把 Run 改为成功。lease 过期、Agent 断线也不等于远程效果已停止。
-旧 worker 完成存储方法和 `completion_projection` 已删除。Run 完成回调不写资源健康；
-`GET /v1/agents/{agent_id}/projections` 从持久化宿主清单生成摘要，重启后仍可查询，过期健康为 unknown。
-清理凭据的 topology UID 必须与原宿主授权一致，不能用其他拓扑的清理结果申请删除元数据。
-
-Run claim requests must include `queued_at` and `revision` from the dispatched Run snapshot. New Agents also send a canonical nonzero UUID `claim_id`, reused only for transport retries of that execution. A live same-identity retry returns the committed lease without extending it or incrementing attempt; another identity, expired lease, or old incarnation is rejected. Claim bodies are limited to 1024 bytes before signature verification. The capability `claim_replay` advertises this guarantee. Empty claim bodies return 400; a snapshot from a previous execution returns 409. Command IDs distinguish execution incarnations even when a Run ID is reused. Upgrade API and Agent together.
+Run claim requests must include `queued_at` and `revision` from the dispatched Run snapshot. Agents send a canonical nonzero UUID `claim_id`, reused only for transport retries of that execution. A live same-identity retry returns the committed lease without extending it or incrementing attempt; another identity, expired lease, or old incarnation is rejected. Claim bodies are limited to 1024 bytes before signature verification. The capability `claim_replay` advertises this guarantee. Empty claim bodies return 400; a snapshot from a previous execution returns 409. Command IDs distinguish execution incarnations even when a Run ID is reused. Upgrade API and Agent together.
 
 Agent 领取 Run 后，把签名授权交给宿主监督进程。宿主从 canonical repository 读取原 Run 和不可变 revision，核对身份与整棵文件树摘要后物化到宿主私有目录；恢复使用相同逻辑。
 `SnapshotPath` 是 canonical 记录中的绑定信息，不能由 Agent 用来指定宿主路径。
@@ -858,13 +831,11 @@ Authenticated `GET /v1/capabilities` includes protocol `sysbox-runtime-v1`, `dur
 
 Additional fields: multi_api_execution is true only with an initialized PostgreSQL store; execution_store_scope is shared-postgres or host-local (file/SQLite). single_api_execution means single-instance operation is supported, not required. recovery_inputs_protocol=1 announces transient input handoff; keyed recovery also requires owning-Agent run-recovery-inputs.v1 and host inputs_protocol=1.
 
-For failed recoverable keyed Apply, resubmit the original request/key to the API used for recovery. Fingerprint validation rejects changed values. Inputs remain only in memory and current command-lease authorization, never in command/outbox/journal persistence. A restarted or different API without hydration still refuses recovery. Legacy unverifiable non-default inputs remain blocked.
-
 `GET /v1/topologies/{name}/cleanup-inspection` returns redacted `resources`, `unfinished_actions`, `active_operations`, `state_exists`, `metadata_exists`, source/time and scope. State+journal are one snapshot; operation lists are separate snapshots and cover only the reported `active_operation_kinds` (Run and NodeOperation). Remote ownership reports `owning_agent_not_observed`; `external_presence` is `unknown`. Empty lists never authorize cleanup. Storage errors return503. Use owning-agent Observe/Recover for actual provider evidence; metadata deletion still checks repository serial/owner and unfinished actions.
 
 Workspace responses can include `active_run_id`, `active_revision` and `placement_agent_id`. A remotely placed topology remains listed after its Run ends. If the API has neither local resource evidence nor a mutable HCL pointer, phase is `unknown` with `OwningAgentNotObserved`, not `gone`. Deleting placement prevents retained terminal Run history from recreating the catalog entry.
 
-An owning Agent may include a `cleanup` receipt with a successful whole-topology Destroy completion. It binds version1, topology/UID, AgentID, RunID/queued_at/revision, attempt/lease_owner, nonzero state_serial, observed_at and empty=true. The Agent proves empty managed state and no unfinished action from one repository snapshot; fresh/missing state cannot produce a receipt. Completion validates and persists the receipt atomically with the current lease; terminal retries must carry the identical receipt. Run queries return the stored `cleanup` field.
+The owning host may include a `cleanup` receipt with a successful whole-topology Destroy completion. It binds version1, topology/UID, AgentID, RunID/queued_at/revision, attempt/lease_owner, nonzero state_serial, observed_at and empty=true. The host proves empty managed state and no unfinished action from one repository snapshot; fresh/missing state cannot produce a receipt. Completion validates and persists the receipt atomically with the current lease; terminal retries must carry the identical receipt. Run queries return the stored `cleanup` field.
 
 Firecracker guest transport separates `ping` liveness from `ready.v1` initialization. `ready.v1` is required before exec or file-write effects: systemd guests wait for both `sysinit.target` and successful `systemd-tmpfiles-setup.service`; custom init guests must write `/run/sysbox/boot-ready` containing the current boot ID after their own initialization. Console uses the signed task helper and requires its isolation prerequisites.
 
@@ -872,7 +843,7 @@ Ordinary metadata DELETE accepts only the latest successful Destroy receipt matc
 
 Node-operation completion requires `action_id`, `resource_uid`, `generation`, `lease_epoch`, `lease_owner`, and `attempt` from the delivered command. The store checks the current command lease and commits the operation result in one lock/transaction. Expired or replaced leases return 409; identical committed terminal reports remain idempotent.
 
-Guest execution/file metadata now share one persistence contract. Guest endpoints distinguish missing records (404), conflicts (409), and corrupt/unavailable storage (500), with the existing string `error` envelope. Request, agent and command bindings remain private. The new on-disk `record_format` is not an HTTP field; old metadata requires an explicit rebuild as described in the [implementation status](architecture.md).
+Guest execution/file metadata share one persistence contract. Guest endpoints distinguish missing records (404), conflicts (409), and corrupt/unavailable storage (500), with the existing string `error` envelope. Request, agent and command bindings remain private. The on-disk `record_format` is not an HTTP field; old metadata requires an explicit rebuild as described in the [storage contract](#recovery-contract).
 
 ```bash
 GET /v1/schema
@@ -1326,8 +1297,7 @@ The key binds topology, owning Agent and all candidate identities. Changing,
 truncating or appending candidates on replay conflicts. Containers and VMs precede
 networks. Only the first unfinished reservation can receive execution authority;
 its verified host completion publishes the next. Unknown outcomes stop progress
-and keep all lifecycle references frozen. Batch metadata uses the existing
-format6 reservation map; older code rejects multiple pending reservations.
+and keep all lifecycle references frozen. Batch metadata is stored in the current lifecycle format; see [storage versions](#recovery-contract).
 
 `GET /v1/topologies/{name}/recovery/intent-only` reports unfinished journal actions
 without provider effects or journal changes. Each entry includes the Run, exact
@@ -1657,8 +1627,7 @@ complete calls, including old completion replay. Repeating the same retirement
 request returns the existing result.
 
 Retired sources do not need freshness renewal: their references are immutable
-and continue to protect resources and caches indefinitely. Retirement upgrades
-only the affected aggregate to format 8, which older writers reject. It is not
+and continue to protect resources and caches indefinitely. Retirement is recorded in the current lifecycle format. It is not
 proof that a host process stopped, does not discard references, and does not
 permit metadata deletion or shared cache deletion. A failed/incomplete publisher
 cannot be retired to bypass its unresolved operation.
@@ -1823,10 +1792,8 @@ response always retains `operation_result:unknown`, with independently observed
 fresh planning; old-boot Firecracker residual cleanup remains distinct from
 ordinary deletion, which continues to reject stale process anchors.
 
-GC disposition upgrades the affected authority record to version 6 and lifecycle
-aggregate to format 9. Older versions must be drained before rollout; they reject
-these records rather than silently interpreting the new terminal state. Existing
-version-5 authority and format-6/7/8 aggregates remain readable before transition.
+GC disposition uses execution authority version 6 and the current lifecycle format 16.
+Earlier lifecycle formats are rejected; see [storage and upgrade rules](#recovery-contract).
 
 <a id="http-api-remote-revision-consumer-pins"></a>
 #### Remote revision consumer pins
@@ -1908,7 +1875,7 @@ launch/attachment; the original artifacts stay in place and signed manifest
 history validates the new ownership at the original physical path. libvirt
 requires a stopped persistent definition and exact metadata readback; storage
 and networking remain external and are not deleted as source-owned disk paths.
-Transfer reservations use aggregate format 11; old readers must be drained.
+Transfer reservations use the current lifecycle format 16; do not mix incompatible writers.
 
 <a id="http-api-independent-sql-consumer-retirement"></a>
 #### Independent SQL consumer retirement

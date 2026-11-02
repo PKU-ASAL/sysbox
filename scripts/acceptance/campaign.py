@@ -13,7 +13,6 @@ from pathlib import Path
 import re
 import subprocess
 import sys
-import tarfile
 
 STAGES = {'P0': 4, 'P1': 5, 'P2': 7, 'P3': 7, 'P4': 6,
           'P5': 5, 'P6': 5, 'P7': 6, 'P8': 4, 'P9': 6}
@@ -54,41 +53,22 @@ def verify_events(raw, expected, expected_package=None):
         raise ValueError('missing or unfinished required test')
 
 
+# Pinned from the original requirement text before removing docs/archive.
+# Updating acceptance requirements requires an explicit baseline change.
+REQUIREMENTS_SHA256 = '4eba23f90cb7a32c5ee4855e8d8e18d601a4c566cecf2a99a9920de7ed3b65c7'
+
+
 def original_requirements(root):
-    # The original requirements remain immutable historical evidence after the
-    # documentation consolidation; do not weaken the catalog to match new prose.
-    directory = root / 'docs/archive'
-    manifest = json.loads((directory / '2026-10-27-documentation.json').read_text())
-    source = 'docs/design/2026-10-07-full-migration-distributed-execution-plan.md'
-    archive = directory / '2026-10-27-documentation.tar.gz'
-    if sha256(archive.read_bytes()) != manifest['archive_sha256']:
-        raise ValueError('historical documentation archive digest mismatch')
-    with tarfile.open(archive, 'r:gz') as bundle:
-        member = bundle.getmember(source)
-        if not member.isfile():
-            raise ValueError('original requirement source must be a regular file')
-        raw = bundle.extractfile(member).read()
-    if sha256(raw) != manifest['files'][source]['sha256']:
-        raise ValueError('original requirement source digest mismatch')
-    out, stage, number = {}, None, 0
-    for line in raw.decode('utf-8').splitlines():
-        if line.startswith('### P'):
-            match = re.match(r'### (P\d+)：', line)
-            stage = match[1] if match and match[1] in STAGES else None
-            number = 0
-        elif line.startswith('## '):
-            stage = None
-        elif stage and line.startswith('- [ ] '):
-            number += 1
-            out[f'{stage}.{number}'] = line[6:]
-        elif stage and line.startswith('验收：'):
-            out[f'{stage}.acceptance'] = line[3:]
-        elif stage == 'P9' and line.startswith('总验收'):
-            out['P9.acceptance'] = line
+    catalog = json.loads((root / 'scripts/acceptance/campaign.json').read_text())
+    rows = catalog['requirements']
+    out = {row['id']: row['text'] for row in rows}
     expected = {f'{stage}.{i}' for stage, count in STAGES.items() for i in range(1, count + 1)}
     expected.update(f'{stage}.acceptance' for stage in STAGES)
-    if set(out) != expected:
+    if len(rows) != len(out) or set(out) != expected:
         raise ValueError('original requirement inventory changed; update catalog explicitly')
+    raw = json.dumps(out, sort_keys=True, ensure_ascii=False, separators=(',', ':')).encode()
+    if sha256(raw) != REQUIREMENTS_SHA256:
+        raise ValueError('original requirement text digest mismatch')
     return out
 
 
