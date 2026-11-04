@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -19,6 +20,13 @@ import (
 )
 
 type FirewallResourceHandler struct{}
+
+// errPolicyTargetUnapplied marks a firewall whose target carries no persisted
+// managed identity. The ruleset only exists inside that target's namespace and
+// its ownership is derived from the target record, so such a firewall cannot
+// exist yet: discovery reports it absent instead of unknown. That keeps a fresh
+// topology applicable, where the target and its firewalls are created together.
+var errPolicyTargetUnapplied = errors.New("not applied yet")
 
 func init()                                            { RegisterResourceHandler(FirewallResourceHandler{}) }
 func (FirewallResourceHandler) Type() string           { return "sysbox_firewall" }
@@ -90,8 +98,12 @@ func (e *Executor) createFirewallResource(ctx context.Context, n *graph.Node) (s
 }
 
 func (FirewallResourceHandler) Discover(ctx context.Context, pc *ProviderContext, n *graph.Node) (ResourceReadResult, error) {
+	// Preflight precedes creation of the attached target, and a fresh topology
+	// creates both in one apply. An unapplied target therefore means the ruleset
+	// cannot exist yet; action-boundary discovery resolves again once the target
+	// is present.
 	r, err := pc.exec.resolveFirewallResource(ctx, n, true)
-	if driver.IsCategory(err, driver.ErrorNotFound) {
+	if driver.IsCategory(err, driver.ErrorNotFound) || errors.Is(err, errPolicyTargetUnapplied) {
 		return ResourceReadResult{Status: state.ResourceAbsent}, nil
 	}
 	if err != nil {
@@ -111,7 +123,7 @@ func (e *Executor) resolveFirewallResource(ctx context.Context, n *graph.Node, d
 	}
 	targetResource := e.state.FindResource(targetAddr)
 	if targetResource == nil {
-		return state.Resource{}, fmt.Errorf("firewall %s: target %s not applied yet", n.Address.Name, targetAddr)
+		return state.Resource{}, fmt.Errorf("firewall %s: target %s %w", n.Address.Name, targetAddr, errPolicyTargetUnapplied)
 	}
 	bindings := map[string]string{}
 	attachmentIPs := map[string][]string{}

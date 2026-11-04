@@ -13,6 +13,7 @@ import (
 	"github.com/oslab/sysbox/pkg/graph"
 	"github.com/oslab/sysbox/pkg/model"
 	"github.com/oslab/sysbox/pkg/state"
+	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 type convergingFirewallPolicy struct {
@@ -106,6 +107,97 @@ func TestFirewallRecoveryDiscoversLostOutcomeWithoutReplay(t *testing.T) {
 	require.ErrorIs(t, recovery.RecoverActions(context.Background(), plan), ErrActionUncertain)
 	require.Nil(t, reopened.FindResource(a))
 	require.Equal(t, 1, policy.applies, "recovery must not replay")
+}
+
+// freshTopologyNode stands in for sysbox_node so the test can drive a whole
+// apply without a real substrate. It creates a managed identity inside the
+// target's network namespace, exactly like the real node handler does.
+type freshTopologyNode struct{ creates int }
+
+func (*freshTopologyNode) Type() string           { return "sysbox_node" }
+func (*freshTopologyNode) Schema() ResourceSchema { return ResourceSchemaFor("sysbox_node") }
+func (*freshTopologyNode) Read(_ context.Context, r state.Resource, _ *driver.Registry) (ResourceReadResult, error) {
+	status := state.ResourceAbsent
+	if r.ExternalID != "" {
+		status = state.ResourcePresent
+	}
+	return ResourceReadResult{Status: status, Resource: r}, nil
+}
+func (*freshTopologyNode) Discover(context.Context, *ProviderContext, *graph.Node) (ResourceReadResult, error) {
+	return ResourceReadResult{Status: state.ResourceAbsent}, nil
+}
+func (n *freshTopologyNode) PlanDiff(node *graph.Node, current *state.Resource) (model.PlannedChange, error) {
+	action := model.PlanActionNoop
+	if current == nil {
+		action = model.PlanActionCreate
+	}
+	return model.PlannedChange{Address: node.Address, Action: action}, nil
+}
+func (n *freshTopologyNode) Create(ctx context.Context, _ *ProviderContext, node *graph.Node) (state.Resource, error) {
+	n.creates++
+	identity, _ := substrate.OperationIdentityFromContext(ctx)
+	return state.Resource{Address: node.Address, Driver: "policy-test", ExternalID: "node-container", OwnerUID: identity.OwnerUID, ResourceUID: identity.ResourceUID, Generation: identity.Generation, Attributes: state.MustAttributes(map[string]any{"container_id": "node-container"})}, nil
+}
+func (*freshTopologyNode) Delete(_ context.Context, pc *ProviderContext, r state.Resource) error {
+	pc.State().RemoveResource(r.Address)
+	return nil
+}
+func (*freshTopologyNode) ExternalID(r state.Resource) string { return r.ExternalID }
+
+// A firewall lives inside its target's namespace, so a fresh topology creates
+// both in one apply. The pre-effect observation pass must report the firewall
+// as absent, not unknown, while its target is still unapplied.
+func TestFirewallDiscoveryOnFreshTopologyCreatesWithItsTarget(t *testing.T) {
+	previous := driver.DefaultRegistry
+	driver.DefaultRegistry = driver.NewRegistry()
+	t.Cleanup(func() { driver.DefaultRegistry = previous })
+	isolateHandlerRegistry(t)
+	policy := &convergingFirewallPolicy{}
+	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "policy-test", Version: "1", Policy: policy}))
+	node := &freshTopologyNode{}
+	RegisterResourceHandler(node)
+	RegisterResourceHandler(FirewallResourceHandler{})
+
+	targetAddr := address.Resource("sysbox_node", "app")
+	firewallAddr := address.Resource("sysbox_firewall", "app_fw")
+	g := graph.New()
+	require.NoError(t, g.AddNode(targetAddr, nil))
+	require.NoError(t, g.SetData(targetAddr, &config.NodeConfig{}))
+	require.NoError(t, g.AddNode(firewallAddr, []address.Address{targetAddr}))
+	require.NoError(t, g.SetData(firewallAddr, &config.FirewallConfig{AttachTo: "sysbox_node.app"}))
+
+	st := &state.State{Version: state.SchemaVersion, TopologyUID: "owner"}
+	e := NewExecutor(g, st, driver.DefaultRegistry)
+	e.SetRunContext("lab", "run")
+	stored, err := cloneExecutionState(st)
+	require.NoError(t, err)
+	e.SetActionRepository(&memoryActions{state: stored})
+
+	plan := &Plan{Actions: []model.PlannedChange{
+		{Address: targetAddr, Action: model.PlanActionCreate},
+		{Address: firewallAddr, Action: model.PlanActionCreate},
+	}}
+	require.NoError(t, e.Apply(context.Background(), plan))
+	require.Equal(t, 1, node.creates)
+	require.Equal(t, 1, policy.applies, "fresh topology must reach the firewall create")
+	require.NotNil(t, st.FindResource(firewallAddr))
+}
+
+// Reporting an unapplied target as absent must not weaken creation: a firewall
+// whose target has no persisted managed identity can never produce an effect.
+func TestFirewallCreateWithoutAppliedTargetAppliesNothing(t *testing.T) {
+	previous := driver.DefaultRegistry
+	driver.DefaultRegistry = driver.NewRegistry()
+	t.Cleanup(func() { driver.DefaultRegistry = previous })
+	policy := &firewallPolicyFake{}
+	require.NoError(t, driver.DefaultRegistry.Register(driver.Descriptor{Name: "policy-test", Version: "1", Policy: policy}))
+
+	st := &state.State{Version: state.SchemaVersion, TopologyUID: "owner"}
+	exec := NewExecutor(graph.New(), st, driver.DefaultRegistry)
+	n := &graph.Node{Address: address.Resource("sysbox_firewall", "app_fw"), Data: &config.FirewallConfig{AttachTo: "sysbox_node.app"}}
+	_, err := exec.createFirewallResource(substrate.WithOperationIdentity(context.Background(), policyOperationFixture()), n)
+	require.ErrorIs(t, err, errPolicyTargetUnapplied)
+	require.Equal(t, 0, policy.applyCount)
 }
 
 func TestFirewallReadInvalidTargetIsUnknown(t *testing.T) {
