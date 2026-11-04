@@ -158,7 +158,14 @@ def install(bundle, inputs, root, check=False):
     # reruns never overwrite those files or silently rotate credentials.
     for relative, (data, mode, worker) in files.items():
         destination = root / relative
-        destination.parent.mkdir(parents=True, exist_ok=True)
+        missing = []
+        parent = destination.parent
+        while not parent.exists():
+            missing.append(parent)
+            parent = parent.parent
+        for directory in reversed(missing):
+            directory.mkdir(mode=0o755)
+            directory.chmod(0o755)  # Explicit even under root umask 077.
         if relative.startswith('etc/sysbox-host/'):
             destination.parent.chmod(0o700)
         elif relative.startswith('var/lib/sysbox-agent/'):

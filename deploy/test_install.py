@@ -92,5 +92,16 @@ class InstallTests(unittest.TestCase):
             installer.install(self.bundle,self.inputs,self.root,check=False)
         self.assertFalse(self.root.exists())
 
+    def test_restrictive_umask_keeps_worker_files_reachable(self):
+        import os
+        previous=os.umask(0o077)
+        try:
+            installer.install(self.bundle,self.inputs,self.root,check=False)
+        finally:
+            os.umask(previous)
+        for directory in ('usr','usr/local','usr/local/bin','etc','etc/sysbox-worker','etc/systemd/system'):
+            self.assertEqual((self.root/directory).stat().st_mode & 0o777,0o755,directory)
+        self.assertEqual((self.root/'etc/sysbox-host').stat().st_mode & 0o777,0o700)
+
 if __name__ == '__main__':
     unittest.main()
