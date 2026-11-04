@@ -65,5 +65,32 @@ class InstallTests(unittest.TestCase):
             installer.install(self.bundle,self.inputs,self.root,check=False)
         self.assertFalse(self.root.exists())
 
+    def test_existing_root_is_supported_but_symlink_parent_is_not(self):
+        self.root.mkdir()
+        (self.root/'unrelated').write_text('keep')
+        installer.install(self.bundle,self.inputs,self.root,check=False)
+        self.assertEqual((self.root/'unrelated').read_text(),'keep')
+
+    def test_symlink_parent_rejected_before_writes(self):
+        self.root.mkdir()
+        outside=self.base/'outside'; outside.mkdir()
+        (self.root/'etc').symlink_to(outside,target_is_directory=True)
+        with self.assertRaisesRegex(ValueError,'unsafe'):
+            installer.install(self.bundle,self.inputs,self.root,check=False)
+        self.assertEqual(list(outside.iterdir()),[])
+        self.assertFalse((self.root/'usr').exists())
+
+    def test_missing_input_and_placeholder_rejected(self):
+        (self.inputs/'sysbox.yaml').write_text('backend: REPLACE_PASSWORD')
+        with self.assertRaisesRegex(ValueError,'placeholder'):
+            installer.install(self.bundle,self.inputs,self.root,check=False)
+        self.assertFalse(self.root.exists())
+
+    def test_wrong_key_rejected(self):
+        (self.inputs/'host.pub').write_bytes(b'x'*32)
+        with self.assertRaisesRegex(ValueError,'matching'):
+            installer.install(self.bundle,self.inputs,self.root,check=False)
+        self.assertFalse(self.root.exists())
+
 if __name__ == '__main__':
     unittest.main()

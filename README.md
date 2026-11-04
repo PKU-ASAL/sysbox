@@ -21,29 +21,35 @@ bash scripts/release/build-binaries.sh ./bin
 
 ## 使用预编译 Release
 
-发布包只包含 binaries、LICENSE、README 和 build-metadata.json，不包含 examples、scripts 或 docs。
-先用下载目录中的 SHA256SUMS 校验对应归档，再解压到一个新目录。无需 Go 编译器；仍需 Linux、Docker、Git 和 jq。
-在解压目录执行以下命令，取得与 binary 完全匹配的示例和三份文档：
+Linux 发布包包含二进制、三份文档、Docker 示例、部署模板和 `install.py`，无需再拉源码。
+先用可信发布渠道取得的 `SHA256SUMS` 校验归档，再解压；包内 `INSTALL-SHA256SUMS` 用于检查文件完整性，不替代发布来源验证。
+
+首次安装仍分为 API 初始化/注册与宿主安装两个阶段。下面“首次部署”的手工步骤适用于源码开发；
+使用 Release 时，API 配置好并完成 Agent 注册后，把五个输入放在一个 root 专用目录：
+`identity.json`、`host.key`、`host.pub`、`issuer.pub`、`sysbox.yaml`。
+其中 `sysbox.yaml` 从 `deploy/systemd/sysbox-host.yaml` 复制，填写数据库及 provider 配置；
+不要把 issuer 私钥或 API 管理 token 放入 worker 配置。
 
 ```sh
-sysbox_release_dir="$PWD"
-sysbox_release_commit="$(jq -r .commit build-metadata.json)"
-sysbox_release_source="$(jq -r .source build-metadata.json)"
-git clone "$sysbox_release_source" sysbox-source
-git -C sysbox-source checkout --detach "$sysbox_release_commit"
-cd sysbox-source
-mkdir -p bin
-cp "$sysbox_release_dir/sysbox" "$sysbox_release_dir/sysbox-init" "$sysbox_release_dir/sysbox-netns" bin/
-./bin/sysbox version
+# 在解压目录执行；/root/sysbox-install-inputs 是已准备好的输入目录。
+sudo python3 install.py --inputs /root/sysbox-install-inputs --check
+sudo python3 install.py --inputs /root/sysbox-install-inputs
+sudo systemctl daemon-reload
+sudo systemctl enable --now sysbox-host
+sudo systemctl enable --now sysbox-agent
 ```
 
-接着完成首次部署，再运行示例，无需重新编译。若无法取得 metadata 指定的 commit，不要用最新分支替代。
+安装器校验全部包内文件、宿主架构和身份/密钥，创建固定 UID/GID 32000 的 worker，
+安装配套二进制、配置和 systemd 单元；不会启动服务或覆盖已有文件。
+`--root /tmp/sysbox-stage` 可在临时目录检查布局，不创建系统用户，也不代表实机验收。
+已有安装须按停服务、清资源、归档旧安装的升级流程处理。I/O 中断后保留现场，检查部分安装结果后再重试。
 
 ## 首次部署
 
 Agent 现在必须以普通用户运行，只负责 API 与宿主服务之间的通信。它没有 Docker socket、数据库凭据或签名私钥。
 `deploy/docker/compose.agent.yml` 和 `deploy/systemd/sysbox-agent.service` 都按这个边界配置。
 宿主服务仍以 root 运行，持有 provider 权限与 host 私钥。
+Release 安装器替代下面的手工用户创建、二进制复制、worker 文件安装和 systemd 单元安装；API 初始化与注册仍需完成。
 
 首次部署先完成下面四步；已有环境按“停止旧服务 → 确认并清理旧资源 → 归档旧数据 → 重新部署”迁移，不覆盖旧身份和密钥。
 

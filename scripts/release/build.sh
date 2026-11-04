@@ -50,15 +50,22 @@ for arch in amd64 arm64; do
   install -D -m 0644 deploy/systemd/sysbox-agent.service "${stage}/deploy/systemd/sysbox-agent.service"
   install -D -m 0644 deploy/docker/agent.yaml "${stage}/deploy/docker/agent.yaml"
   install -D -m 0644 deploy/systemd/sysbox-host.yaml "${stage}/deploy/systemd/sysbox-host.yaml"
+  mkdir -p "${stage}/docs" "${stage}/examples"
+  install -m 0644 docs/architecture.md docs/interfaces.md "${stage}/docs/"
+  cp -R examples/docker-service "${stage}/examples/docker-service"
+  # Deployment assets are from the same commit as the binaries, not a later checkout.
+  cp -R deploy/docker "${stage}/deploy/"
+  install -m 0755 deploy/prepare-worker.sh "${stage}/deploy/prepare-worker.sh"
+  install -m 0644 .env.example "${stage}/.env.example"
   jq -S -n --arg version "${tag}" --arg tag "${tag}" --arg commit "${commit}" \
     --arg build_time "${build_time}" --arg go_version "${go_version}" --arg os linux --arg arch "${arch}" \
     --arg license MulanPSL-2.0 --arg source "${source_url}" --arg oci_image "${oci_image}" \
     '{version:$version,tag:$tag,commit:$commit,build_time:$build_time,go_version:$go_version,os:$os,architecture:$arch,license:$license,source:$source,oci_image:$oci_image}' \
     >"${stage}/build-metadata.json"
   chmod 0644 "${stage}/build-metadata.json"
-  (cd "${stage}" && sha256sum sysbox sysbox-init sysbox-netns install.py deploy/systemd/sysbox-host.service deploy/systemd/sysbox-agent.service deploy/docker/agent.yaml deploy/systemd/sysbox-host.yaml build-metadata.json > INSTALL-SHA256SUMS)
+  (cd "${stage}" && find . -type f ! -name INSTALL-SHA256SUMS -printf '%P\0' | LC_ALL=C sort -z | xargs -0 sha256sum > INSTALL-SHA256SUMS)
   tar --sort=name --format=ustar --owner=0 --group=0 --numeric-owner --mtime="@${epoch}" \
-    --mode='u+rwX,go+rX,go-w' -C "${stage}" -cf - LICENSE README.md INSTALL-SHA256SUMS install.py deploy build-metadata.json sysbox sysbox-init sysbox-netns \
+    --mode='u+rwX,go+rX,go-w' -C "${stage}" -cf - .env.example LICENSE README.md INSTALL-SHA256SUMS install.py deploy docs examples build-metadata.json sysbox sysbox-init sysbox-netns \
     | gzip -n -9 >"${output}/${archive}"
   rm -rf "${stage}"
 done
