@@ -966,8 +966,6 @@ GET  /v1/runs/{run_id}/checkpoint
 GET  /v1/runs/{run_id}/actions
 GET  /v1/runs/{run_id}/events
 POST /v1/runs/{run_id}/resume
-POST /v1/runs/{run_id}/recover
-POST /v1/runs/{run_id}/cleanup
 ```
 
 Run records include the owning `agent_id`, protocol version, lease owner, lease
@@ -1908,3 +1906,5 @@ repositories must be explicitly enrolled before retirement is enabled.
 新增服务接口：POST /v1/topologies/{topology}/plan 接受 revision、inputs、target，返回 summary/actions；不发布 workspace 指针。Apply 接受 target；Reset 和 POST /v1/runs/{id}/resume 支持 Idempotency-Key。POST /v1/runs/{id}/cancel 只请求取消，不修改正式完成状态。
 
 Console 已统一到宿主受控 guest task，使用普通用户、签名期限和 cgroup 停止证明。已删除原生 Console SPI/transport 与 Agent 直连路径；没有 helper/隔离条件时拒绝开启。断连和取消请求仍不等于进程已停止。
+
+旧的 `POST /v1/runs/{id}/recover`、`/cleanup` 返回 410，不读取或修改资源。恢复使用已有 owning-host observe/recover 协议，回收使用授权 Destroy；无宿主归属的旧记录须离线迁移。

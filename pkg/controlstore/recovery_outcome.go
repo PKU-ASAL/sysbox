@@ -16,10 +16,9 @@ import (
 
 type RecoveryRepository struct {
 	runtime.ActionRepository
-	Store         Store
-	Proof         hostsupervisor.RunRecoveryRequest
-	Run           controlplane.Run
-	LocalRecovery bool
+	Store Store
+	Proof hostsupervisor.RunRecoveryRequest
+	Run   controlplane.Run
 }
 
 func (r *RecoveryRepository) CommitActionIntent(context.Context, runtime.ActionRecord) error {
@@ -27,14 +26,12 @@ func (r *RecoveryRepository) CommitActionIntent(context.Context, runtime.ActionR
 }
 
 func (r *RecoveryRepository) validate(record *persistence.CommandRecord, owner *controlplane.Agent, runs []controlplane.Run, action runtime.ActionRecord) error {
-	if r.LocalRecovery {
-		return persistence.ValidateLocalRecoveryCommit(r.Run, LatestRunsByID(runs), action, time.Now().UTC())
-	}
+
 	return persistence.ValidateRecoveryCommit(controlplane.AgentCommandEvent{CommandID: r.Proof.CommandID, LeaseOwner: r.Proof.LeaseOwner, Attempt: r.Proof.Attempt}, r.Run, record, owner, LatestRunsByID(runs), action, time.Now().UTC())
 }
 
 func (r *RecoveryRepository) CommitActionOutcome(ctx context.Context, action runtime.ActionRecord, patch *runtime.StatePatch) error {
-	if err := r.Proof.Validate(); err != nil && !r.LocalRecovery {
+	if err := r.Proof.Validate(); err != nil {
 		return err
 	}
 	if action.Topology != r.Run.Topology {
@@ -49,16 +46,16 @@ func (r *RecoveryRepository) CommitActionOutcome(ctx context.Context, action run
 		defer unlock()
 		var record *persistence.CommandRecord
 		var owner *controlplane.Agent
-		if !r.LocalRecovery {
-			record, err = (LocalCommandStorage{Store: store}).Read(ctx, r.Proof.CommandID)
-			if err != nil {
-				return err
-			}
-			owner, err = store.GetAgent(ctx, r.Run.AgentID)
-			if err != nil {
-				return err
-			}
+
+		record, err = (LocalCommandStorage{Store: store}).Read(ctx, r.Proof.CommandID)
+		if err != nil {
+			return err
 		}
+		owner, err = store.GetAgent(ctx, r.Run.AgentID)
+		if err != nil {
+			return err
+		}
+
 		runs, err := store.LoadRuns(ctx)
 		if err != nil {
 			return err
@@ -120,16 +117,16 @@ func (r *RecoveryRepository) commitSQLite(ctx context.Context, store *SQLite, ac
 	}
 	var record *persistence.CommandRecord
 	var owner *controlplane.Agent
-	if !r.LocalRecovery {
-		record, err = ScanSQLiteCommand(conn.QueryRowContext(ctx, "SELECT "+SqliteCommandColumns+" FROM sysbox_agent_commands WHERE id=?", r.Proof.CommandID))
-		if err != nil {
-			return err
-		}
-		owner, err = scanSQLiteAgent(conn.QueryRowContext(ctx, "SELECT "+sqliteAgentColumns+" FROM sysbox_agents WHERE id=?", r.Run.AgentID))
-		if err != nil {
-			return err
-		}
+
+	record, err = ScanSQLiteCommand(conn.QueryRowContext(ctx, "SELECT "+SqliteCommandColumns+" FROM sysbox_agent_commands WHERE id=?", r.Proof.CommandID))
+	if err != nil {
+		return err
 	}
+	owner, err = scanSQLiteAgent(conn.QueryRowContext(ctx, "SELECT "+sqliteAgentColumns+" FROM sysbox_agents WHERE id=?", r.Run.AgentID))
+	if err != nil {
+		return err
+	}
+
 	rows, err := conn.QueryContext(ctx, "SELECT "+SqliteRunColumns+" FROM sysbox_runs WHERE topology=? ORDER BY id,rowid", r.Run.Topology)
 	if err != nil {
 		return err
@@ -226,16 +223,16 @@ func (r *RecoveryRepository) commitPostgres(ctx context.Context, store *Postgres
 	}
 	var record *persistence.CommandRecord
 	var owner *controlplane.Agent
-	if !r.LocalRecovery {
-		record, err = ScanPostgresCommand(tx.QueryRow(ctx, "SELECT "+PostgresCommandColumns+" FROM sysbox_agent_commands WHERE id=$1 FOR UPDATE", r.Proof.CommandID))
-		if err != nil {
-			return err
-		}
-		owner, err = scanPostgresAgent(tx.QueryRow(ctx, "SELECT "+postgresAgentColumns+" FROM sysbox_agents WHERE id=$1 FOR SHARE", r.Run.AgentID))
-		if err != nil {
-			return err
-		}
+
+	record, err = ScanPostgresCommand(tx.QueryRow(ctx, "SELECT "+PostgresCommandColumns+" FROM sysbox_agent_commands WHERE id=$1 FOR UPDATE", r.Proof.CommandID))
+	if err != nil {
+		return err
 	}
+	owner, err = scanPostgresAgent(tx.QueryRow(ctx, "SELECT "+postgresAgentColumns+" FROM sysbox_agents WHERE id=$1 FOR SHARE", r.Run.AgentID))
+	if err != nil {
+		return err
+	}
+
 	var raw []byte
 	if err = tx.QueryRow(ctx, "SELECT data::text FROM sysbox_lifecycle_aggregates WHERE topology=$1 FOR UPDATE", action.Topology).Scan(&raw); err != nil {
 		return err

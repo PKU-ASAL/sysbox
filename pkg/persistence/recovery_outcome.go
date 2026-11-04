@@ -60,28 +60,3 @@ func ValidateRecoveryCommit(proof controlplane.AgentCommandEvent, expected contr
 	}
 	return nil
 }
-
-// Local recovery has no command delivery authority. It is restricted to the
-// exact failed local Run and existing journal, with no active topology peer.
-func ValidateLocalRecoveryCommit(expected controlplane.Run, runs []controlplane.Run, action runtime.ActionRecord, now time.Time) error {
-	if expected.AgentID != "" || expected.ID == "" || expected.QueuedAt.IsZero() {
-		return ErrConflict
-	}
-	var current *controlplane.Run
-	for i := range runs {
-		run := &runs[i]
-		if run.Topology == expected.Topology && run.Status.IsActive() {
-			return ErrConflict
-		}
-		if run.ID == expected.ID {
-			current = run
-		}
-	}
-	if current == nil || current.AgentID != "" || !controlplane.SameRunIncarnation(*current, expected) || current.Attempt != expected.Attempt || current.LeaseOwner != expected.LeaseOwner || current.Status != controlplane.RunFailed || !current.Recoverable || current.LeaseUntil.After(now) {
-		return ErrConflict
-	}
-	if action.Topology != current.Topology || action.RunID != current.ID || !action.RunQueuedAt.Equal(current.QueuedAt) || action.RunRevision != current.Revision {
-		return ErrConflict
-	}
-	return nil
-}
