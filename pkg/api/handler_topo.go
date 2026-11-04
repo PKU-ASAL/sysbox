@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/oslab/sysbox/pkg/buildinfo"
 	"log/slog"
 	"net/http"
 	"path/filepath"
@@ -30,7 +31,7 @@ func validateRevision(rev string) error {
 
 // GET /v1/health
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "build": buildinfo.Current(), "agent_protocol": controlplane.AgentProtocolVersion})
 }
 
 // GET /v1/topologies

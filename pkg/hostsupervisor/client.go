@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/oslab/sysbox/pkg/buildinfo"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/guesttask"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -50,6 +51,17 @@ func (c *TaskClient) call(ctx context.Context, request Request) (Response, error
 		return result, fmt.Errorf("host supervisor: %s", result.Error)
 	}
 	return result, nil
+}
+
+func (c *TaskClient) BuildInfo(ctx context.Context) (buildinfo.Info, error) {
+	out, err := c.call(ctx, Request{Operation: "version"})
+	if err != nil {
+		return buildinfo.Info{}, err
+	}
+	if out.BuildVersion == "" || out.BuildCommit == "" {
+		return buildinfo.Info{}, fmt.Errorf("host supervisor omitted build identity")
+	}
+	return buildinfo.Info{Version: out.BuildVersion, Commit: out.BuildCommit}, nil
 }
 func (c *TaskClient) GuestTaskBootID(ctx context.Context) (string, error) {
 	out, err := c.call(ctx, Request{Operation: "info"})

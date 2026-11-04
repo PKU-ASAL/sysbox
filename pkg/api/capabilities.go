@@ -1,6 +1,7 @@
 package api
 
 import (
+	"github.com/oslab/sysbox/pkg/buildinfo"
 	"github.com/oslab/sysbox/pkg/controlstore"
 	"github.com/oslab/sysbox/pkg/runtime"
 )
@@ -20,6 +21,8 @@ type runtimeCapabilities struct {
 	SingleAPIExecution        bool   `json:"single_api_execution"`
 	ExternalAbsenceInspection bool   `json:"external_absence_inspection"`
 	ResourceLeaseRevocation   bool   `json:"resource_lease_revocation"`
+	BuildVersion              string `json:"build_version"`
+	BuildCommit               string `json:"build_commit"`
 }
 
 func (s *Server) runtimeCapabilities(preflight runtime.PreflightResult) runtimeCapabilities {
@@ -29,5 +32,5 @@ func (s *Server) runtimeCapabilities(preflight runtime.PreflightResult) runtimeC
 	if shared {
 		scope = "shared-postgres"
 	}
-	return runtimeCapabilities{ClaimReplay: durable, MultiAPIExecution: durable && shared, ExecutionStoreScope: scope, RecoveryInputsProtocol: 1, PreflightResult: preflight, Protocol: "sysbox-runtime-v1", DurableApply: durable, KeyedDestroy: durable, CleanupInspection: true, SingleAPIExecution: true}
+	return runtimeCapabilities{ClaimReplay: durable, MultiAPIExecution: durable && shared, ExecutionStoreScope: scope, RecoveryInputsProtocol: 1, PreflightResult: preflight, Protocol: "sysbox-runtime-v1", DurableApply: durable, KeyedDestroy: durable, CleanupInspection: true, SingleAPIExecution: true, BuildVersion: buildinfo.Version, BuildCommit: buildinfo.Commit}
 }

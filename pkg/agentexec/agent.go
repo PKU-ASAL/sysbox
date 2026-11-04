@@ -19,6 +19,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/google/uuid"
 	"github.com/oslab/sysbox/pkg/agent"
+	"github.com/oslab/sysbox/pkg/buildinfo"
 	"github.com/oslab/sysbox/pkg/config"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/hostsupervisor"
@@ -42,7 +43,6 @@ type Options struct {
 	Name                        string
 	Capabilities                []string
 	Labels                      map[string]string
-	Version                     string
 	Secret                      string
 	PollInterval                time.Duration
 	RunRenewInterval            time.Duration
@@ -92,6 +92,9 @@ func Run(ctx context.Context, opts Options) error {
 	opts.httpClient = &http.Client{Timeout: opts.RequestTimeout}
 	defer opts.httpClient.CloseIdleConnections()
 	opts.APIURL = strings.TrimRight(opts.APIURL, "/")
+	if err := checkComponentBuilds(ctx, opts); err != nil {
+		return err
+	}
 	probe, err := opts.observeHost(ctx, "probe-"+uuid.NewString())
 	if err != nil {
 		return err
@@ -112,7 +115,7 @@ func Run(ctx context.Context, opts Options) error {
 		Protocol:     controlplane.AgentProtocolVersion,
 		Capabilities: opts.Capabilities,
 		Labels:       opts.Labels,
-		Version:      opts.Version,
+		Version:      buildinfo.Version,
 	}, nil); err != nil {
 		return err
 	}
@@ -218,7 +221,7 @@ func heartbeat(ctx context.Context, opts Options) error {
 		Protocol:     controlplane.AgentProtocolVersion,
 		Capabilities: opts.Capabilities,
 		Labels:       opts.Labels,
-		Version:      opts.Version,
+		Version:      buildinfo.Version,
 	}, nil)
 }
 

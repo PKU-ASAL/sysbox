@@ -43,6 +43,8 @@ type Request struct {
 	Limit              int                                     `json:"limit,omitempty"`
 }
 type Response struct {
+	BuildVersion         string                                 `json:"build_version,omitempty"`
+	BuildCommit          string                                 `json:"build_commit,omitempty"`
 	Observation          *controlplane.HostObservation          `json:"observation,omitempty"`
 	AdoptionDisposition  *controlplane.AdoptionDispositionProof `json:"adoption_disposition,omitempty"`
 	OwnershipPreparation *controlplane.OwnershipPreparation     `json:"ownership_preparation,omitempty"`
