@@ -21,11 +21,10 @@ import (
 
 type FirewallResourceHandler struct{}
 
-// errPolicyTargetUnapplied marks a firewall whose target carries no persisted
-// managed identity. The ruleset only exists inside that target's namespace and
-// its ownership is derived from the target record, so such a firewall cannot
-// exist yet: discovery reports it absent instead of unknown. That keeps a fresh
-// topology applicable, where the target and its firewalls are created together.
+// errPolicyTargetUnapplied marks a missing target record during discovery.
+// Fresh plans may create that dependency later; creation still requires its
+// durable identity. This is not an absence proof for lost lifecycle data:
+// unfinished intents are reconciled before preflight and never replayed here.
 var errPolicyTargetUnapplied = errors.New("not applied yet")
 
 func init()                                            { RegisterResourceHandler(FirewallResourceHandler{}) }

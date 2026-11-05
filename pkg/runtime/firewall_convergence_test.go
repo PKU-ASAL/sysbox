@@ -3,6 +3,9 @@ package runtime
 import (
 	"context"
 	"errors"
+	"github.com/hashicorp/hcl/v2"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -209,4 +212,72 @@ func TestFirewallReadInvalidTargetIsUnknown(t *testing.T) {
 	observed, err := (FirewallResourceHandler{}).Read(context.Background(), res, driver.DefaultRegistry)
 	require.Error(t, err)
 	require.Equal(t, state.ResourceUnknown, observed.Status)
+}
+
+func (*freshTopologyNode) DecodeResource(config.ResourceBlock, string, *hcl.EvalContext, *driver.Registry) (any, []address.Address, error) {
+	return nil, nil, nil
+}
+
+func TestFirewallFreshHCLDependencyAndApply(t *testing.T) {
+	isolateHandlerRegistry(t)
+	node := &freshTopologyNode{}
+	RegisterResourceHandler(node)
+	RegisterResourceHandler(FirewallResourceHandler{})
+	providers := driver.NewRegistry()
+	policy := &convergingFirewallPolicy{}
+	require.NoError(t, providers.Register(driver.Descriptor{Name: "policy-test", Version: "1", Policy: policy}))
+	dir := t.TempDir()
+	path := filepath.Join(dir, "field.sysbox.hcl")
+	require.NoError(t, os.WriteFile(path, []byte(`resource "sysbox_firewall" "fw" { attach_to = "sysbox_node.app" }
+resource "sysbox_node" "app" {}
+`), 0600))
+	g, _, st, _, _, err := LoadWorkspaceWithInputs(path, state.NewManager(filepath.Join(dir, "state.json")), nil, providers)
+	require.NoError(t, err)
+	st.TopologyUID = "owner"
+	e := NewExecutor(g, st, providers)
+	e.SetRunContext("lab", "run")
+	stored, err := cloneExecutionState(st)
+	require.NoError(t, err)
+	e.SetActionRepository(&memoryActions{state: stored})
+	plan, err := ComputePlan(g, st, providers)
+	require.NoError(t, err)
+	require.NoError(t, e.Apply(context.Background(), plan))
+	require.Equal(t, 1, node.creates)
+	require.Equal(t, 1, policy.applies)
+	require.NotNil(t, st.FindResource(address.Resource("sysbox_firewall", "fw")))
+}
+
+func TestFirewallDiscoveryRejectsMalformedPersistedTarget(t *testing.T) {
+	providers := driver.NewRegistry()
+	policy := &convergingFirewallPolicy{}
+	require.NoError(t, providers.Register(driver.Descriptor{Name: "policy-test", Version: "1", Policy: policy}))
+	st := &state.State{Version: state.SchemaVersion, TopologyUID: "owner"}
+	st.AddResource(state.Resource{Address: address.Resource("sysbox_node", "app"), Driver: "policy-test", ExternalID: "instance"})
+	e := NewExecutor(graph.New(), st, providers)
+	n := &graph.Node{Address: address.Resource("sysbox_firewall", "fw"), Data: &config.FirewallConfig{AttachTo: "sysbox_node.app"}}
+	result, err := (FirewallResourceHandler{}).Discover(context.Background(), &ProviderContext{exec: e}, n)
+	require.ErrorContains(t, err, "lacks durable identity")
+	require.NotEqual(t, state.ResourceAbsent, result.Status)
+	require.Zero(t, policy.applies)
+}
+
+func TestFirewallMissingTargetDoesNotReplayUnfinishedIntent(t *testing.T) {
+	providers := driver.NewRegistry()
+	policy := &convergingFirewallPolicy{}
+	require.NoError(t, providers.Register(driver.Descriptor{Name: "policy-test", Version: "1", Policy: policy}))
+	a := address.Resource("sysbox_firewall", "fw")
+	g := graph.New()
+	require.NoError(t, g.AddNode(a, nil))
+	require.NoError(t, g.SetData(a, &config.FirewallConfig{AttachTo: "sysbox_node.app"}))
+	st := &state.State{Version: state.SchemaVersion, TopologyUID: "owner"}
+	before := ActionRecord{ID: "pending", Topology: "lab", RunID: "old", Resource: a, Action: model.PlanActionCreate, Status: ActionIntentCommitted, OwnerUID: "owner", ResourceUID: "policy", Generation: 1, Quiescence: "stopped"}
+	repo := &memoryActions{state: st, actions: []ActionRecord{before}}
+	e := NewExecutor(g, st, providers)
+	e.SetRunContext("lab", "new")
+	e.SetActionRepository(repo)
+	err := e.Apply(context.Background(), &Plan{Actions: []model.PlannedChange{{Address: a, Action: model.PlanActionCreate}}})
+	require.Error(t, err)
+	require.Zero(t, policy.applies)
+	require.Equal(t, []ActionRecord{before}, repo.actions)
+	require.Empty(t, st.Resources)
 }
