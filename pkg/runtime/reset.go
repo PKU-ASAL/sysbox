@@ -270,7 +270,7 @@ func (e *Executor) buildResetNodeContext(ctx context.Context, action model.Plann
 			hasNAT = true
 		}
 	}
-	nodeSpec := substrate.NodeSpec{Name: runtimeExternalName(e.topology, "node", node.Address.Name), Image: baseline, VCPUs: cfg.Vcpus, Memory: cfg.Memory, Env: environment, Labels: ManagedLabels(e.topology, e.runID, node.Address), Ports: ports, ManagedNetwork: hasNAT, ProviderConfig: providerConfig}
+	nodeSpec := substrate.NodeSpec{Name: runtimeExternalName(e.topology, "node", node.Address), Image: baseline, VCPUs: cfg.Vcpus, Memory: cfg.Memory, Env: environment, Labels: ManagedLabels(e.topology, e.runID, node.Address), Ports: ports, ManagedNetwork: hasNAT, ProviderConfig: providerConfig}
 	if err := nodeDriver.Validate(nodeSpec); err != nil {
 		return nil, err
 	}
