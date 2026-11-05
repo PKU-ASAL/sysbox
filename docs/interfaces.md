@@ -918,10 +918,24 @@ HCL and dispatches a run. The request body is:
 {"revision":"sha256:<hex>","inputs":{},"deadline_at":"2026-09-06T00:00:00Z"}
 ```
 
+Keyed Apply (`Idempotency-Key` with an immutable global `revision`)
+deliberately does **not** publish a mutable workspace pointer, so `has_hcl`
+stays false. That flag is not an existence check: a topology may exist from a
+committed lifecycle aggregate, an in-flight Run, or a placement. Consumers must
+treat a topology as present when `has_state` is true, `active_run_id` is set, or
+`placement_agent_id` is set, and absent only from `phase=gone` after metadata
+deletion. The supervisor enumerates the union of workspace HCL directories,
+committed lifecycle aggregates, and Run records, so an HCL-less keyed topology
+with committed state is health-scanned and reported normally.
+
 `inputs` are materialized per-run and never returned by the API. `deadline_at`
 bounds convergence. `GET /v1/topologies/{name}` returns workspace metadata and
 `status` with `phase`, `conditions` (`Applied`, `Provisioned`, `Asserted`,
-`Ready`), `nodes`, `outputs`, and `deadline_at`.
+`Ready`), `nodes`, `outputs`, and `deadline_at`. `Applied` is derived from the
+topology's latest Run verdict; a completed destroy is not an apply verdict (a
+failed destroy keeps its failure verdict). `Provisioned` is the supervisor's
+health observation. `Asserted` is the latest check/assert outcome, and `Ready`
+is the conjunction of the three (Unknown propagates, False dominates).
 
 <a id="http-api-state-and-observability"></a>
 ### State And Observability

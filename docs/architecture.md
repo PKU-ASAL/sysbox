@@ -92,6 +92,18 @@ canonical state 确定资源归属，journal 记录在途效果，两者不能�
 
 授权仍使用一份全局 ledger。正常检查、续期和派生签发已减少重复提交，但全局写竞争、历史停止记录增长仍需容量验证。**当前没有按宿主/topology 分片，也没有新增租约体系；是否需要进一步改造由性能证据决定。**
 
+### 拓扑可观测性与 keyed Apply
+
+拓扑是否存在由持久事实共同决定，`has_hcl` 只表示可变 workspace 指针是否存在，不能单独作为存在性判断：
+
+- workspace 指针（`workspaces/<topology>/field.sysbox.hcl`）只表示可变 HCL 存在；
+- 带 `Idempotency-Key` 的 keyed Apply 只把不可变 revision 物化到 `runs/<topology>/revisions/<digest>`，不发布 workspace 指针，因此 `has_hcl=false`；
+- 已提交的 lifecycle state（文件后端的 `runs/<topology>/state.json.lifecycle` 或共享 catalog 中的 aggregate）、在途 Run 和 placement 都是 topology 的持久事实。
+
+Catalog 与后台巡检按上述持久事实的并集枚举：HCL 目录、lifecycle catalog 和 Run 记录。带已提交 state 的 keyed topology 即使没有 HCL，也会进入 `ScanTopology` 并写入 health snapshot；`LoadState`、`actionRepository` 和健康投影都不依赖 workspace 文件。删除元数据时 placement 一并删除，仅凭终态 Run 历史不得复活 catalog 条目。
+
+`GET /v1/topologies/{name}` 的 `status.conditions` 是只读观测投影：`Applied` 来自 topology 最近一次 Run 的终态，`Provisioned` 来自巡检写入的 health snapshot，`Asserted` 来自最近一次 check/assert 求值；三者全为 True 才 `Ready=True`，任一 Unknown 时 Ready 为 Unknown，任一 False 时 Ready 为 False。已完成的 destroy 描述资源释放，不构成 `Applied` 判定；失败的 destroy 仍保留失败判定。这样已释放的 topology 不会被报告为 ready。消费者应依据 `has_state`、`active_run_id`、`placement_agent_id` 和 `phase` 判断存在性，不得用 `has_hcl=false` 推断 topology 不存在。
+
 ## 发布与验收
 
 CLI、API、宿主和 guest helper 必须来自匹配制品。发布包携带版本、commit、哈希与 metadata；部署不隐式重建源码。验收使用正式 systemd 单元和独立实验环境。

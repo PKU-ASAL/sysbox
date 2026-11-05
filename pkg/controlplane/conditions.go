@@ -103,6 +103,14 @@ func conditionApplied(run *Run) Condition {
 	if run == nil {
 		return c
 	}
+	// A completed destroy describes resource release, not whether the desired
+	// configuration was applied. A keyed topology has no mutable workspace
+	// pointer to anchor observability, so a completed destroy reported as
+	// Applied=True would make a released topology look ready. A failed destroy
+	// keeps its failure verdict.
+	if run.Op == "destroy" && run.Status == RunDone {
+		return c
+	}
 	if !run.EndedAt.IsZero() {
 		c.ObservedAt = run.EndedAt
 	}
