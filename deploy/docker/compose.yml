@@ -18,7 +18,6 @@ services:
       retries: 20
 
   sysbox-api:
-    build: .
     image: ${SYSBOX_IMAGE:-sysbox:latest}
     container_name: sysbox-api
     restart: unless-stopped

@@ -56,8 +56,7 @@ func TestSupervisorRejectsCheckpointOnlyRecovery(t *testing.T) {
 	supervisor := newSupervisor(s, time.Minute)
 	require.NoError(t, supervisor.ScanTopology(context.Background(), "mixed"))
 
-	// The orphan was adopted: state now holds the node the crashed run never
-	// recorded, without anyone calling the recover endpoint.
+	// Background observation must not adopt an orphan from checkpoint data.
 	mgr, err := s.stateManager("mixed")
 	require.NoError(t, err)
 	st, err := mgr.Load()
@@ -69,7 +68,7 @@ func TestSupervisorRejectsCheckpointOnlyRecovery(t *testing.T) {
 	snap, err := s.loadHealthSnapshot("mixed")
 	require.NoError(t, err)
 	require.Empty(t, snap.Recovered)
-	require.Contains(t, snap.LastError, "pinned immutable revision")
+	require.Empty(t, snap.LastError)
 }
 
 // A running run must never be reconciled: only terminal, recoverable runs have

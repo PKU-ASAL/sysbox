@@ -19,22 +19,27 @@ for arch in amd64 arm64; do
   actual="$(sha256sum "${dist}/${archive}" | awk '{print $1}')"
   [[ "${actual}" == "${expected}" ]] || { echo "release: metadata checksum mismatch for ${archive}" >&2; exit 1; }
   tmp="$(mktemp -d)"
-  listing="$(TZ=UTC tar --numeric-owner --full-time -tvzf "${dist}/${archive}")"
-  expected_time="${build_time/T/ }"
-  expected_time="${expected_time%Z}"
-  expected_listing="$(printf '%s\n' "${listing}" | awk '{print $1, $2, $4, $5, $6}')"
-  expected_headers="$(printf '%s\n' \
-    "-rw-r--r-- 0/0 ${expected_time} LICENSE" \
-    "-rw-r--r-- 0/0 ${expected_time} README.md" \
-    "-rw-r--r-- 0/0 ${expected_time} build-metadata.json" \
-    "-rwxr-xr-x 0/0 ${expected_time} sysbox" \
-    "-rwxr-xr-x 0/0 ${expected_time} sysbox-init" \
-    "-rwxr-xr-x 0/0 ${expected_time} sysbox-netns")"
-  [[ "${expected_listing}" == "${expected_headers}" ]] || { echo "release: archive header contract mismatch for ${arch}" >&2; exit 1; }
+  # Check every member before extraction: no links, traversal or arbitrary modes.
+  python3 - "${dist}/${archive}" "${build_time}" <<'PYARCHIVE'
+import datetime,sys,tarfile,pathlib
+stamp=int(datetime.datetime.fromisoformat(sys.argv[2].replace('Z','+00:00')).timestamp())
+with tarfile.open(sys.argv[1]) as archive:
+    seen=set()
+    for entry in archive.getmembers():
+        path=pathlib.PurePosixPath(entry.name)
+        assert entry.name not in seen and not path.is_absolute() and '..' not in path.parts
+        seen.add(entry.name)
+        assert entry.isfile() or entry.isdir()
+        assert entry.uid==entry.gid==0 and entry.mtime==stamp
+        assert entry.mode in (0o644,0o755)
+    required={'LICENSE','README.md','INSTALL-SHA256SUMS','install.py','build-metadata.json','sysbox','sysbox-init','sysbox-netns','docs/architecture.md','docs/interfaces.md','deploy/systemd/sysbox-host.service','deploy/systemd/sysbox-agent.service','deploy/docker/agent.yaml'}
+    assert required<=seen, required-seen
+PYARCHIVE
   tar -xzf "${dist}/${archive}" -C "${tmp}"
-  members="$(find "${tmp}" -maxdepth 1 -type f -printf '%f\n' | sort)"
-  required=$'LICENSE\nREADME.md\nbuild-metadata.json\nsysbox\nsysbox-init\nsysbox-netns'
-  [[ "${members}" == "${required}" ]] || { echo "release: unexpected archive members for ${arch}" >&2; rm -rf "${tmp}"; exit 1; }
+  (cd "${tmp}" && sha256sum -c INSTALL-SHA256SUMS >/dev/null)
+  cmp deploy/install.py "${tmp}/install.py"
+  cmp deploy/systemd/sysbox-host.service "${tmp}/deploy/systemd/sysbox-host.service"
+  cmp deploy/systemd/sysbox-agent.service "${tmp}/deploy/systemd/sysbox-agent.service"
   expected_sysbox_sha="$(jq -er --arg arch "${arch}" '.targets[] | select(.os == "linux" and .architecture == $arch) | .sysbox_sha256' "${dist}/build-metadata.json")"
   expected_init_sha="$(jq -er --arg arch "${arch}" '.targets[] | select(.os == "linux" and .architecture == $arch) | .sysbox_init_sha256' "${dist}/build-metadata.json")"
   [[ "$(sha256sum "${tmp}/sysbox" | awk '{print $1}')" == "${expected_sysbox_sha}" ]] || { echo "release: sysbox binary checksum mismatch for ${arch}" >&2; rm -rf "${tmp}"; exit 1; }
