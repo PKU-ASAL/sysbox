@@ -1,13 +1,16 @@
 package runtime
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"hash/fnv"
 	"strings"
+
+	"github.com/oslab/sysbox/pkg/address"
 )
 
-func runtimeExternalName(topology, kind, name string) string {
-	safeName := sanitizeExternalName(name)
+func runtimeExternalName(topology, kind string, resource address.Address) string {
+	safeName := externalResourceComponent(resource)
 	if topology == "" {
 		switch kind {
 		case "actor":
@@ -21,11 +24,27 @@ func runtimeExternalName(topology, kind, name string) string {
 	return "sysbox-lab-" + sanitizeExternalName(topology) + "-" + kind + "-" + safeName
 }
 
-func networkExternalName(topology, name string) string {
+func networkExternalName(topology string, resource address.Address) string {
+	name := externalResourceComponent(resource)
 	if topology == "" {
-		return sanitizeExternalName(name)
+		return name
 	}
-	return "lab-" + sanitizeExternalName(topology) + "-net-" + sanitizeExternalName(name)
+	return "lab-" + sanitizeExternalName(topology) + "-net-" + name
+}
+
+// Plain, already-normalized names retain the existing provider name. Indexed
+// and module addresses include a digest of the full canonical address, so keys
+// that normalize alike never collapse into the same provider request.
+func externalResourceComponent(resource address.Address) string {
+	name := sanitizeExternalName(resource.Name)
+	if !resource.Key.IsSet() && len(resource.ModulePath) == 0 && name == resource.Name {
+		return name
+	}
+	digest := sha256.Sum256([]byte(resource.String()))
+	if len(name) > 32 {
+		name = name[:32]
+	}
+	return fmt.Sprintf("%s-%x", name, digest[:12])
 }
 
 func sanitizeExternalName(value string) string {

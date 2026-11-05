@@ -168,7 +168,7 @@ func validateAggregate(a *aggregate, topology string) error {
 	if a.GC == nil || a.State == nil || a.State.TopologyUID == "" || a.Actions == nil || a.Snapshots == nil || a.Restores == nil || a.ResetContinuations == nil || a.Serial < 0 {
 		return ErrCorruptRecord
 	}
-	if a.DeletedFrom != nil && (a.DeletedFrom.TopologyUID == "" || a.DeletedFrom.TopologyUID == a.State.TopologyUID || a.DeletedFrom.Serial < 0) {
+	if a.DeletedFrom != nil && (a.DeletedFrom.TopologyUID == "" || a.DeletedFrom.TopologyUID == a.State.TopologyUID || a.DeletedFrom.Serial < 0 || a.DeletedFrom.Empty && (a.DeletedFrom.DeletedAt.IsZero() || a.DeletedFrom.Serial <= 0) || !a.DeletedFrom.DeletedAt.IsZero() && a.DeletedFrom.DeletedAt.After(a.UpdatedAt)) {
 		return ErrCorruptRecord
 	}
 	if err := validateGCSources(a); err != nil {

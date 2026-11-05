@@ -23,7 +23,7 @@ func (NetworkResourceHandler) Discover(ctx context.Context, pc *ProviderContext,
 	if err != nil {
 		return ResourceReadResult{}, err
 	}
-	info, err := networkDriver.ReadManagedNetwork(ctx, substrate.ManagedNetworkSpec{Name: networkExternalName(pc.Topology(), n.Address.Name), CIDR: cfg.CIDR, NAT: true, ExposeBridge: requiresManagedBridge(pc.exec.graph, n.Address), Labels: ManagedLabels(pc.Topology(), "", n.Address)})
+	info, err := networkDriver.ReadManagedNetwork(ctx, substrate.ManagedNetworkSpec{Name: networkExternalName(pc.Topology(), n.Address), CIDR: cfg.CIDR, NAT: true, ExposeBridge: requiresManagedBridge(pc.exec.graph, n.Address), Labels: ManagedLabels(pc.Topology(), "", n.Address)})
 	if driver.IsCategory(err, driver.ErrorNotFound) {
 		return ResourceReadResult{Status: state.ResourceAbsent}, nil
 	}
@@ -52,7 +52,7 @@ func discoverIsolatedNetwork(ctx context.Context, pc *ProviderContext, n *graph.
 	if !ok {
 		return ResourceReadResult{}, fmt.Errorf("missing network discovery identity")
 	}
-	name := networkExternalName(pc.Topology(), n.Address.Name)
+	name := networkExternalName(pc.Topology(), n.Address)
 	gateway, err := gatewayCIDR(cfg.CIDR)
 	if err != nil {
 		return ResourceReadResult{}, err
@@ -113,7 +113,7 @@ func discoverNodeIdentity(ctx context.Context, pc *ProviderContext, n *graph.Nod
 	if !ok {
 		return ResourceReadResult{}, fmt.Errorf("%w: discovery has no persisted owner", ErrObservationUnknown)
 	}
-	handle, err := discovery.DiscoverManagedNode(ctx, identity, runtimeExternalName(pc.Topology(), kind, n.Address.Name))
+	handle, err := discovery.DiscoverManagedNode(ctx, identity, runtimeExternalName(pc.Topology(), kind, n.Address))
 	if driver.IsCategory(err, driver.ErrorNotFound) {
 		return ResourceReadResult{Status: state.ResourceAbsent}, nil
 	}

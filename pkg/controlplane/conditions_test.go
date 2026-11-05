@@ -148,3 +148,15 @@ func TestComputeTopologyStatusRecordsAppliedTime(t *testing.T) {
 
 	require.Equal(t, r.EndedAt, statusOf(t, s, ConditionApplied).ObservedAt)
 }
+
+// A completed destroy describes resource release, not the result of applying
+// the desired configuration. It must never certify Applied or Ready.
+func TestComputeTopologyStatusDestroyIsNotApplied(t *testing.T) {
+	s := ComputeTopologyStatus(run(RunDone, "destroy"), healthyHealth(), &AssertionResult{})
+	require.Equal(t, ConditionUnknown, statusOf(t, s, ConditionApplied).Status)
+	require.NotEqual(t, ConditionTrue, statusOf(t, s, ConditionReady).Status)
+
+	// A failed destroy keeps its existing failure verdict rather than hiding it.
+	failed := ComputeTopologyStatus(run(RunFailed, "destroy"), healthyHealth(), &AssertionResult{})
+	require.Equal(t, ConditionFalse, statusOf(t, failed, ConditionApplied).Status)
+}

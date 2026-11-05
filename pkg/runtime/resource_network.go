@@ -98,7 +98,7 @@ func (NetworkResourceHandler) Create(ctx context.Context, pc *ProviderContext, n
 	}
 
 	// Default: isolated netns/bridge/veth topology.
-	networkName := networkExternalName(pc.Topology(), n.Address.Name)
+	networkName := networkExternalName(pc.Topology(), n.Address)
 	nsName := fmt.Sprintf("sysbox-net-%s", networkName)
 	brName := shortLinuxName("br", networkName)
 	libvirtBridge := shortLinuxName("lv", networkName)
@@ -170,7 +170,7 @@ func createNATNetwork(ctx context.Context, pc *ProviderContext, n *graph.Node, c
 
 	info, err := networkDriver.CreateManagedNetwork(ctx, substrate.ManagedNetworkSpec{
 		ExposeBridge: cfg.ExposeBridge,
-		Name:         networkExternalName(pc.Topology(), n.Address.Name),
+		Name:         networkExternalName(pc.Topology(), n.Address),
 		CIDR:         cfg.CIDR,
 		NAT:          true,
 		Labels:       ManagedLabels(pc.Topology(), pc.RunID(), n.Address),

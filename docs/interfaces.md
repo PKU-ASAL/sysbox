@@ -918,10 +918,24 @@ HCL and dispatches a run. The request body is:
 {"revision":"sha256:<hex>","inputs":{},"deadline_at":"2026-09-06T00:00:00Z"}
 ```
 
+Keyed Apply (`Idempotency-Key` with an immutable global `revision`)
+deliberately does **not** publish a mutable workspace pointer, so `has_hcl`
+stays false. That flag is not an existence check: a topology may exist from a
+committed lifecycle aggregate, an in-flight Run, or a placement. Consumers must
+treat a topology as present when `has_state` is true, `active_run_id` is set, or
+`placement_agent_id` is set, and absent only from `phase=gone` after metadata
+deletion. The supervisor enumerates the union of workspace HCL directories,
+committed lifecycle aggregates, and Run records, so an HCL-less keyed topology
+with committed state is health-scanned and reported normally.
+
 `inputs` are materialized per-run and never returned by the API. `deadline_at`
 bounds convergence. `GET /v1/topologies/{name}` returns workspace metadata and
 `status` with `phase`, `conditions` (`Applied`, `Provisioned`, `Asserted`,
-`Ready`), `nodes`, `outputs`, and `deadline_at`.
+`Ready`), `nodes`, `outputs`, and `deadline_at`. `Applied` is derived from the
+topology's latest Run verdict; a completed destroy is not an apply verdict (a
+failed destroy keeps its failure verdict). `Provisioned` is the supervisor's
+health observation. `Asserted` is the latest check/assert outcome, and `Ready`
+is the conjunction of the three (Unknown propagates, False dominates).
 
 <a id="http-api-state-and-observability"></a>
 ### State And Observability
@@ -1936,3 +1950,10 @@ cleanup 的 version=1、empty=true、state_serial>0，以及 RunID、topology、
 继续读取 cleanup-inspection，要求没有资源、未完成动作或活动操作，且 `cleanup_receipt_status=current_recorded`，
 再调用普通元数据 DELETE。API 在删除时重新核验最新归属与回执；查询快照不能替代此原子校验。
 禁止 force 删除作为失败回收 fallback。响应丢失后重试原操作键，不能把单独 404 或空列表当作已回收。
+
+
+### 投递确认与超时停止证据
+
+`acked`/`running` 的命令投递租约过期后，仅当同一 Run 仍 assigned、没有取得 Run claim、且授权 ledger 中没有该命令/动作的现行或历史执行授权时，才允许在原记录上恢复 queued 投递。新的投递递增 attempt，旧 attempt 不能更新新记录。已取得执行权或结果未知的任务不通过此路径重放。
+
+API 收敛超时使用 `error_code=convergence_deadline_exceeded`，与宿主 context 超时的 `deadline_exceeded` 分开。该业务失败不会被后来宿主成功覆盖；同一执行身份的有效签名宿主停止证据仍可落库、清理 Run lease 和释放执行授权。宿主实际结果保留在 HostCompletion 证据中，重试要求完全相同的签名证据。其他终态与不同 attempt 不被放宽。
