@@ -1907,4 +1907,13 @@ repositories must be explicitly enrolled before retirement is enabled.
 
 Console 已统一到宿主受控 guest task，使用普通用户、签名期限和 cgroup 停止证明。已删除原生 Console SPI/transport 与 Agent 直连路径；没有 helper/隔离条件时拒绝开启。断连和取消请求仍不等于进程已停止。
 
+### 组件构建身份核对
+
+`GET /v1/health` 返回 `build`（version、commit、build_time、go_version）和 `agent_protocol`；启用 API 认证时，已注册 Agent 可使用自己的签名凭据读取，无需管理员 token。
+宿主 socket 的 `version` 操作返回 `build_version`、`build_commit`，仍要求协议版本 1 和空资源 target。
+Agent 启动前核对自身、宿主和 API 的版本及完整 40 位 commit，同时核对 API Agent 协议。
+缺失、不同版本或不同 commit 都拒绝启动；启动时核对不是制品签名，也不代替原有授权校验。
+三方均为 `dev@unknown` 的源码开发构建可运行，但会明确提示未验证发布身份，不能作为发布配套验收证据。
+此检查发生在 Agent 启动阶段；运行中单独升级 API/宿主不属于支持的升级流程，应停止旧服务后成套部署并重新启动 Agent。
+
 旧的 `POST /v1/runs/{id}/recover`、`/cleanup` 返回 410，不读取或修改资源。恢复使用已有 owning-host observe/recover 协议，回收使用授权 Destroy；无宿主归属的旧记录须离线迁移。

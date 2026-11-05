@@ -16,7 +16,7 @@ func (s *Server) authenticateAgentProtocol(w http.ResponseWriter, r *http.Reques
 	_, pattern := s.mux.Handler(r)
 	allowed := false
 	switch pattern {
-	case "POST /v1/agents",
+	case "GET /v1/health", "POST /v1/agents",
 		"POST /v1/agents/{agent}/heartbeat", "POST /v1/agents/{agent}/observations",
 		"POST /v1/agents/{agent}/execution-session", "GET /v1/agents/{agent}/commands/stream",
 		"GET /v1/agents/{agent}/sessions/{session}/attach",
@@ -53,6 +53,9 @@ func (s *Server) authenticateAgentProtocol(w http.ResponseWriter, r *http.Reques
 	}
 	if err = s.verifyAgentRequest(r, id); err != nil {
 		return false
+	}
+	if pattern == "GET /v1/health" {
+		return true
 	}
 	if pattern == "POST /v1/agents" {
 		raw, err := readAndRestoreBody(r)

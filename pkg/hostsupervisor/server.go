@@ -14,6 +14,7 @@ import (
 
 	"github.com/gofrs/flock"
 	"github.com/oslab/sysbox/pkg/address"
+	"github.com/oslab/sysbox/pkg/buildinfo"
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/guesttask"
 	"github.com/oslab/sysbox/pkg/substrate"
@@ -211,6 +212,15 @@ func (s *Server) Handle(ctx context.Context, request Request) Response {
 
 func (s *Server) handle(ctx, serviceCtx context.Context, request Request) Response {
 	response := Response{Version: 1}
+	if request.Operation == "version" {
+		if request.Version != 1 || request.Target != (TargetRef{}) {
+			response.Error = "invalid version request"
+			return response
+		}
+		response.BuildVersion = buildinfo.Version
+		response.BuildCommit = buildinfo.Commit
+		return response
+	}
 	if request.Operation == "host-observe" {
 		if request.Version != 1 || request.Target != (TargetRef{}) || request.Observation == nil {
 			response.Error = "invalid host observation request"
