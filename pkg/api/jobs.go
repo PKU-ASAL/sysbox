@@ -96,6 +96,7 @@ func (j *Jobs) load() {
 		fmt.Fprintf(os.Stderr, "[api] load runs: %v\n", err)
 		return
 	}
+	runs = controlstore.LatestRunsByID(runs)
 	if j.recoverInterrupted {
 		runs = markInterruptedRuns(runs)
 	}
@@ -488,6 +489,7 @@ func (j *Jobs) markConvergenceDeadlineExceeded(now time.Time, timeout time.Durat
 			continue
 		}
 		r.MarkFinished(fmt.Errorf("convergence deadline exceeded (deadline %s)", deadline), now)
+		r.ErrorCode = "convergence_deadline_exceeded"
 		j.replace(r)
 	}
 }

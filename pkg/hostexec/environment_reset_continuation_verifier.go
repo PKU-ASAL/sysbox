@@ -31,7 +31,16 @@ func (b *Environment) VerifyResetContinuation(ctx context.Context, run, parent *
 		return err
 	}
 	var observed controlplane.Run
-	if json.Unmarshal(proof.Evidence, &observed) != nil || observed.HostCompletion != nil || len(observed.Inputs) != 0 || !controlplane.SameRunIncarnation(*original, observed) || original.Attempt != observed.Attempt || original.LeaseOwner != observed.LeaseOwner || original.Status != observed.Status || !original.EndedAt.Equal(observed.EndedAt) || original.Err != observed.Err {
+	if json.Unmarshal(proof.Evidence, &observed) != nil || observed.HostCompletion != nil || len(observed.Inputs) != 0 || !controlplane.SameRunIncarnation(*original, observed) || original.Attempt != observed.Attempt || original.LeaseOwner != observed.LeaseOwner {
+		return persistence.ErrConflict
+	}
+	// Control-plane timeout remains the public failure; signed host evidence
+	// records the actual final result. Both must retain the same execution identity.
+	if original.ErrorCode == "convergence_deadline_exceeded" && original.Status == controlplane.RunFailed && original.Recoverable {
+		if !observed.Status.IsTerminal() || observed.EndedAt.IsZero() {
+			return persistence.ErrConflict
+		}
+	} else if original.Status != observed.Status || !original.EndedAt.Equal(observed.EndedAt) || original.Err != observed.Err {
 		return persistence.ErrConflict
 	}
 	grant := proof.Receipt.Grant

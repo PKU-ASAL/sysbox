@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
@@ -24,12 +25,19 @@ import (
 )
 
 func TestHostRunCompletionRecoversRetiredCommandAndExpiredLease(t *testing.T) {
-	for _, action := range []string{"apply", "destroy", "reset"} {
+	for _, action := range []string{"apply", "destroy", "reset", "deadline", "reset-deadline"} {
 		t.Run(action, func(t *testing.T) { hostRunCompletionRecoversRetiredCommand(t, action) })
 	}
 }
 
 func hostRunCompletionRecoversRetiredCommand(t *testing.T, action string) {
+	timedOut := action == "deadline" || action == "reset-deadline"
+	if action == "deadline" {
+		action = "apply"
+	}
+	if action == "reset-deadline" {
+		action = "reset"
+	}
 	eachRunLeaseStore(t, func(t *testing.T, store controlstore.Store) {
 		ctx := context.Background()
 		s := NewServer(t.TempDir(), t.TempDir())
@@ -126,9 +134,16 @@ func hostRunCompletionRecoversRetiredCommand(t *testing.T, action string) {
 		if action != "destroy" {
 			require.NoError(t, store.DeleteAgentCommand(ctx, "agent", command.ID))
 		}
-		_, expired, err := store.ExpireRunLease(ctx, run.ID, now)
-		require.NoError(t, err)
-		require.True(t, expired)
+		if timedOut {
+			expired := run
+			expired.MarkFinished(fmt.Errorf("convergence deadline exceeded"), now.Add(-time.Second))
+			expired.ErrorCode = "convergence_deadline_exceeded"
+			require.NoError(t, store.SaveRun(ctx, expired))
+		} else {
+			_, expired, err := store.ExpireRunLease(ctx, run.ID, now)
+			require.NoError(t, err)
+			require.True(t, expired)
+		}
 		_, err = authority.OpenSession(ctx, "agent", "replacement", session.ID)
 		require.NoError(t, err)
 		response := post(receipt, evidence)
@@ -138,7 +153,12 @@ func hostRunCompletionRecoversRetiredCommand(t *testing.T, action string) {
 		require.Empty(t, pending, "authenticated host completion must retire dispatch without a worker acknowledgment")
 		done, err := store.GetRun(ctx, run.ID)
 		require.NoError(t, err)
-		require.Equal(t, observed.Status, done.Status)
+		if timedOut {
+			require.Equal(t, controlplane.RunFailed, done.Status)
+			require.Equal(t, "convergence_deadline_exceeded", done.ErrorCode)
+		} else {
+			require.Equal(t, observed.Status, done.Status)
+		}
 		require.Equal(t, "old-worker", done.LeaseOwner)
 		require.NotNil(t, done.HostCompletion, "canonical terminal result must retain signed host evidence")
 		require.Equal(t, receipt, done.HostCompletion.Receipt)

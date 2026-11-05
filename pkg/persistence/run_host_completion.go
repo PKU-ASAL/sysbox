@@ -33,6 +33,14 @@ func CompleteRunFromHost(current, observed controlplane.Run, now time.Time) (*co
 	if next.Cleanup != nil && (ValidateCleanupReceipt(next, next.Cleanup) != nil || next.Cleanup.ObservedAt.After(now.Add(5*time.Second))) {
 		return nil, ErrConflict
 	}
+	// Deadline is a control-plane outcome, not proof of host cessation. Admit
+	// the authenticated final evidence without turning a timed-out operation
+	// into success. The storage boundary persists the exact host proof separately.
+	if current.Status == controlplane.RunFailed && current.Recoverable && current.ErrorCode == "convergence_deadline_exceeded" {
+		next = current
+		next.LeaseUntil = time.Time{}
+		return &next, nil
+	}
 	if current.Status.IsTerminal() && !(current.Status == controlplane.RunFailed && current.Recoverable && current.Err == "run lease expired") {
 		before, _ := json.Marshal(DurableRun(current))
 		after, _ := json.Marshal(DurableRun(next))
