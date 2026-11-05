@@ -43,7 +43,7 @@ func hostRunCompletionRecoversRetiredCommand(t *testing.T, action string) {
 		require.NoError(t, err)
 		s.grantHostKeys = map[string]ed25519.PublicKey{"agent": pub}
 		now := time.Now().UTC()
-		run := controlplane.Run{ID: "host_run", Topology: "lab", Op: action, Operation: action, Revision: "revision", AgentID: "agent", Status: controlplane.RunRunning, Attempt: 1, LeaseOwner: "old-worker", QueuedAt: now.Add(-time.Hour), LeaseUntil: now.Add(-time.Minute)}
+		run := controlplane.Run{ID: "host_run", Topology: "lab", Op: action, Operation: action, Revision: "revision", AgentID: "agent", Status: controlplane.RunRunning, Attempt: 1, LeaseOwner: "old-worker", QueuedAt: now.Add(-time.Hour), StartedAt: now.Add(-30 * time.Minute), LeaseUntil: now.Add(-time.Minute)}
 		if action == "reset" {
 			run.Target = "sysbox_node.web"
 		}
@@ -63,6 +63,9 @@ func hostRunCompletionRecoversRetiredCommand(t *testing.T, action string) {
 		require.NoError(t, err)
 		observed := run
 		observed.Status = controlplane.RunDone
+		if action == "destroy" {
+			observed.Cleanup = &controlplane.CleanupReceipt{Version: 1, Topology: run.Topology, TopologyUID: owner, AgentID: run.AgentID, RunID: run.ID, QueuedAt: run.QueuedAt, Revision: run.Revision, Attempt: run.Attempt, LeaseOwner: run.LeaseOwner, StateSerial: 1, ObservedAt: now, Empty: true}
+		}
 		if action == "reset" {
 			observed.Status, observed.Recoverable, observed.Err = controlplane.RunFailed, true, "reset interrupted after safe checkpoint"
 		}

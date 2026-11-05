@@ -9,6 +9,8 @@ import (
 // Protocol capabilities describe this API's guarantees, independently of host
 // provider preflight. No downstream application's business policy belongs here.
 type runtimeCapabilities struct {
+	CleanupReceiptProtocol int    `json:"cleanup_receipt_protocol"`
+	RunErrorProtocol       int    `json:"run_error_protocol"`
 	ClaimReplay            bool   `json:"claim_replay"`
 	MultiAPIExecution      bool   `json:"multi_api_execution"`
 	ExecutionStoreScope    string `json:"execution_store_scope"`
@@ -32,5 +34,5 @@ func (s *Server) runtimeCapabilities(preflight runtime.PreflightResult) runtimeC
 	if shared {
 		scope = "shared-postgres"
 	}
-	return runtimeCapabilities{ClaimReplay: durable, MultiAPIExecution: durable && shared, ExecutionStoreScope: scope, RecoveryInputsProtocol: 1, PreflightResult: preflight, Protocol: "sysbox-runtime-v1", DurableApply: durable, KeyedDestroy: durable, CleanupInspection: true, SingleAPIExecution: true, BuildVersion: buildinfo.Version, BuildCommit: buildinfo.Commit}
+	return runtimeCapabilities{CleanupReceiptProtocol: 1, RunErrorProtocol: 1, ClaimReplay: durable, MultiAPIExecution: durable && shared, ExecutionStoreScope: scope, RecoveryInputsProtocol: 1, PreflightResult: preflight, Protocol: "sysbox-runtime-v1", DurableApply: durable, KeyedDestroy: durable, CleanupInspection: true, SingleAPIExecution: true, BuildVersion: buildinfo.Version, BuildCommit: buildinfo.Commit}
 }

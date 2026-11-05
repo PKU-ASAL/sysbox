@@ -125,17 +125,20 @@ func (r *Run) MarkFinished(err error, now time.Time) {
 	if err != nil {
 		r.Status = RunFailed
 		r.Err = err.Error()
+		r.ErrorCode = "operation_failed"
 		r.Recoverable = true
 		return
 	}
 	r.Status = RunDone
 	r.Err = ""
+	r.ErrorCode = ""
 	r.Recoverable = false
 }
 
 func (r *Run) MarkLeaseExpired(now time.Time) {
 	r.Status = RunFailed
 	r.Err = "run lease expired"
+	r.ErrorCode = "lease_expired"
 	r.Recoverable = true
 	r.EndedAt = now
 }
