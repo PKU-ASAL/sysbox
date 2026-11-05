@@ -33,11 +33,13 @@ func (s *Transactions) InitializeFirstApply(ctx context.Context, run controlplan
 			if err != nil {
 				return nil, err
 			}
-			next, err := validateInitialApply(ctx, authority, runs, run, grant)
+			var next []byte
+			err = repo.InitializeAuthorizedTopologyWithGuard(ctx, run.Topology, grant.Scope.TopologyUID, func(deleted *persistence.LifecycleDeletionReceipt) error {
+				var validateErr error
+				next, validateErr = validateInitialApply(ctx, authority, runs, run, grant, deleted)
+				return validateErr
+			})
 			if err != nil {
-				return nil, err
-			}
-			if err = repo.InitializeAuthorizedTopology(ctx, run.Topology, grant.Scope.TopologyUID); err != nil {
 				return nil, err
 			}
 			return next, nil
@@ -51,15 +53,17 @@ func (s *Transactions) InitializeFirstApply(ctx context.Context, run controlplan
 	}
 }
 
-func validateInitialApply(ctx context.Context, authority []byte, history []controlplane.Run, run controlplane.Run, grant controlplane.ExecutionGrant) ([]byte, error) {
+func validateInitialApply(ctx context.Context, authority []byte, history []controlplane.Run, run controlplane.Run, grant controlplane.ExecutionGrant, deleted *persistence.LifecycleDeletionReceipt) ([]byte, error) {
 	if run.Op != "apply" || run.ID == "" || run.AgentID == "" || run.QueuedAt.IsZero() || run.Revision == "" || grant.Operation != "run_apply" || grant.ActionID != run.ID || grant.AgentID != run.AgentID || grant.Scope.TopologyUID == "" || grant.Scope.ResourceUID != "" || grant.Scope.Generation != 0 {
 		return nil, persistence.ErrInvalidRecord
 	}
-	for _, prior := range history {
-		if prior.Topology == run.Topology && !controlplane.SameRunIncarnation(prior, run) {
-			return nil, fmt.Errorf("%w: missing initial state with existing execution history", persistence.ErrConflict)
-		}
+	if err := persistence.ValidateInitialTopologyAuthority(authority, grant, deleted); err != nil {
+		return nil, err
 	}
+	if err := validateInitialHistory(history, run, deleted); err != nil {
+		return nil, err
+	}
+
 	found := false
 	for _, current := range LatestRunsByID(history) {
 		if current.ID != run.ID {
@@ -81,6 +85,38 @@ func validateInitialApply(ctx context.Context, authority []byte, history []contr
 		return nil, err
 	}
 	return memory.Raw, nil
+}
+
+// History records before assignment legitimately have no AgentID. Only that
+// queued/unclaimed transition is relaxed; all other immutable request fields
+// and the latest canonical claim remain exact.
+func initialRequestMatches(prior, current controlplane.Run) bool {
+	if prior.Status == controlplane.RunQueued && prior.AgentID == "" && prior.Attempt == 0 && prior.LeaseOwner == "" && prior.LeaseUntil.IsZero() {
+		prior.AgentID = current.AgentID
+	}
+	return controlplane.SameRunIncarnation(prior, current)
+}
+
+func validateInitialHistory(history []controlplane.Run, run controlplane.Run, deleted *persistence.LifecycleDeletionReceipt) error {
+	recreated := deleted != nil && deleted.Empty && !deleted.DeletedAt.IsZero() && run.QueuedAt.After(deleted.DeletedAt)
+	for _, prior := range history {
+		if prior.Topology != run.Topology || initialRequestMatches(prior, run) {
+			continue
+		}
+		if !recreated || prior.QueuedAt.IsZero() || !prior.QueuedAt.Before(deleted.DeletedAt) {
+			return fmt.Errorf("%w: missing initial state with existing execution history", persistence.ErrConflict)
+		}
+	}
+	// Historical append-only queued snapshots are harmless only if their latest
+	// record is terminal. A new current incarnation may reuse the old request ID.
+	for _, prior := range LatestRunsByID(history) {
+		if prior.Topology == run.Topology && !initialRequestMatches(prior, run) {
+			if !prior.Status.IsTerminal() || prior.EndedAt.IsZero() || !prior.EndedAt.Before(deleted.DeletedAt) {
+				return fmt.Errorf("%w: prior lifecycle lacks completed history before deletion", persistence.ErrConflict)
+			}
+		}
+	}
+	return nil
 }
 
 func initializeSQLiteApply(ctx context.Context, store *SQLite, run controlplane.Run, grant controlplane.ExecutionGrant) error {
@@ -129,14 +165,15 @@ func initializeSQLiteApply(ctx context.Context, store *SQLite, run controlplane.
 	if err != nil {
 		return err
 	}
-	nextAuthority, err := validateInitialApply(ctx, authority, runs, run, grant)
-	if err != nil {
-		return err
-	}
+	var nextAuthority []byte
 	if err = conn.QueryRowContext(ctx, "SELECT data FROM sysbox_lifecycle_aggregates WHERE topology=?", run.Topology).Scan(&raw); err != nil {
 		return err
 	}
-	next, err := persistence.ApplyInitialTopology(raw, run.Topology, grant.Scope.TopologyUID)
+	next, err := persistence.ApplyInitialTopologyWithGuard(raw, run.Topology, grant.Scope.TopologyUID, func(deleted *persistence.LifecycleDeletionReceipt) error {
+		var validateErr error
+		nextAuthority, validateErr = validateInitialApply(ctx, authority, runs, run, grant, deleted)
+		return validateErr
+	})
 	if err != nil {
 		return err
 	}
@@ -198,15 +235,16 @@ func initializePostgresApply(ctx context.Context, store *Postgres, run controlpl
 	if err != nil {
 		return err
 	}
-	nextAuthority, err := validateInitialApply(ctx, authority, runs, run, grant)
-	if err != nil {
-		return err
-	}
+	var nextAuthority []byte
 	var raw []byte
 	if err = tx.QueryRow(ctx, "SELECT data::text FROM sysbox_lifecycle_aggregates WHERE topology=$1 FOR UPDATE", run.Topology).Scan(&raw); err != nil {
 		return err
 	}
-	next, err := persistence.ApplyInitialTopology(raw, run.Topology, grant.Scope.TopologyUID)
+	next, err := persistence.ApplyInitialTopologyWithGuard(raw, run.Topology, grant.Scope.TopologyUID, func(deleted *persistence.LifecycleDeletionReceipt) error {
+		var validateErr error
+		nextAuthority, validateErr = validateInitialApply(ctx, authority, runs, run, grant, deleted)
+		return validateErr
+	})
 	if err != nil {
 		return err
 	}

@@ -96,6 +96,7 @@ func (j *Jobs) load() {
 		fmt.Fprintf(os.Stderr, "[api] load runs: %v\n", err)
 		return
 	}
+	runs = controlstore.LatestRunsByID(runs)
 	if j.recoverInterrupted {
 		runs = markInterruptedRuns(runs)
 	}
