@@ -48,9 +48,8 @@ check "edge_cannot_reach_core" {
 	require.Equal(t, "sysbox_reach", root.Checks[1].Data[0].Type)
 }
 
-// A check with a data block must carry at least one assert; the parser accepts
-// the block shape regardless, but the assert attributes are what make it a
-// check rather than a bare data lookup.
+// A check may carry several asserts; the parser accepts the block only when
+// the shape is valid (see the rejection tests below).
 func TestParseCheckBlockWithMultipleAsserts(t *testing.T) {
 	src := `
 check "multi" {
@@ -91,7 +90,7 @@ check "ok" {
 	require.NoError(t, ValidateChecks(root.Checks))
 }
 
-func TestValidateChecksRejectsTooManyDataBlocks(t *testing.T) {
+func TestParseRejectsTooManyDataBlocks(t *testing.T) {
 	src := `
 check "bad" {
   data "sysbox_exec" "a" {
@@ -108,12 +107,11 @@ check "bad" {
   }
 }
 `
-	root, err := ParseString(src, "test.hcl")
-	require.NoError(t, err)
-	require.ErrorContains(t, ValidateChecks(root.Checks), "at most one data block")
+	_, err := ParseString(src, "test.hcl")
+	require.ErrorContains(t, err, "at most one data block")
 }
 
-func TestValidateChecksRejectsMissingAssert(t *testing.T) {
+func TestParseRejectsMissingAssert(t *testing.T) {
 	src := `
 check "bad" {
   data "sysbox_exec" "a" {
@@ -122,12 +120,11 @@ check "bad" {
   }
 }
 `
-	root, err := ParseString(src, "test.hcl")
-	require.NoError(t, err)
-	require.ErrorContains(t, ValidateChecks(root.Checks), "at least one assert")
+	_, err := ParseString(src, "test.hcl")
+	require.ErrorContains(t, err, "at least one assert")
 }
 
-func TestValidateChecksRejectsUnknownDataSource(t *testing.T) {
+func TestParseRejectsUnknownDataSource(t *testing.T) {
 	src := `
 check "bad" {
   data "sysbox_unknown" "a" {
@@ -139,7 +136,6 @@ check "bad" {
   }
 }
 `
-	root, err := ParseString(src, "test.hcl")
-	require.NoError(t, err)
-	require.ErrorContains(t, ValidateChecks(root.Checks), "unsupported data source")
+	_, err := ParseString(src, "test.hcl")
+	require.ErrorContains(t, err, "unsupported data source")
 }

@@ -109,6 +109,25 @@ func TestComputeTopologyStatusDestroying(t *testing.T) {
 	require.Equal(t, PhaseDestroying, s.Phase)
 }
 
+// A completed destroy released the resources. It is not converging: nothing is
+// in flight. Applied deliberately stays Unknown (a destroy does not prove the
+// configuration was applied), so the phase names the release explicitly.
+func TestComputeTopologyStatusDestroyed(t *testing.T) {
+	s := ComputeTopologyStatus(run(RunDone, "destroy"), healthyHealth(), nil)
+
+	require.Equal(t, PhaseDestroyed, s.Phase)
+	require.Equal(t, ConditionUnknown, statusOf(t, s, ConditionApplied).Status)
+	require.Equal(t, ConditionUnknown, statusOf(t, s, ConditionReady).Status)
+}
+
+// A failed destroy must not claim the resources were released.
+func TestComputeTopologyStatusDestroyFailed(t *testing.T) {
+	s := ComputeTopologyStatus(run(RunFailed, "destroy"), healthyHealth(), nil)
+
+	require.Equal(t, PhaseFailed, s.Phase)
+	require.Equal(t, ConditionFalse, statusOf(t, s, ConditionApplied).Status)
+}
+
 // A topology with no run and no observation is entirely unknown: nothing has
 // been evaluated, nothing has failed.
 func TestComputeTopologyStatusNeverObserved(t *testing.T) {
