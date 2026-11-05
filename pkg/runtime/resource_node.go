@@ -263,7 +263,7 @@ func (e *Executor) createNodeResource(ctx context.Context, n *graph.Node) (state
 		}
 	}
 
-	containerName := runtimeExternalName(e.topology, "node", n.Address.Name)
+	containerName := runtimeExternalName(e.topology, "node", n.Address)
 	nodeSpec := substrate.NodeSpec{
 		Name:           containerName,
 		Image:          imgRef,

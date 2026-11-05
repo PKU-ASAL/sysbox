@@ -195,7 +195,7 @@ func (e *Executor) createRouterResource(ctx context.Context, n *graph.Node) (sta
 	}
 
 	handle, err := nodeDriver.CreateNode(ctx, substrate.NodeSpec{
-		Name:           runtimeExternalName(e.topology, "router", n.Address.Name),
+		Name:           runtimeExternalName(e.topology, "router", n.Address),
 		Image:          imgRef,
 		Sysctls:        map[string]string{"net.ipv4.ip_forward": "1"},
 		Labels:         ManagedLabels(e.topology, e.runID, n.Address),
