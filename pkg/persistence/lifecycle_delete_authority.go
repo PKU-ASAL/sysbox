@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
 )
@@ -12,8 +13,10 @@ import (
 // Readers that do not know this optional field fail the old-UID CAS rather
 // than accepting a broader deletion. No provider effect is replayed.
 type LifecycleDeletionReceipt struct {
-	TopologyUID string `json:"topology_uid"`
-	Serial      int64  `json:"serial"`
+	TopologyUID string    `json:"topology_uid"`
+	Serial      int64     `json:"serial"`
+	DeletedAt   time.Time `json:"deleted_at,omitempty"`
+	Empty       bool      `json:"empty,omitempty"`
 }
 
 // ApplyQuiescentLifecycleDelete checks persisted stop evidence, maintenance and
@@ -68,10 +71,11 @@ func ApplyQuiescentLifecycleDelete(raw, authorityRaw []byte, topology string, ex
 		a.GCSources = nil
 
 	}
+	empty := a.Serial > 0 && len(a.State.Resources) == 0 && len(a.Snapshots) == 0
 	if err := resetAggregate(a); err != nil {
 		return nil, err
 	}
-	a.DeletedFrom = &LifecycleDeletionReceipt{TopologyUID: topologyUID, Serial: expectedSerial}
+	a.DeletedFrom = &LifecycleDeletionReceipt{TopologyUID: topologyUID, Serial: expectedSerial, DeletedAt: a.UpdatedAt, Empty: empty}
 	return json.Marshal(a)
 }
 
