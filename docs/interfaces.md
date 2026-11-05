@@ -67,7 +67,10 @@ Agent 等待命令、观测和续租；supervisor 等待已受理的 Run、授�
 ### Linux tasks 与文件
 
 SSH 调用预装 `/usr/local/bin/sysbox-guest-task --guest-task`；vsock 使用 `task.v1`。
-helper 固定 issuer 公钥路径 `/etc/sysbox/grant-public-key`，无 unsigned/nohup fallback。
+docker 节点不经过 guest helper：后台执行由 Docker 守护进程的 detached exec 承担，观察和停止都以守护进程的
+`ContainerExecInspect` 为准，镜像无需预装任何文件。因此依赖 guest helper 的能力（输出游标、租约续期、
+带范围的 durable file install）只适用于 OS guest；docker 节点对 background provisioner 的支持不依赖这些能力。
+OS guest 的 helper 固定 issuer 公钥路径 `/etc/sysbox/grant-public-key`，无 unsigned/nohup fallback。
 普通持久任务默认 UID/GID 65534、清除附加组/capabilities、no_new_privs；同 UID 任务不提供相互可用性隔离。
 需要管理员委派的 cgroup v2 根 `/sys/fs/cgroup/sysbox-tasks` 和私有 `/var/lib/sysbox/guest-tasks`。
 任务 request argv/env/stdin 不作为普通任务记录落盘；输出持久化且可能含敏感数据。
@@ -332,6 +335,10 @@ connection "ssh" {
 #### `provisioner TYPE`
 
 Fields include `program`, `args`, `environment`, `working_dir`, `shell`, `source`, `destination` and `background`. Valid combinations depend on provisioner type. Provisioner operates inside the guest and does not own host resources.
+
+`background = true` 的语义按 substrate 实现：docker 节点使用守护进程持有的 detached exec（进程归属与观察
+都来自 Docker，不进入 guest helper 的签名任务协议）；VM/SSH/vsock guest 使用 `task.v1` 持久任务，需要
+guest 内已安装 helper 与可写的 cgroup v2 根。未特权容器无法提供该 cgroup 根，所以 docker 不走这条路径。
 
 <a id="hcl-docker-provider-块"></a>
 ### Docker Provider 块
