@@ -103,6 +103,16 @@ def installation_files(bundle, inputs):
     issuer_public = regular(inputs / 'issuer.pub')
     if len(key) != 64 or len(host_public) != 32 or len(issuer_public) != 32 or key[32:] != host_public:
         raise ValueError('expected matching raw Ed25519 host key and 32-byte public keys')
+    # Reuse the checksummed release executable's runtime validator. stdin keeps
+    # key material out of process arguments; never echo subprocess diagnostics.
+    try:
+        result = subprocess.run([str(bundle / 'sysbox'), 'host-key-check'],
+                                input=key + host_public, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL, timeout=10, check=False)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise ValueError('host signing key validator unavailable') from error
+    if result.returncode != 0:
+        raise ValueError('invalid host signing key; release validator rejected input')
     host_config = regular(inputs / 'sysbox.yaml')
     if not host_config.strip() or b'REPLACE_' in host_config:
         raise ValueError('host config is empty or still contains REPLACE_ placeholders')
