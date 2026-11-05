@@ -64,6 +64,9 @@ API token 用于管理入口；Agent 仅持本身份通信凭据。grant 绑定 
 
 Console 复用普通用户受控任务。检查、foreground exec、raw file 操作不一律具有持久后台任务的恢复保证，具体边界见[宿主与 guest 协议](interfaces.md#host-protocol)。
 
+后台执行的信任锚点按 substrate 决定：OS guest（VM/SSH/vsock）使用 guest 内的签名任务协议，需要已安装的 helper 与可写 cgroup v2 根；
+docker 节点由守护进程的 detached exec 承担，进程归属、观察和停止都以 Docker 为准，镜像无需预装 helper，也不要求容器拥有 cgroup 控制权。
+
 ### 网络入口与服务重启
 
 `sysbox-netns` 的 root 专用入口在执行宿主 PID 1 的 mount/net namespace 中管理命名 netns。它不带 setuid，不接受任意宿主路径；删除核对 namespace 类型、device/inode，provider 仍负责资源归属。
