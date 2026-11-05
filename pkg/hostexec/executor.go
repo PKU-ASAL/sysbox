@@ -105,12 +105,14 @@ func (e *Executor) executeLifecycle(ctx context.Context, run *controlplane.Run, 
 	unlock, err := e.bridge.LockTopology(ctx, run.Topology)
 	if err != nil {
 		e.bridge.Finish(run, err)
+		run.ErrorCode = runErrorCode(err)
 		return nil
 	}
 	defer unlock()
 	ctx, release, err := e.prepareExecutionContext(ctx, run)
 	if err != nil {
 		e.bridge.Finish(run, err)
+		run.ErrorCode = runErrorCode(err)
 		return nil
 	}
 	defer release()
@@ -118,6 +120,7 @@ func (e *Executor) executeLifecycle(ctx context.Context, run *controlplane.Run, 
 	// A panic must leave its durable intent unresolved, never certify nil error.
 	proof, err = e.executeResourceOperation(ctx, run, log)
 	e.bridge.Finish(run, err)
+	run.ErrorCode = runErrorCode(err)
 	return proof
 }
 

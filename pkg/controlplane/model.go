@@ -44,6 +44,7 @@ type Run struct {
 	Op             string                  `json:"op,omitempty"`
 	Status         RunStatus               `json:"status"`
 	Err            string                  `json:"error,omitempty"`
+	ErrorCode      string                  `json:"error_code,omitempty"`
 	ParentID       string                  `json:"parent_id,omitempty"`
 	Revision       string                  `json:"revision,omitempty"`
 	// SnapshotPath is the immutable HCL file used by this run's executor.

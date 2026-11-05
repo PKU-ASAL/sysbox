@@ -15,11 +15,21 @@ func CompleteRunFromHost(current, observed controlplane.Run, now time.Time) (*co
 	}
 	next := current
 	next.Status, next.Err, next.EndedAt = observed.Status, observed.Err, observed.EndedAt
+	next.ErrorCode = observed.ErrorCode
 	next.Recoverable, next.Assertion, next.Cleanup = observed.Recoverable, observed.Assertion, observed.Cleanup
 	// The authenticated host already proved execution stopped. Keeping a future
 	// worker deadline blocks observation-only recovery for a completed lease.
 	// Retain attempt/owner and the signed original evidence for historical binding.
 	next.LeaseUntil = time.Time{}
+	controlplane.NormalizeRun(&next)
+	if next.Status == controlplane.RunDone {
+		if next.ErrorCode != "" || next.Err != "" {
+			return nil, ErrConflict
+		}
+		if next.Op == "destroy" && next.Target == "" && next.Cleanup == nil {
+			return nil, ErrConflict
+		}
+	}
 	if next.Cleanup != nil && (ValidateCleanupReceipt(next, next.Cleanup) != nil || next.Cleanup.ObservedAt.After(now.Add(5*time.Second))) {
 		return nil, ErrConflict
 	}

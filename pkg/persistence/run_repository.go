@@ -65,6 +65,7 @@ func WithRunClaimIdentity(ctx context.Context, run controlplane.Run) context.Con
 	run = DurableRun(run)
 	run.Assertion = nil
 	run.Err = ""
+	run.ErrorCode = ""
 	run.LeaseOwner = ""
 	return context.WithValue(ctx, runClaimIdentityKey{}, run)
 }

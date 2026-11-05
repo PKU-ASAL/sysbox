@@ -1917,3 +1917,22 @@ Agent 启动前核对自身、宿主和 API 的版本及完整 40 位 commit，�
 此检查发生在 Agent 启动阶段；运行中单独升级 API/宿主不属于支持的升级流程，应停止旧服务后成套部署并重新启动 Agent。
 
 旧的 `POST /v1/runs/{id}/recover`、`/cleanup` 返回 410，不读取或修改资源。恢复使用已有 owning-host observe/recover 协议，回收使用授权 Destroy；无宿主归属的旧记录须离线迁移。
+
+### Run 结果与回收契约（协议 1）
+
+`GET /v1/capabilities` 的 `run_error_protocol=1` 表示 Run 可返回 `error_code`；
+`cleanup_receipt_protocol=1` 表示整拓扑 Destroy 的宿主成功提交必须携带有效 `cleanup`。
+定向 Destroy 不提供整拓扑清理证明，不能据此释放 topology。
+
+`error_code` 是诊断分类，不是资源不存在或任务已停止的证明。宿主按结构化错误原因分类：
+`observation_unknown`、`action_uncertain`、`plan_stale`、`state_missing`、`state_conflict`、
+`unsupported`、`deadline_exceeded`、`cancelled`，其余为 `operation_failed`；控制面租约过期使用 `lease_expired`。
+缺失或未来未知 code 应按未知失败处理；不得解析 `error` 文本决定回收，也不得仅凭 code 自动释放资源。
+历史记录或尚无结构化错误的停止路径可能不带 code。成功结果不携带 error/error_code。
+
+消费者应将 Run 的 topology、操作、幂等键与提交请求对应。整拓扑 Destroy 的 `done` 还需核对
+cleanup 的 version=1、empty=true、state_serial>0，以及 RunID、topology、AgentID、queued_at、revision、attempt、lease_owner 绑定。
+回执证明该次宿主提交时的受管资源回收结果，不证明此后没有新操作。
+继续读取 cleanup-inspection，要求没有资源、未完成动作或活动操作，且 `cleanup_receipt_status=current_recorded`，
+再调用普通元数据 DELETE。API 在删除时重新核验最新归属与回执；查询快照不能替代此原子校验。
+禁止 force 删除作为失败回收 fallback。响应丢失后重试原操作键，不能把单独 404 或空列表当作已回收。

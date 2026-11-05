@@ -91,9 +91,11 @@ func TestCleanupReceiptCannotBeForgedThroughSaveOrLateCompletion(t *testing.T) {
 		f := prepareHostRunFixture(t, stateDeleteTestServer(t, store), *run, "topology-uid")
 		result := *run
 		result.MarkFinished(nil, time.Now().UTC())
-		require.Nil(t, f.complete(t, result).Cleanup)
+		require.Equal(t, 409, f.post(t, result).Code, "whole destroy cannot complete without cleanup proof")
 		result.Cleanup = receiptFor(*run)
-		require.Equal(t, 409, f.post(t, result).Code, "sealed result cannot acquire a new cleanup proof")
+		require.NotNil(t, f.complete(t, result).Cleanup)
+		result.Cleanup.StateSerial++
+		require.Equal(t, 409, f.post(t, result).Code, "sealed result cannot replace its cleanup proof")
 	})
 }
 func TestCleanupReceiptRequiresSuccessfulWholeDestroyAndRejectsRestartInjection(t *testing.T) {
