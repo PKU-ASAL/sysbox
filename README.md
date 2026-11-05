@@ -73,6 +73,9 @@ API、Agent 和宿主必须使用同一 commit 的制品，镜像由 `SYSBOX_IMA
 I/O 中断会保留部分安装供检查，重试不会静默覆盖。安装输入目录含宿主私钥，始终保持 root 专用。
 `--root /tmp/sysbox-stage` 只用于暂存布局，不创建系统用户，也不能代替实机验收。
 
+安装预检使用包内 `sysbox host-key-check` 复用宿主的严格密钥校验；不会启动 provider。
+systemd 在依赖暂未就绪时每 5 秒重试，不耗尽启动次数；配置或版本错误仍在日志中明确报告，须修正后启动。
+
 Agent 只持通信身份和公钥，不持 Docker socket、数据库凭据或签名私钥；特权操作由宿主服务执行。
 如选择 Compose worker，使用包内 `deploy/docker/compose.agent.yml`，不要同时启动 systemd Agent。
 

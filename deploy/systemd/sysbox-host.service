@@ -1,4 +1,6 @@
 [Unit]
+# Dependencies can recover after boot; avoid exhausting start limits.
+StartLimitIntervalSec=0
 Description=Sysbox privileged host executor
 After=network-online.target
 
@@ -9,6 +11,7 @@ Type=simple
 # can remove effective CAP_SETUID, preventing jailer from dropping privileges.
 ExecStart=/usr/local/bin/sysbox host-supervisor --config /etc/sysbox-host/sysbox.yaml --identity /etc/sysbox-host/identity.json
 Restart=on-failure
+RestartSec=5s
 RuntimeDirectory=sysbox-host
 RuntimeDirectoryMode=0750
 UMask=0077

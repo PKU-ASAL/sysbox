@@ -1,6 +1,8 @@
 [Unit]
+# Dependencies can recover after boot; avoid exhausting start limits.
+StartLimitIntervalSec=0
 Description=Sysbox unprivileged Agent
-Requires=sysbox-host.service
+Wants=sysbox-host.service
 After=network-online.target sysbox-host.service
 
 [Service]
@@ -9,6 +11,7 @@ User=sysbox-agent
 Group=sysbox-agent
 ExecStart=/usr/local/bin/sysbox agent start --identity /var/lib/sysbox-agent/identity.json --config /etc/sysbox-worker/agent.yaml
 Restart=on-failure
+RestartSec=5s
 NoNewPrivileges=yes
 CapabilityBoundingSet=
 AmbientCapabilities=

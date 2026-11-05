@@ -4,12 +4,20 @@ import hashlib
 from pathlib import Path
 import tempfile
 import unittest
+import subprocess
 
 spec = importlib.util.spec_from_file_location('installer', Path(__file__).with_name('install.py'))
 installer = importlib.util.module_from_spec(spec)
 # Import in tests so the missing implementation is an explicit test failure.
 
 class InstallTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.binary_dir = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(cls.binary_dir.cleanup)
+        cls.binary = Path(cls.binary_dir.name)/'sysbox'
+        subprocess.run(['go','build','-buildvcs=false','-o',str(cls.binary),'./cmd/sysbox'],cwd=Path(__file__).resolve().parents[1],check=True)
+
     def setUp(self):
         self.assertTrue(Path(__file__).with_name('install.py').exists(), 'release installer missing')
         spec.loader.exec_module(installer)
@@ -18,7 +26,7 @@ class InstallTests(unittest.TestCase):
         self.base = Path(self.tmp.name)
         self.bundle = self.base / 'bundle'
         self.bundle.mkdir()
-        files = {'sysbox': b'binary', 'sysbox-init': b'helper', 'sysbox-netns': b'netns',
+        files = {'sysbox': self.binary.read_bytes(), 'sysbox-init': b'helper', 'sysbox-netns': b'netns',
                  'deploy/systemd/sysbox-host.service': b'host unit',
                  'deploy/systemd/sysbox-agent.service': b'agent unit',
                  'deploy/docker/agent.yaml': b'version: 1\n',
@@ -27,16 +35,18 @@ class InstallTests(unittest.TestCase):
             path = self.bundle / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(data)
+            if name == 'sysbox': path.chmod(0o755)
         (self.bundle/'INSTALL-SHA256SUMS').write_text(''.join(hashlib.sha256(data).hexdigest()+'  '+name+'\n' for name,data in files.items()))
         self.inputs = self.base/'inputs'
         self.inputs.mkdir()
-        for name,data in {'identity.json': json.dumps({'id':'host','api_url':'http://localhost:9876','secret':'communication-secret'}).encode(), 'host.key': bytes(range(64)), 'host.pub': bytes(range(32,64)), 'issuer.pub': b'i'*32, 'sysbox.yaml': b'version: 1\n'}.items():
+        # RFC 8032 test vector: a real seed/public pair, never a production key.
+        for name,data in {'identity.json': json.dumps({'id':'host','api_url':'http://localhost:9876','secret':'communication-secret'}).encode(), 'host.key': bytes.fromhex('9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60'+'d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a'), 'host.pub': bytes.fromhex('d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a'), 'issuer.pub': b'i'*32, 'sysbox.yaml': b'version: 1\n'}.items():
             (self.inputs/name).write_bytes(data)
         self.root = self.base/'root'
 
     def test_install_and_refuse_overwrite(self):
         installer.install(self.bundle, self.inputs, self.root, check=False)
-        self.assertEqual((self.root/'usr/local/bin/sysbox').read_bytes(), b'binary')
+        self.assertEqual((self.root/'usr/local/bin/sysbox').read_bytes(), self.binary.read_bytes())
         self.assertEqual((self.root/'etc/sysbox-host/host.key').stat().st_mode & 0o777, 0o600)
         self.assertFalse((self.root/'etc/sysbox-worker/host.key').exists())
         with self.assertRaisesRegex(ValueError, 'existing'):
@@ -102,6 +112,13 @@ class InstallTests(unittest.TestCase):
         for directory in ('usr','usr/local','usr/local/bin','etc','etc/sysbox-worker','etc/systemd/system'):
             self.assertEqual((self.root/directory).stat().st_mode & 0o777,0o755,directory)
         self.assertEqual((self.root/'etc/sysbox-host').stat().st_mode & 0o777,0o700)
+
+    def test_corrupt_seed_with_matching_public_tail_rejected(self):
+        path=self.inputs/'host.key'
+        key=bytearray(path.read_bytes()); key[0] ^= 1; path.write_bytes(key)
+        with self.assertRaisesRegex(ValueError,'signing key'):
+            installer.install(self.bundle,self.inputs,self.root,check=True)
+        self.assertFalse(self.root.exists())
 
 if __name__ == '__main__':
     unittest.main()
