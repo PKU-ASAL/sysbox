@@ -452,55 +452,21 @@ func (s *Server) handleResumeRun(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]string{"run_id": run.ID, "parent_id": parent.ID, "agent_id": run.AgentID})
 }
 
+// These former local endpoints never execute providers. Recovery belongs to the
+// owning host; records without an owner require explicit offline migration.
 func (s *Server) handleCleanupRun(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if err := controlstore.ValidatePathSegment(id, "id"); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	run, ok := s.jobs.get(id)
-	if !ok {
-		writeError(w, http.StatusNotFound, fmt.Errorf("run not found"))
-		return
-	}
-	if run.Status == controlplane.RunRunning {
-		writeError(w, http.StatusConflict, fmt.Errorf("run %s is still running", id))
-		return
-	}
-	report, err := s.cleanupCanonicalActions(r.Context(), run.Topology, run.ID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, report)
+	s.handleRetiredLocalRecovery(w, r)
 }
-
 func (s *Server) handleRecoverRun(w http.ResponseWriter, r *http.Request) {
+	s.handleRetiredLocalRecovery(w, r)
+}
+func (s *Server) handleRetiredLocalRecovery(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if err := controlstore.ValidatePathSegment(id, "id"); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	run, ok := s.jobs.get(id)
-	if !ok {
-		writeError(w, http.StatusNotFound, fmt.Errorf("run not found"))
-		return
-	}
-	if run.Status == controlplane.RunRunning {
-		writeError(w, http.StatusConflict, fmt.Errorf("run %s is still running", id))
-		return
-	}
-	mgr, err := s.stateManager(run.Topology)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	report, err := s.reconcileCanonicalActions(r.Context(), run.Topology, run.ID, mgr)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, report)
+	writeError(w, http.StatusGone, fmt.Errorf("local recovery/cleanup has been removed; use owning host observe/recover and authorized destroy; ownerless legacy records require offline migration"))
 }
 
 func (s *Server) handleGetRunCheckpoint(w http.ResponseWriter, r *http.Request) {

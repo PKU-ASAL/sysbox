@@ -149,41 +149,7 @@ func (s *Supervisor) ScanTopology(ctx context.Context, topology string) error {
 		AutoHeal: false,
 	}
 	s.maybeRepair(topology, &snap)
-	s.reconcileRecoverable(ctx, topology, &snap)
-	if len(snap.Recovered) > 0 {
-		if repository, err := s.server.actionRepository(topology); err == nil {
-			if refreshed, err := repository.LoadState(ctx, topology); err == nil {
-				snap.Health = s.server.authoritativeTopologyHealth(ctx, topology, refreshed)
-			} else {
-				snap.LastError = err.Error()
-			}
-		}
-	}
 	return s.server.saveHealthSnapshot(topology, snap)
-}
-
-// reconcileRecoverable only observes already authorized durable actions. It
-// never replays checkpoint patches or starts provider/guest operations.
-func (s *Supervisor) reconcileRecoverable(ctx context.Context, topology string, snap *controlstore.HealthSnapshot) {
-	runs := s.server.jobs.recoverableRuns(topology)
-	if len(runs) == 0 {
-		return
-	}
-	mgr, err := s.server.stateManager(topology)
-	if err != nil {
-		snap.LastError = fmt.Sprintf("reconcile: state manager: %v", err)
-		return
-	}
-	for _, run := range runs {
-		report, err := s.server.reconcileCanonicalActions(ctx, topology, run.ID, mgr)
-		if err != nil {
-			snap.LastError = fmt.Sprintf("reconcile run %s: %v", run.ID, err)
-			continue
-		}
-		if report != nil && len(report.Recovered) > 0 {
-			snap.Recovered = append(snap.Recovered, run.ID)
-		}
-	}
 }
 
 func (s *Supervisor) maybeRepair(topology string, snap *controlstore.HealthSnapshot) {
