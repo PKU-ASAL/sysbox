@@ -82,6 +82,8 @@ libvirt 磁盘放在独立 provider 目录，允许 QEMU 遍历；宿主密钥�
 
 canonical state 确定资源归属，journal 记录在途效果，两者不能互相替代。执行锁、CAS 和操作身份共同防止重复与越权；只凭对象名称或 PID 不能认领、删除资源。
 
+首次获授权的 Apply 在宿主预检前持久化初始空状态。该提交在现有事务中核对拓扑身份、Run 历史、当前租约、执行授权和维护屏障；后续即使预检失败，正常 Destroy 也能生成清理回执。已有历史却缺失状态、未知动作、旧身份或不完整 GC 记录仍拒绝自动初始化。此机制不回填升级前的失败记录，也不把接纳前拒绝或宿主执行前失败视为清理证明。
+
 未知结果保留冻结与证据，通过已有 observe、recover、continuation 或 fencing 接口处置。元数据快照不是 VM 磁盘快照；元数据删除也不是资源销毁。详细规则见[恢复契约](interfaces.md#recovery-contract)。
 
 文件、SQLite 和 PostgreSQL 使用相同业务转换。SQLite 单库串行写入；共享 PostgreSQL 支持多 API。存储格式严格校验，不自动读取或迁移旧 lifecycle 数据。

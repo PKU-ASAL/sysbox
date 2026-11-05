@@ -12,6 +12,9 @@ import (
 // PrepareExecution is invoked by both ordinary and host-owned executors before
 // preflight or effects; worker and host share this implementation.
 func (b *Environment) PrepareExecution(ctx context.Context, run *controlplane.Run) (context.Context, func(), error) {
+	if err := b.initializeFirstApply(ctx, run); err != nil {
+		return nil, nil, err
+	}
 	if b.Cfg.GCPublicationSource == "" {
 		if run == nil {
 			return nil, nil, fmt.Errorf("run required")
