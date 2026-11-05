@@ -98,9 +98,9 @@ func (e *Executor) createFirewallResource(ctx context.Context, n *graph.Node) (s
 
 func (FirewallResourceHandler) Discover(ctx context.Context, pc *ProviderContext, n *graph.Node) (ResourceReadResult, error) {
 	// Preflight precedes creation of the attached target, and a fresh topology
-	// creates both in one apply. An unapplied target therefore means the ruleset
-	// cannot exist yet; action-boundary discovery resolves again once the target
-	// is present.
+	// creates both in one apply. Defer this dependency-bound discovery until
+	// the action boundary, when the target must have a durable identity.
+	// Pending intents are resolved before this preflight pass.
 	r, err := pc.exec.resolveFirewallResource(ctx, n, true)
 	if driver.IsCategory(err, driver.ErrorNotFound) || errors.Is(err, errPolicyTargetUnapplied) {
 		return ResourceReadResult{Status: state.ResourceAbsent}, nil

@@ -281,3 +281,22 @@ func TestFirewallMissingTargetDoesNotReplayUnfinishedIntent(t *testing.T) {
 	require.Equal(t, []ActionRecord{before}, repo.actions)
 	require.Empty(t, st.Resources)
 }
+
+type failingFirewallDiscovery struct{ convergingFirewallPolicy }
+
+func (*failingFirewallDiscovery) DiscoverRuleset(context.Context, driver.PolicyTarget, driver.RulesetSpec) (driver.RulesetObservation, error) {
+	return driver.RulesetObservation{}, errors.New("provider observation unavailable")
+}
+func TestFirewallDiscoveryProviderFailureIsNotAbsence(t *testing.T) {
+	providers := driver.NewRegistry()
+	policy := &failingFirewallDiscovery{}
+	require.NoError(t, providers.Register(driver.Descriptor{Name: "policy-test", Version: "1", Policy: policy}))
+	st := &state.State{Version: state.SchemaVersion, TopologyUID: "owner"}
+	st.AddResource(state.Resource{Address: address.Resource("sysbox_node", "app"), Driver: "policy-test", ExternalID: "container", OwnerUID: "owner", ResourceUID: "node", Generation: 1})
+	e := NewExecutor(graph.New(), st, providers)
+	n := &graph.Node{Address: address.Resource("sysbox_firewall", "fw"), Data: &config.FirewallConfig{AttachTo: "sysbox_node.app"}}
+	result, err := (FirewallResourceHandler{}).Discover(substrate.WithOperationIdentity(context.Background(), policyOperationFixture()), &ProviderContext{exec: e}, n)
+	require.ErrorContains(t, err, "provider observation unavailable")
+	require.NotEqual(t, state.ResourceAbsent, result.Status)
+	require.Zero(t, policy.applies)
+}
