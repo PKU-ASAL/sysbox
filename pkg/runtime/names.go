@@ -70,7 +70,7 @@ func sanitizeExternalName(value string) string {
 }
 
 func shortLinuxName(prefix, name string) string {
-	base := name
+	base := sanitizeExternalName(name)
 	max := 15
 	full := prefix + "-" + base
 	if len(full) <= max {
