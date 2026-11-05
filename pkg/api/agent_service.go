@@ -186,6 +186,17 @@ func (s *AgentService) RepublishPendingCommands(ctx context.Context) error {
 	}
 	now := time.Now().UTC()
 	for _, cmd := range commands {
+		if cmd.Type == "run_assigned" && (cmd.Status == controlplane.AgentCommandStatusAcknowledged || cmd.Status == controlplane.AgentCommandStatusRunning) && !cmd.LeaseUntil.IsZero() && !cmd.LeaseUntil.After(now) {
+			if err := (&controlstore.Transactions{Store: s.store}).RecoverUnclaimedRunDelivery(ctx, cmd.ID); err != nil {
+				slog.Warn("unclaimed delivery recovery deferred", "command_id", cmd.ID, "error", err)
+				continue
+			}
+			recovered, err := s.FindCommand(ctx, cmd.AgentID, cmd.ID)
+			if err != nil {
+				continue
+			}
+			cmd = recovered
+		}
 		if cmd.IsTerminal() || !cmd.Leasable(now) {
 			continue
 		}

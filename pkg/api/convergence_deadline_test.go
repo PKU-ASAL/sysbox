@@ -30,6 +30,7 @@ func TestMarkConvergenceDeadlineExceededFailsOverdueRun(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, controlplane.RunFailed, got.Status)
 	require.Contains(t, got.Err, "convergence deadline exceeded")
+	require.Equal(t, "convergence_deadline_exceeded", got.ErrorCode)
 	require.True(t, got.Recoverable, "a deadline-exceeded run left partial work and must be recoverable")
 }
 
