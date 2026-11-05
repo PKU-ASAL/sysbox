@@ -19,63 +19,62 @@ bash scripts/release/build-binaries.sh ./bin
 构建支持 Linux amd64/arm64。以下示例声明 amd64 镜像；arm64 宿主使用前将示例的 architecture 改为 arm64，
 并确认镜像提供对应平台。预编译制品应先校验随附 SHA256SUMS，不混用不同版本的 CLI 和 helper。
 
-## 使用预编译 Release
+## Release 安装与首次部署
 
-发布包只包含 binaries、LICENSE、README 和 build-metadata.json，不包含 examples、scripts 或 docs。
-先用下载目录中的 SHA256SUMS 校验对应归档，再解压到一个新目录。无需 Go 编译器；仍需 Linux、Docker、Git 和 jq。
-在解压目录执行以下命令，取得与 binary 完全匹配的示例和三份文档：
+Linux 发布包包含二进制、三份文档、Docker 示例、部署模板和 `install.py`，无需拉源码。
+先用可信发布渠道取得的 `SHA256SUMS` 校验归档，再解压；包内 `INSTALL-SHA256SUMS` 检查完整性，不替代来源验证。
+以下命令在解压目录执行，需要 Python 3、systemd、Docker Compose、`ip`、`nsenter`、`nft` 和 `iptables`。
+API、Agent 和宿主必须使用同一 commit 的制品，镜像由 `SYSBOX_IMAGE` 显式指定。
 
-```sh
-sysbox_release_dir="$PWD"
-sysbox_release_commit="$(jq -r .commit build-metadata.json)"
-sysbox_release_source="$(jq -r .source build-metadata.json)"
-git clone "$sysbox_release_source" sysbox-source
-git -C sysbox-source checkout --detach "$sysbox_release_commit"
-cd sysbox-source
-mkdir -p bin
-cp "$sysbox_release_dir/sysbox" "$sysbox_release_dir/sysbox-init" "$sysbox_release_dir/sysbox-netns" bin/
-./bin/sysbox version
-```
+源码开发者若需要完整安装包，在干净 checkout 执行
+`bash scripts/release/build.sh --tag v0.0.0 --allow-untagged --output /tmp/sysbox-release`，
+校验并解压本机架构归档后，也走下面的流程；这不创建正式发布。
 
-接着完成首次部署，再运行示例，无需重新编译。若无法取得 metadata 指定的 commit，不要用最新分支替代。
+1. 初始化新的 API 密钥，把宿主私钥移到 root 专用的安装输入目录。不会覆盖已有密钥。
 
-## 首次部署
+   ```sh
+   sudo ./sysbox init --authority-dir /etc/sysbox-api
+   sudo install -d -m 0700 /root/sysbox-install-inputs
+   sudo mv /etc/sysbox-api/host.key /root/sysbox-install-inputs/host.key
+   sudo install -m 0600 /etc/sysbox-api/host.pub /etc/sysbox-api/issuer.pub /root/sysbox-install-inputs/
+   sudo install -m 0600 deploy/systemd/sysbox-host.yaml /root/sysbox-install-inputs/sysbox.yaml
+   install -m 0600 .env.example .env
+   ```
 
-Agent 现在必须以普通用户运行，只负责 API 与宿主服务之间的通信。它没有 Docker socket、数据库凭据或签名私钥。
-`deploy/docker/compose.agent.yml` 和 `deploy/systemd/sysbox-agent.service` 都按这个边界配置。
-宿主服务仍以 root 运行，持有 provider 权限与 host 私钥。
+   编辑 `.env`，设置匹配的 `SYSBOX_IMAGE`、API token、数据库密码；编辑输入目录的 `sysbox.yaml`，
+   填写同一数据库的宿主可达地址及 provider 配置，替换 `REPLACE_PASSWORD`。
+   保持默认 Agent ID `local-docker`；改 ID 时须同时更新 API 的 host 公钥绑定。
 
-首次部署先完成下面四步；已有环境按“停止旧服务 → 确认并清理旧资源 → 归档旧数据 → 重新部署”迁移，不覆盖旧身份和密钥。
+2. 拉取选定镜像并启动 API。宿主服务尚未安装，不要提前运行 `prepare-worker.sh`。
 
-1. 宿主准备 Python 3（安装脚本使用），构建同版本二进制，创建 UID/GID 32000 的 `sysbox-agent` 用户。将同版本的 `sysbox`、`sysbox-init`、`sysbox-netns` 全部安装到 `/usr/local/bin/`（root 所有、0755）。
-   宿主须提供 `ip`、`nsenter`、`nft`；启用 Docker 时还需要 Docker CLI 和 `iptables`。
-   用 `sudo sysbox init --authority-dir /etc/sysbox-api` 生成新密钥。
-   建立 root 专用的 `/etc/sysbox-host`，把生成的 `host.key` 移到该目录；API 目录只保留 issuer 私钥和公钥材料。
-2. 配置并启动 API。Compose 模板使用 `/etc/sysbox-api/issuer.key` 和 `host.pub`，默认 Agent ID 为 `local-docker`。
-   设置 `SYSBOX_API_TOKEN`、数据库密码和对应配置；不要把这些环境变量传给 Agent。
-3. 用管理员身份注册，再安装 worker 所需文件：
+   ```sh
+   docker compose --project-directory "$PWD" --env-file .env -f deploy/docker/compose.yml pull
+   docker compose --project-directory "$PWD" --env-file .env -f deploy/docker/compose.yml up -d --no-build
+   ```
+
+3. 设置 `SYSBOX_API_TOKEN` 为与 `.env` 相同的 token，注册普通用户 Agent 的通信身份。
+   API URL 必须同时能从宿主和 Agent 访问；下例为同一台机器。
 
    ```sh
    export SYSBOX_API_URL=http://127.0.0.1:9876
-   # 设置 SYSBOX_API_TOKEN 后注册。
-   mkdir -p .sysbox/enrollment
-   test ! -e .sysbox/enrollment/identity.json
-   ./bin/sysbox agent register --api "$SYSBOX_API_URL" --token "$SYSBOX_API_TOKEN" \
-     --id local-docker --name local-docker --substrates docker \
-     --identity .sysbox/enrollment/identity.json
-   sudo deploy/prepare-worker.sh .sysbox/enrollment/identity.json /etc/sysbox-api/issuer.pub /etc/sysbox-api/host.pub
+   sudo --preserve-env=SYSBOX_API_TOKEN ./sysbox agent register --api "$SYSBOX_API_URL" \
+     --token "$SYSBOX_API_TOKEN" --id local-docker --name local-docker --substrates docker \
+     --identity /root/sysbox-install-inputs/identity.json
+   sudo python3 install.py --inputs /root/sysbox-install-inputs --check
+   sudo python3 install.py --inputs /root/sysbox-install-inputs
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now sysbox-host
+   sudo systemctl enable --now sysbox-agent
    ```
 
-   注册使用 `SYSBOX_API_TOKEN`，生成的 identity 只保存 Agent 自己的通信凭据。
-   先设置 `SYSBOX_API_URL`；该地址须同时能从宿主与 Agent 访问。Makefile 注册入口使用 `AGENT_API_URL`。
-4. 将 [宿主配置模板](deploy/systemd/sysbox-host.yaml) 安装为 `/etc/sysbox-host/sysbox.yaml`（root、0600），
-   填写与 API 相同的数据库、issuer 公钥及实际 provider 配置。
-   安装两个 [systemd 单元](deploy/systemd)，先启动 `sysbox-host`，再启动 `sysbox-agent`。
-   使用 Compose worker 时，以 `make api deploy-full` 启动；它要求身份、公钥和宿主 socket 已准备好。
-   先设置 `SYSBOX_IMAGE` 为选定版本并拉取该镜像；部署命令不再构建源码镜像。
-   源码开发时显式执行 `make api build-api`。注册和生命周期 Makefile 入口只使用现有 binary，缺少时明确报错。
+安装器先检查包内文件、架构、输入、目标冲突和 UID/GID，再安装二进制、配置、身份及 systemd 单元。
+它创建 UID/GID 32000 的 `sysbox-agent`，不覆盖已有文件、不自动启动服务；已有安装按
+“停旧服务 → 确认并清理旧资源 → 归档旧数据和安装文件 → 重新部署”处理。
+I/O 中断会保留部分安装供检查，重试不会静默覆盖。安装输入目录含宿主私钥，始终保持 root 专用。
+`--root /tmp/sysbox-stage` 只用于暂存布局，不创建系统用户，也不能代替实机验收。
 
-`prepare-worker.sh` 只安装身份与公钥，不启动服务，也不覆盖已有身份。更多字段见[宿主协议](docs/interfaces.md#host-protocol)。
+Agent 只持通信身份和公钥，不持 Docker socket、数据库凭据或签名私钥；特权操作由宿主服务执行。
+如选择 Compose worker，使用包内 `deploy/docker/compose.agent.yml`，不要同时启动 systemd Agent。
 
 Firecracker 只通过 jailer 启动，需要 root 宿主服务、配套的 Firecracker/jailer 1.15.1、KVM、cgroup v2 委派，以及匹配架构的 kernel/rootfs 和 helper。安装要求见[接口文档](docs/interfaces.md#hcl-firecracker-provider-块)。
 Libvirt 需要可用的 libvirt/QEMU、guest 镜像和管理权限。Windows 持久任务需 QGA 和单节点安装的签名任务 helper。
@@ -91,10 +90,10 @@ Libvirt 需要可用的 libvirt/QEMU、guest 镜像和管理权限。Windows 持
 ```sh
 export SYSBOX_API_URL=http://127.0.0.1:9876
 # 如服务启用了 token，设置 SYSBOX_API_TOKEN。
-./bin/sysbox plan --topology quickstart -f examples/docker-service/field.sysbox.hcl
-./bin/sysbox apply --topology quickstart -f examples/docker-service/field.sysbox.hcl --auto-approve
+sysbox plan --topology quickstart -f examples/docker-service/field.sysbox.hcl
+sysbox apply --topology quickstart -f examples/docker-service/field.sysbox.hcl --auto-approve
 curl --fail http://127.0.0.1:18080/
-./bin/sysbox plan --topology quickstart -f examples/docker-service/field.sysbox.hcl
+sysbox plan --topology quickstart -f examples/docker-service/field.sysbox.hcl
 ```
 
 curl 地址应指向实际执行宿主。Plan 比较配置和服务中的 state；宿主在 Apply 规划时观察选定的受管资源，执行前再次核对。
@@ -105,10 +104,10 @@ curl 地址应指向实际执行宿主。Plan 比较配置和服务中的 state�
 ## 清理与失败处理
 
 ```sh
-./bin/sysbox destroy --topology quickstart --auto-approve
-./bin/sysbox run show RUN_ID
-./bin/sysbox run wait RUN_ID
-./bin/sysbox run cancel RUN_ID
+sysbox destroy --topology quickstart --auto-approve
+sysbox run show RUN_ID
+sysbox run wait RUN_ID
+sysbox run cancel RUN_ID
 ```
 
 提交前会打印请求 key，受理后打印 Run ID。回复丢失时用相同 `--key` 和原请求重试；改配置或重新执行用新 key。

@@ -82,9 +82,9 @@ cmp "${tmp}/first/SHA256SUMS" "${tmp}/second/SHA256SUMS"
 for arch in amd64 arm64; do
   archive="sysbox_v0.1.0_linux_${arch}.tar.gz"
   cmp "${tmp}/first/${archive}" "${tmp}/second/${archive}"
-  members="$(tar -tzf "${tmp}/first/${archive}" | sort)"
-  expected=$'LICENSE\nREADME.md\nbuild-metadata.json\nsysbox\nsysbox-init\nsysbox-netns'
-  [[ "${members}" == "${expected}" ]] || fail "unexpected ${arch} archive members: ${members}"
+  for member in install.py INSTALL-SHA256SUMS deploy/systemd/sysbox-host.service deploy/systemd/sysbox-agent.service docs/architecture.md docs/interfaces.md examples/docker-service/field.sysbox.hcl; do
+    tar -tzf "${tmp}/first/${archive}" "${member}" >/dev/null || fail "missing ${member}"
+  done
   extracted="${tmp}/extracted-${arch}"
   mkdir -p "${extracted}"
   tar -xzf "${tmp}/first/${archive}" -C "${extracted}" sysbox sysbox-init
