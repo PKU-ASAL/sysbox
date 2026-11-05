@@ -270,13 +270,13 @@ func TestFirewallMissingTargetDoesNotReplayUnfinishedIntent(t *testing.T) {
 	require.NoError(t, g.AddNode(a, nil))
 	require.NoError(t, g.SetData(a, &config.FirewallConfig{AttachTo: "sysbox_node.app"}))
 	st := &state.State{Version: state.SchemaVersion, TopologyUID: "owner"}
-	before := ActionRecord{ID: "pending", Topology: "lab", RunID: "old", Resource: a, Action: model.PlanActionCreate, Status: ActionIntentCommitted, OwnerUID: "owner", ResourceUID: "policy", Generation: 1, Quiescence: "stopped"}
+	before := ActionRecord{ID: "pending", Topology: "lab", RunID: "old", Resource: a, Action: model.PlanActionCreate, Status: ActionIntentCommitted, OwnerUID: "owner", ResourceUID: "policy", Generation: 1, ProviderOperationID: "returned-operation", Quiescence: "returned"}
 	repo := &memoryActions{state: st, actions: []ActionRecord{before}}
 	e := NewExecutor(g, st, providers)
 	e.SetRunContext("lab", "new")
 	e.SetActionRepository(repo)
 	err := e.Apply(context.Background(), &Plan{Actions: []model.PlannedChange{{Address: a, Action: model.PlanActionCreate}}})
-	require.Error(t, err)
+	require.ErrorIs(t, err, ErrActionUncertain)
 	require.Zero(t, policy.applies)
 	require.Equal(t, []ActionRecord{before}, repo.actions)
 	require.Empty(t, st.Resources)
