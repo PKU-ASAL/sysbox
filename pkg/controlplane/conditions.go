@@ -48,8 +48,13 @@ const (
 	PhaseReady      TopologyPhase = "ready"
 	PhaseFailed     TopologyPhase = "failed"
 	PhaseDestroying TopologyPhase = "destroying"
-	PhaseGone       TopologyPhase = "gone"
-	PhaseUnknown    TopologyPhase = "unknown"
+	PhaseDestroyed  TopologyPhase = "destroyed"
+	// PhaseGone is authoritative absence: no workspace pointer, no committed
+	// state, no run and no placement. PhaseDestroyed is different: the destroy
+	// completed, resources were released, but the workspace and lifecycle
+	// metadata are retained for audit and cleanup.
+	PhaseGone    TopologyPhase = "gone"
+	PhaseUnknown TopologyPhase = "unknown"
 )
 
 // TopologyStatus is the readiness projection reported on a topology.
@@ -191,6 +196,14 @@ func derivePhase(run *Run, ready Condition) TopologyPhase {
 			return PhaseDestroying
 		}
 		return PhaseConverging
+	}
+	// A completed destroy released the resources but deliberately projects
+	// Applied=Unknown (see conditionApplied), so Ready is Unknown and the
+	// generic switch below would call this converging. Nothing is in flight,
+	// though: reporting "destroyed" lets a consumer distinguish "released,
+	// metadata retained" from both "absent" (gone) and "still converging".
+	if run != nil && run.Op == "destroy" && run.Status == RunDone {
+		return PhaseDestroyed
 	}
 	switch ready.Status {
 	case ConditionTrue:

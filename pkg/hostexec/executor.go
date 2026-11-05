@@ -171,7 +171,11 @@ func (e *Executor) executeResourceOperation(ctx context.Context, run *controlpla
 			return nil, err
 		}
 		err = op.ContinueReset(ctx, *continuation)
-		return nil, err
+		if err != nil {
+			return nil, err
+		}
+		recordAssertion(ctx, op, run, log)
+		return nil, nil
 	}
 	var plan *runtime.Plan
 	plan, err = op.Plan(ctx)
@@ -194,6 +198,7 @@ func (e *Executor) executeResourceOperation(ctx context.Context, run *controlpla
 		}
 		if !plan.HasChanges() {
 			_, _ = log.Write([]byte("Reset already complete.\n"))
+			recordAssertion(ctx, op, run, log)
 			return nil, err
 		}
 		if err = hook.BeforeReset(plan); err != nil {
@@ -212,15 +217,10 @@ func (e *Executor) executeResourceOperation(ctx context.Context, run *controlpla
 	switch run.Op {
 	case "apply", "repair":
 		_, _ = log.Write([]byte("Apply complete.\n"))
-		if len(op.Root.Checks) > 0 {
-			assertion := EvaluateChecks(ctx, op.State, op.Root.Checks, op.EvalContext)
-			run.Assertion = &assertion
-			for _, failed := range assertion.FailedChecks {
-				_, _ = fmt.Fprintf(log, "[check] %s failed: %s\n", failed, assertion.Message)
-			}
-		}
+		recordAssertion(ctx, op, run, log)
 	case "reset":
 		_, _ = log.Write([]byte("Reset complete.\n"))
+		recordAssertion(ctx, op, run, log)
 	case "destroy":
 		if run.AgentID != "" && run.Attempt > 0 && run.LeaseOwner != "" {
 			proof, err = e.proveCleanup(ctx, *run)
@@ -232,6 +232,22 @@ func (e *Executor) executeResourceOperation(ctx context.Context, run *controlpla
 	}
 	err = RunOutcome(nil, recorder.Err())
 	return proof, err
+}
+
+// recordAssertion evaluates the scenario's check blocks after a run that leaves
+// a live topology and stores the outcome on the run. Apply/repair and reset
+// share it deliberately: a reset that skipped checks would leave Asserted
+// unknown forever, so Ready could never return even though the environment is
+// healthy again.
+func recordAssertion(ctx context.Context, op *runtime.Operation, run *controlplane.Run, log io.Writer) {
+	if op == nil || op.Root == nil || len(op.Root.Checks) == 0 {
+		return
+	}
+	assertion := EvaluateChecks(ctx, op.State, op.Root.Checks, op.EvalContext)
+	run.Assertion = &assertion
+	for _, failed := range assertion.FailedChecks {
+		_, _ = fmt.Fprintf(log, "[check] %s failed: %s\n", failed, assertion.Message)
+	}
 }
 
 func (e *Executor) prepareResourceOperation(ctx context.Context, run *controlplane.Run, log io.Writer) (*runtime.Operation, *runtime.StoreRecorder, error) {

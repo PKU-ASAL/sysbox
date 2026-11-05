@@ -43,6 +43,13 @@ func ParseString(src, srcLabel string) (*Root, error) {
 		diagnostics.Sort()
 		return nil, diagnostics
 	}
+	// A check that declared no assert (or an unsupported scoped data source)
+	// used to load silently and EvaluateChecks then reported an empty failure
+	// set, which readiness reads as Asserted=True. Validate the declared shape
+	// here so such a check can never certify a topology.
+	if err := ValidateChecks(root.Checks); err != nil {
+		return nil, err
+	}
 	return &root, nil
 }
 

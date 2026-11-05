@@ -933,9 +933,15 @@ bounds convergence. `GET /v1/topologies/{name}` returns workspace metadata and
 `status` with `phase`, `conditions` (`Applied`, `Provisioned`, `Asserted`,
 `Ready`), `nodes`, `outputs`, and `deadline_at`. `Applied` is derived from the
 topology's latest Run verdict; a completed destroy is not an apply verdict (a
-failed destroy keeps its failure verdict). `Provisioned` is the supervisor's
-health observation. `Asserted` is the latest check/assert outcome, and `Ready`
-is the conjunction of the three (Unknown propagates, False dominates).
+failed destroy keeps its failure verdict) and projects `phase=destroyed`:
+resources were released, but the workspace and lifecycle metadata are retained
+for audit and cleanup. `phase=gone` remains authoritative absence (no
+workspace, no committed state, no in-flight Run, no placement); it is not the
+same state as `destroyed`. `Provisioned` is the supervisor's health observation.
+`Asserted` is the latest check/assert outcome, and `Ready` is the conjunction of
+the three (Unknown propagates, False dominates). Apply/repair and reset both
+evaluate the scenario's checks after execution, so a completed reset returns a
+fresh `Asserted` verdict rather than leaving it Unknown.
 
 <a id="http-api-state-and-observability"></a>
 ### State And Observability
