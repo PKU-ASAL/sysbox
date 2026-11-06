@@ -103,6 +103,8 @@ canonical state 确定资源归属，journal 记录在途效果，两者不能�
 - 带 `Idempotency-Key` 的 keyed Apply 只把不可变 revision 物化到 `runs/<topology>/revisions/<digest>`，不发布 workspace 指针，因此 `has_hcl=false`；
 - 已提交的 lifecycle state（文件后端的 `runs/<topology>/state.json.lifecycle` 或共享 catalog 中的 aggregate）、在途 Run 和 placement 都是 topology 的持久事实。
 
+不带 `Idempotency-Key` 的旧式 Apply 与 keyed Apply 走同一条 durable 接纳路径：同样的不可变 revision 快照、请求指纹和 Run dispatch；唯一区别是旧式调用仍发布可变 workspace 指针，并在同一内容的重试遇到终态 Run 时原地重启该 Run（复用确定性 Run ID）。请求指纹是 Run 的不可变输入绑定，`run-dispatch` 标记只标识某次命令投递，分配 Agent、恢复命令种子或重启终态 Run 都不替换它；只有另一个请求指纹才会触发幂等冲突。
+
 Catalog 与后台巡检按上述持久事实的并集枚举：HCL 目录、lifecycle catalog 和 Run 记录。带已提交 state 的 keyed topology 即使没有 HCL，也会进入 `ScanTopology` 并写入 health snapshot；`LoadState`、`actionRepository` 和健康投影都不依赖 workspace 文件。删除元数据时 placement 一并删除，仅凭终态 Run 历史不得复活 catalog 条目。
 
 `GET /v1/topologies/{name}` 的 `status.conditions` 是只读观测投影：`Applied` 来自 topology 最近一次 Run 的终态，`Provisioned` 来自巡检写入的 health snapshot，`Asserted` 来自最近一次 check/assert 求值；三者全为 True 才 `Ready=True`，任一 Unknown 时 Ready 为 Unknown，任一 False 时 Ready 为 False。已完成的 destroy 描述资源释放，不构成 `Applied` 判定，其 `phase` 为 `destroyed`（资源已释放、workspace 与生命周期元数据保留）；失败的 destroy 仍保留失败判定。`gone` 只表示权威缺席（无 workspace、无 state、无在途 Run、无 placement），二者不可混用。apply/repair 与 reset 都在执行完成后重新求值 check/assert，否则 reset 之后的 `Asserted` 会永远停在 Unknown。消费者应依据 `has_state`、`active_run_id`、`placement_agent_id` 和 `phase` 判断存在性，不得用 `has_hcl=false` 推断 topology 不存在。
