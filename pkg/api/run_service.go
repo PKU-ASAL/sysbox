@@ -120,85 +120,18 @@ func (s *RunService) StartApply(ctx context.Context, topology string, req RunSta
 	if req.Revision != "" && !controlstore.GlobalRevisionPattern.MatchString(req.Revision) {
 		return nil, runError(runServiceBadRequest, errors.New("revision must be an immutable global digest; republish old workspace revisions"))
 	}
-	if req.OperationKey != "" {
-		return s.startKeyedRevisionRun(ctx, topology, "apply", req)
-	}
-	if req.Target != "" {
+	if req.Target != "" && req.OperationKey == "" {
 		return nil, runError(runServiceBadRequest, errors.New("targeted apply requires Idempotency-Key"))
 	}
-	// Serialize the whole apply (HCL upsert + run creation) per-topology so
-	// concurrent applies cannot race on the shared HCL file write.
-	//
-	// Coalescing below is in-memory: the per-topology mutex plus
-	// startWithResult's deterministic OperationKey run id collapse concurrent
-	// same-request applies into one run. That is correct for sysbox's
-	// single-API-instance deployment. If multiple API instances ever share one
-	// store, this path must additionally route through the durable
-	// store.GetRunDispatch/CreateRunDispatch + RequestFingerprint mechanism
-	// (as startIdempotentDestroy does) before coalescing.
-	unlock := s.jobs.lockTopology(topology)
-	defer unlock()
-	operationKey := applyOperationKey(req.Revision, req.Inputs, req.AllowUnsafeState)
-	expected := newRun(topology, "apply", runStartOptions{OperationKey: operationKey})
-	if err := s.rejectActiveTopology(ctx, topology, expected.ID); err != nil {
-		return nil, err
+	if req.OperationKey != "" {
+		return s.startKeyedRevisionRun(ctx, topology, "apply", req, false)
 	}
-
-	var reqSnapshot string
-	if req.Revision != "" && controlstore.GlobalRevisionPattern.MatchString(req.Revision) {
-		rev, err := s.revisions.GetGlobalRevision(ctx, req.Revision)
-		if err != nil {
-			if errors.Is(err, controlstore.ErrRevisionNotFound) {
-				return nil, runError(runServiceNotFound, err)
-			}
-			return nil, runError(runServiceInternal, err)
-		}
-		reqSnapshot, err = s.workspaces.MaterializeRevision(topology, req.Revision, rev.Files)
-		if err != nil {
-			return nil, runError(runServiceInternal, err)
-		}
-		if err := s.workspaces.UpsertProject(ctx, topology, rev.Files); err != nil {
-			return nil, runError(runServiceInternal, err)
-		}
-	}
-	if req.Revision == "" {
-		var err error
-		reqSnapshot, err = s.snapshotForRevision(ctx, topology, "")
-		if err != nil {
-			return nil, err
-		}
-	}
-	opts := runStartOptions{
-		Revision:     req.Revision,
-		AgentID:      req.AgentID,
-		UnsafeState:  req.AllowUnsafeState,
-		Inputs:       req.Inputs,
-		OperationKey: operationKey,
-		SnapshotPath: reqSnapshot,
-	}
-	if req.DeadlineAt != nil {
-		opts.DeadlineAt = *req.DeadlineAt
-	}
-	run, created, err := s.jobs.startWithResult(topology, "apply", opts)
-	if err != nil {
-		return nil, runError(runServiceInternal, err)
-	}
-	if !created {
-		if run.Status.IsActive() {
-			return run, nil // coalesced with an in-flight apply
-		}
-		// The deterministic id maps to a terminal run: replace it with a fresh
-		// attempt that reuses the same id so subsequent applies coalesce onto
-		// this in-flight run instead of the stale terminal record.
-		run = newRun(topology, "apply", opts)
-		if err := s.jobs.forceStart(run); err != nil {
-			return nil, runError(runServiceConflict, err)
-		}
-	}
-	if err := s.dispatchTopologyRun(ctx, run, topology); err != nil {
-		return nil, err
-	}
-	return run, nil
+	// Legacy unkeyed apply: the same durable admission as a keyed apply, with a
+	// content-derived operation key, plus the mutable workspace pointer that
+	// old readers still expect. It is no longer an in-memory-only coalescing
+	// path, so a restart cannot dispatch a second run for the same request.
+	req.OperationKey = applyOperationKey(req.Revision, req.Inputs, req.AllowUnsafeState)
+	return s.startKeyedRevisionRun(ctx, topology, "apply", req, true)
 }
 
 // applyOperationKey derives a deterministic operation key from the apply
@@ -239,7 +172,7 @@ func (s *RunService) StartRepair(ctx context.Context, topology string, req RunSt
 
 func (s *RunService) StartReset(ctx context.Context, topology string, req RunStartRequest) (*controlplane.Run, error) {
 	if req.OperationKey != "" {
-		return s.startKeyedRevisionRun(ctx, topology, "reset", req)
+		return s.startKeyedRevisionRun(ctx, topology, "reset", req, false)
 	}
 	unlock := s.jobs.lockTopology(topology)
 	defer unlock()

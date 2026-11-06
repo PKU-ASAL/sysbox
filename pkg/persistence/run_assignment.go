@@ -3,6 +3,7 @@ package persistence
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
 )
@@ -19,8 +20,15 @@ func AssignRun(current, proposed controlplane.Run, fingerprint string) (controlp
 	if current.Status == controlplane.RunQueued {
 		expected.MarkAssigned(proposed.AgentID, proposed.AssignedAt)
 	}
-	expected.RequestFingerprint = fingerprint
-	proposed.RequestFingerprint = fingerprint
+	// A run admitted through a durable request keeps that request fingerprint
+	// for input hydration; the run-dispatch marker only names this command and
+	// must not replace the run's request identity.
+	identity := fingerprint
+	if current.RequestFingerprint != "" && !strings.HasPrefix(current.RequestFingerprint, "run-dispatch:") {
+		identity = current.RequestFingerprint
+	}
+	expected.RequestFingerprint = identity
+	proposed.RequestFingerprint = identity
 	a, err := json.Marshal(expected)
 	if err != nil {
 		return controlplane.Run{}, err

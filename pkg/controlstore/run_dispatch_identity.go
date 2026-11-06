@@ -29,6 +29,19 @@ func validateDispatchReplay(current controlplane.Run, request RunDispatchRequest
 	return nil
 }
 
+// DispatchIdentityConflict reports whether binding this dispatch to the run
+// would reuse an idempotency identity for a different request. A run admitted
+// through a durable request keeps that request fingerprint when it is assigned
+// to an agent: the run-dispatch marker names the command, not a second request,
+// so assigning or re-dispatching a restarted incarnation does not replace the
+// run's immutable input-hydration authority.
+func DispatchIdentityConflict(current, requested string) bool {
+	if current == "" || current == requested {
+		return false
+	}
+	return !(strings.HasPrefix(requested, "run-dispatch:") && !strings.HasPrefix(current, "run-dispatch:"))
+}
+
 func ValidateRunDispatchPayload(request RunDispatchRequest) error {
 	if request.Run.Cleanup != nil || request.Run.HostCompletion != nil || request.Command.Run != nil && (request.Command.Run.HostCompletion != nil || request.Command.Run.Cleanup != nil) {
 		return persistence.ErrConflict

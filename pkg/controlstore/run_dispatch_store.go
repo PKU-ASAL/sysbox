@@ -78,7 +78,7 @@ func (s *Local) CreateRunDispatch(ctx context.Context, request RunDispatchReques
 		return nil, false, err
 	}
 	if !created {
-		if existing.RequestFingerprint != "" && existing.RequestFingerprint != request.Fingerprint {
+		if DispatchIdentityConflict(existing.RequestFingerprint, request.Fingerprint) {
 			return nil, false, ErrIdempotencyConflict
 		}
 		if strings.HasPrefix(request.Fingerprint, "run-dispatch:") && request.Command.ID != "" {
@@ -103,7 +103,11 @@ func (s *Local) CreateRunDispatch(ctx context.Context, request RunDispatchReques
 			} else if current != nil {
 				return nil, false, persistence.ErrConflict
 			}
-			bundle.Run.RequestFingerprint = request.Fingerprint
+			forced := request.Fingerprint
+			if request.Run.RequestFingerprint != "" && !strings.HasPrefix(request.Run.RequestFingerprint, "run-dispatch:") {
+				forced = request.Run.RequestFingerprint
+			}
+			bundle.Run.RequestFingerprint = forced
 		}
 	} else {
 		runs, err := s.LoadRuns(ctx)
@@ -214,7 +218,7 @@ func (s *SQLite) CreateRunDispatch(ctx context.Context, request RunDispatchReque
 	existing, err := ScanSQLiteRun(tx.QueryRowContext(ctx, "SELECT "+SqliteRunColumns+" FROM sysbox_runs WHERE id=? ORDER BY rowid DESC LIMIT 1", request.Run.ID))
 	if err == nil {
 		existingFingerprint := existing.RequestFingerprint
-		if existingFingerprint != "" && existingFingerprint != request.Fingerprint {
+		if DispatchIdentityConflict(existingFingerprint, request.Fingerprint) {
 			return nil, false, ErrIdempotencyConflict
 		}
 		if strings.HasPrefix(request.Fingerprint, "run-dispatch:") && request.Command.ID != "" {
@@ -369,7 +373,7 @@ func (s *Postgres) CreateRunDispatch(ctx context.Context, request RunDispatchReq
 		if err := json.Unmarshal(existingRaw, &existing); err != nil {
 			return nil, false, err
 		}
-		if existing.RequestFingerprint != "" && existing.RequestFingerprint != request.Fingerprint {
+		if DispatchIdentityConflict(existing.RequestFingerprint, request.Fingerprint) {
 			return nil, false, ErrIdempotencyConflict
 		}
 		if strings.HasPrefix(request.Fingerprint, "run-dispatch:") && request.Command.ID != "" {

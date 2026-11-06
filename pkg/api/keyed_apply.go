@@ -16,11 +16,19 @@ import (
 
 var errApplyInputsRequired = errors.New("apply inputs unavailable; resubmit the original request to this API")
 
-func (s *RunService) startKeyedRevisionRun(ctx context.Context, topology, operation string, req RunStartRequest) (*controlplane.Run, error) {
+// startKeyedRevisionRun is the single durable admission path for apply and
+// reset. Callers that provide only a workspace (the legacy unkeyed CLI flow)
+// set publishPointer: they additionally publish the mutable workspace pointer
+// for old readers, but the canonical facts — immutable revision snapshot,
+// fingerprint and run dispatch — are identical to the keyed path.
+func (s *RunService) startKeyedRevisionRun(ctx context.Context, topology, operation string, req RunStartRequest, publishPointer bool) (*controlplane.Run, error) {
 	if err := validateOperationKey(req.OperationKey); err != nil {
 		return nil, runError(runServiceBadRequest, err)
 	}
-	if !controlstore.GlobalRevisionPattern.MatchString(req.Revision) {
+	if req.Revision != "" && !controlstore.GlobalRevisionPattern.MatchString(req.Revision) {
+		return nil, runError(runServiceBadRequest, errors.New("lifecycle operation requires an immutable global revision"))
+	}
+	if req.Revision == "" && !publishPointer {
 		return nil, runError(runServiceBadRequest, errors.New("keyed lifecycle operation requires an immutable global revision"))
 	}
 	unlock := s.jobs.lockTopology(topology)
@@ -42,22 +50,71 @@ func (s *RunService) startKeyedRevisionRun(ctx context.Context, topology, operat
 		return nil, dispatchError(err)
 	}
 	if found {
-		return s.hydrateApply(existing, req.Inputs), nil
+		hydrated := s.hydrateApply(existing, req.Inputs)
+		if !publishPointer || hydrated.Status.IsActive() {
+			return hydrated, nil
+		}
+		// Legacy interactive re-apply: a terminal record for the same request
+		// is restarted in place so `sysbox apply` after a failed or completed
+		// run does work again. Keyed callers never take this branch; for them a
+		// terminal replay is the answer.
+		snapshot, err := s.applySnapshot(ctx, topology, req, publishPointer)
+		if err != nil {
+			return nil, err
+		}
+		retry := newRun(topology, operation, runStartOptions{
+			Revision: req.Revision, AgentID: req.AgentID, UnsafeState: req.AllowUnsafeState,
+			Inputs: req.Inputs, OperationKey: req.OperationKey, SnapshotPath: snapshot, DeadlineAt: deadline,
+		})
+		retry.ID = hydrated.ID
+		retry.RequestFingerprint = hydrated.RequestFingerprint
+		if err := s.jobs.forceStart(retry); err != nil {
+			return nil, dispatchError(err)
+		}
+		if err := s.dispatchTopologyRun(ctx, retry, topology); err != nil {
+			return nil, err
+		}
+		return retry, nil
+	}
+	// Reject a concurrent apply on the same topology before any workspace
+	// effect: a rejected request must not rewrite the HCL pointer.
+	if operation == "apply" {
+		if err := s.rejectActiveTopology(ctx, topology, run.ID); err != nil {
+			return nil, err
+		}
+	}
+	snapshot, err := s.applySnapshot(ctx, topology, req, publishPointer)
+	if err != nil {
+		return nil, err
+	}
+	run.SnapshotPath = snapshot
+	return s.dispatchKeyedRun(ctx, run, fingerprint, req.Inputs)
+}
+
+// applySnapshot pins the immutable tree every apply runs against. The mutable
+// workspace pointer is a compatibility cache published only for legacy
+// unkeyed callers; keyed callers never rewrite it.
+func (s *RunService) applySnapshot(ctx context.Context, topology string, req RunStartRequest, publishPointer bool) (string, error) {
+	if req.Revision == "" {
+		return s.snapshotForRevision(ctx, topology, "")
 	}
 	revision, err := s.revisions.GetGlobalRevision(ctx, req.Revision)
 	if err != nil {
 		if errors.Is(err, controlstore.ErrRevisionNotFound) {
-			return nil, runError(runServiceNotFound, err)
+			return "", runError(runServiceNotFound, err)
 		}
-		return nil, runError(runServiceInternal, err)
+		return "", runError(runServiceInternal, err)
 	}
-	// Admission pins an immutable tree; it never rewrites the workspace pointer.
 	snapshot, err := s.workspaces.MaterializeRevision(topology, req.Revision, revision.Files)
 	if err != nil {
-		return nil, runError(runServiceInternal, err)
+		return "", runError(runServiceInternal, err)
 	}
-	run.SnapshotPath = snapshot
-	return s.dispatchKeyedRun(ctx, run, fingerprint, req.Inputs)
+	if publishPointer {
+		if err := s.workspaces.UpsertProject(ctx, topology, revision.Files); err != nil {
+			return "", runError(runServiceInternal, err)
+		}
+	}
+	return snapshot, nil
 }
 
 // The request mapping, canonical Run and command outbox are committed together.
