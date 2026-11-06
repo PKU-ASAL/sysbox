@@ -71,7 +71,11 @@ func ApplyQuiescentLifecycleDelete(raw, authorityRaw []byte, topology string, ex
 		a.GCSources = nil
 
 	}
-	empty := a.Serial > 0 && len(a.State.Resources) == 0 && len(a.Snapshots) == 0
+	// Snapshots are historical copies of state taken before each operation.
+	// They are deleted with the metadata and never describe live resources,
+	// so a lifecycle whose destroy left no resources is still empty even
+	// though it retained snapshots; a later incarnation may reuse the name.
+	empty := a.Serial > 0 && len(a.State.Resources) == 0
 	if err := resetAggregate(a); err != nil {
 		return nil, err
 	}
