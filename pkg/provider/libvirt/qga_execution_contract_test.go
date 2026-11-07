@@ -39,3 +39,25 @@ esac
 	require.Equal(t, result.Stdout, out.String())
 	require.Equal(t, result.Stderr, errOut.String())
 }
+
+func TestQGAHungLaunchRespectsParentDeadlineWithoutReplay(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "calls")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "virsh"), []byte(`#!/bin/sh
+printf 'launch\n' >> "$SYSBOX_QGA_CALL_LOG"
+exec sleep 5
+`), 0700))
+	t.Setenv("SYSBOX_QGA_CALL_LOG", logPath)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	parent, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	result, err := (&qgaConnection{domain: "test-domain"}).Exec(parent, substrate.ExecRequest{Program: "cmd.exe", Shell: substrate.ShellNone, Timeout: 10 * time.Second}, nil, nil)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.Less(t, time.Since(started), 2*time.Second)
+	require.Equal(t, substrate.RemoteTerminationUnknown, result.RemoteTermination)
+	require.False(t, result.ExitCodeKnown)
+	calls, err := os.ReadFile(logPath)
+	require.NoError(t, err)
+	require.Equal(t, "launch\n", string(calls), "an ambiguous launch must not be retried")
+}
