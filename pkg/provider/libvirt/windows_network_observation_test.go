@@ -111,3 +111,20 @@ func TestWindowsRouteQueryErrorsAreNotMissing(t *testing.T) {
 	require.Error(t, windowsRouteOutcome(true, substrate.ExecResult{ExitCode: 0}, nil))
 	require.NoError(t, windowsRouteOutcome(true, substrate.ExecResult{ExitCode: 0, ExitCodeKnown: true}, nil))
 }
+
+func TestWindowsNetworkWithoutAttachmentsNeedsNoQGA(t *testing.T) {
+	observation, err := New().ObserveGuestNetwork(context.Background(), substrate.NodeHandle{Provider: &HandleState{GuestFamily: substrate.GuestFamilyWindows, NetworkInit: substrate.GuestNetworkInitPreconfigured}})
+	require.NoError(t, err)
+	require.True(t, observation.Converged)
+	require.Empty(t, observation.Interfaces)
+}
+func TestWindowsRouteScriptDoesNotHideQueryErrors(t *testing.T) {
+	script := windowsRouteScript("020000000010", "10.20.0.0/16", "10.0.0.1", true)
+	require.NotContains(t, script, "SilentlyContinue")
+	require.Contains(t, script, "Get-NetAdapter -ErrorAction Stop")
+	require.Contains(t, script, "Get-NetRoute -AddressFamily IPv4 -ErrorAction Stop")
+	require.Contains(t, script, "$matches.Count -ne 1")
+	require.Contains(t, script, "$_.InterfaceIndex -eq $nic.ifIndex")
+	require.Contains(t, script, "exit 3")
+	require.NotContains(t, script, "New-NetRoute")
+}

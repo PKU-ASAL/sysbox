@@ -71,12 +71,7 @@ func (s *Substrate) windowsRoute(ctx context.Context, handle substrate.NodeHandl
 	if mac == "" {
 		return fmt.Errorf("libvirt windows: no NIC shares subnet with gateway %s", via)
 	}
-	script := fmt.Sprintf(`$ErrorActionPreference='Stop'; $nic=Get-NetAdapter | Where-Object { $_.MacAddress.Replace('-','').ToUpperInvariant() -eq '%s' } | Select-Object -First 1; if(-not $nic){ throw 'route NIC missing' }; $route=Get-NetRoute -InterfaceIndex $nic.ifIndex -DestinationPrefix '%s' -ErrorAction SilentlyContinue | Where-Object { $_.NextHop -eq '%s' }; if(-not $route){ %s }`, mac, destination, via, func() string {
-		if observeOnly {
-			return "exit 3"
-		}
-		return fmt.Sprintf("New-NetRoute -InterfaceIndex $nic.ifIndex -DestinationPrefix '%s' -NextHop '%s' | Out-Null", destination, via)
-	}())
+	script := windowsRouteScript(mac, destination, via, observeOnly)
 	connection, err := s.Connection(handle, nil)
 	if err != nil {
 		return err
@@ -101,4 +96,12 @@ func windowsRouteOutcome(observeOnly bool, result substrate.ExecResult, err erro
 		return fmt.Errorf("libvirt windows: route command exited %d: %s", result.ExitCode, result.Stderr)
 	}
 	return nil
+}
+
+func windowsRouteScript(mac, destination, via string, observeOnly bool) string {
+	missing := "exit 3"
+	if !observeOnly {
+		missing = fmt.Sprintf("New-NetRoute -InterfaceIndex $nic.ifIndex -DestinationPrefix '%s' -NextHop '%s' | Out-Null", destination, via)
+	}
+	return fmt.Sprintf(`$ErrorActionPreference='Stop'; $matches=@(Get-NetAdapter -ErrorAction Stop | Where-Object { $_.MacAddress.Replace('-','').ToUpperInvariant() -eq '%s' }); if($matches.Count -ne 1){throw 'route NIC identity missing or ambiguous'}; $nic=$matches[0]; $route=@(Get-NetRoute -AddressFamily IPv4 -ErrorAction Stop | Where-Object { $_.InterfaceIndex -eq $nic.ifIndex -and $_.DestinationPrefix -eq '%s' -and $_.NextHop -eq '%s' }); if($route.Count -eq 0){ %s }`, mac, destination, via, missing)
 }

@@ -43,6 +43,9 @@ func (s *Substrate) PrepareGuestNetwork(ctx context.Context, handle substrate.No
 func (s *Substrate) ObserveGuestNetwork(ctx context.Context, handle substrate.NodeHandle) (substrate.GuestNetworkInitObservation, error) {
 	hs := hsFrom(handle)
 	observation := substrate.GuestNetworkInitObservation{Mode: hs.NetworkInit, Converged: len(hs.Bridges) == 0}
+	if len(hs.Bridges) == 0 {
+		return observation, nil
+	}
 	var managedTargets []network.BridgeTarget
 	for _, bridge := range hs.Bridges {
 		if bridge.Netns == "" {
