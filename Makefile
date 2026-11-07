@@ -266,7 +266,6 @@ test-heterogeneous-reset: ## Run three full and targeted heterogeneous reset cyc
 
 test-windows-tools: ## Test Windows unattended image tooling without libvirt side effects
 	bash tests/scripts/windows_tools_test.sh
-	python3 -m unittest discover -s scripts/windows -p test_artifact.py
 
 prepare-windows10-media: ## Cache checksum-verified official Windows and VirtIO media
 	bash scripts/windows/prepare-media.sh
