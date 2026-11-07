@@ -8,6 +8,7 @@ import (
 	"github.com/oslab/sysbox/pkg/controlplane"
 	"github.com/oslab/sysbox/pkg/driver"
 	"github.com/oslab/sysbox/pkg/runtime"
+	"github.com/oslab/sysbox/pkg/secret"
 	"github.com/oslab/sysbox/pkg/state"
 )
 
@@ -243,7 +244,8 @@ func recordAssertion(ctx context.Context, op *runtime.Operation, run *controlpla
 	if op == nil || op.Root == nil || len(op.Root.Checks) == 0 {
 		return
 	}
-	assertion := EvaluateChecks(ctx, op.State, op.Root.Checks, op.EvalContext)
+	assertionCtx := secret.WithResolver(ctx, secret.Dispatcher{"env": secret.EnvironmentResolver{}, "input": secret.InputResolver{Inputs: run.Inputs}})
+	assertion := EvaluateChecks(assertionCtx, op.State, op.Root.Checks, op.EvalContext)
 	run.Assertion = &assertion
 	for _, failed := range assertion.FailedChecks {
 		_, _ = fmt.Fprintf(log, "[check] %s failed: %s\n", failed, assertion.Message)

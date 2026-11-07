@@ -28,6 +28,9 @@ func CanonicalConnectionHints(ctx context.Context, desired any) ([]ConnectionHin
 	resolver := secret.ResolverFromContext(ctx)
 	hints := make([]ConnectionHint, len(cfg.Connections))
 	for i, c := range cfg.Connections {
+		if err := c.ValidateCredentialReferences(); err != nil {
+			return nil, err
+		}
 		password, err := secret.ResolveString(ctx, resolver, c.Password)
 		if err != nil {
 			return nil, err

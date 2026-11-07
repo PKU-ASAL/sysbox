@@ -1970,3 +1970,25 @@ cleanup 的 version=1、empty=true、state_serial>0，以及 RunID、topology、
 `acked`/`running` 的命令投递租约过期后，仅当同一 Run 仍 assigned、没有取得 Run claim、且授权 ledger 中没有该命令/动作的现行或历史执行授权时，才允许在原记录上恢复 queued 投递。新的投递递增 attempt，旧 attempt 不能更新新记录。已取得执行权或结果未知的任务不通过此路径重放。
 
 API 收敛超时使用 `error_code=convergence_deadline_exceeded`，与宿主 context 超时的 `deadline_exceeded` 分开。该业务失败不会被后来宿主成功覆盖；同一执行身份的有效签名宿主停止证据仍可落库、清理 Run lease 和释放执行授权。宿主实际结果保留在 HostCompletion 证据中，重试要求完全相同的签名证据。其他终态与不同 attempt 不被放宽。
+
+### 显式 WinRM 前台通道（libvirt Windows）
+
+Windows 默认仍使用 QGA。节点可以显式声明 `connection` 的 `type = "winrm"`，
+`host` 为完整 `https://<guest-ip>:5986/wsman`，`user` 为 guest 账户，
+`password` 必须是 `secret://env/...` 或 `secret://input/...` 引用；不接受明文密码、URL 凭据或 SSH trust override。
+端点 IP 必须属于该节点已声明/持久化的地址，不使用 DNS 别名或 SSH IP override 重定向到其他机器。
+目前只支持宿主可直接访问的地址；有 named netns 的节点明确拒绝，不偷偷从 root namespace 建连。
+证书必须包含该 guest IP 的 SAN，并由宿主系统 CA 信任。WinRM HTTPS listener 和 Basic authentication 必须由管理员预先配置；Sysbox 不启用 listener、不开端口、不安装管理账户、不跳过证书校验。
+
+该选项只选择前台 `Connection.Exec`（PowerShell 或 direct argv）和前台 readiness 的通道。
+宿主 check 使用 canonical connection hints，秘密由执行上下文解析，不写回 state。
+带 `secret://input` 的请求仅在提供原始瞬态输入的 Run 内可用；独立观察缺少该输入时明确失败，不能读取旧明文。
+stdin、交互终端和 capture-via-file 不由 WinRM 前台提供。
+
+持久任务的 Start/Observe/Cancel、续期、输出与文件能力仍由现有 QGA/签名 Windows task helper 承担，
+这是明确的能力分工，不是 WinRM 失败后的 fallback。QGA 和匹配 helper 仍是持久任务的前提；不宣称支持无 QGA 的完整生命周期。
+所有调用仍经 API → 普通 Agent → 宿主服务，provider 每次核对 domain UUID/归属。
+WinRM 不自动重试效果，不切换到 QGA 重新执行；本地超时或 WS-Man 错误仍是远端结果未知，不能作为停止证明。
+默认前台等待上限五分钟，且服从更短父期限；单次 HTTP 传输、SOAP 和输出大小均有界。
+实现复用 masterzen/winrm 的 WS-Man 协议，HTTP 封装补齐请求 context、TLS、禁重定向及响应上限。
+本轮仅有本地协议/选择/秘密引用回归；Windows HTTPS 实机互通与凭据轮换未验收。

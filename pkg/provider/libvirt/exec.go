@@ -44,6 +44,12 @@ func (s *Substrate) CopyToNode(ctx context.Context, handle substrate.NodeHandle,
 // If SSHIP is empty, provisioners cannot run via SSH.
 func (s *Substrate) Connection(handle substrate.NodeHandle, hints []substrate.ConnectionHint) (substrate.Connection, error) {
 	hs := hsFrom(handle)
+	if len(hints) > 1 {
+		return nil, fmt.Errorf("libvirt requires at most one explicit connection")
+	}
+	if len(hints) == 1 && hints[0].Type == "winrm" {
+		return newWinRMDomainConnection(handle, hints[0])
+	}
 	if hs.GuestFamily == substrate.GuestFamilyWindows {
 		return &qgaDomainConnection{handle: handle, qga: &qgaConnection{domain: hs.DomainUUID}}, nil
 	}

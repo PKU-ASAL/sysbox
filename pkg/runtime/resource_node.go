@@ -597,6 +597,9 @@ func (e *Executor) connectionForNode(
 func (e *Executor) resolveConnectionHints(ctx context.Context, conns []config.ConnectionConfig) ([]substrate.ConnectionHint, error) {
 	hints := make([]substrate.ConnectionHint, len(conns))
 	for i, c := range conns {
+		if err := c.ValidateCredentialReferences(); err != nil {
+			return nil, err
+		}
 		password, err := secret.ResolveString(ctx, e.resolver(), c.Password)
 		if err != nil {
 			return nil, err
