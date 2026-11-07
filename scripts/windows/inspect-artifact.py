@@ -47,6 +47,9 @@ def inspect_artifact(image, output, partition):
     disk = json.loads(run_readonly(['qemu-img', 'info', '--output=json', '-f', 'qcow2', str(image)]))
     if disk.get('format') != 'qcow2' or disk.get('backing-filename') or disk.get('full-backing-filename'):
         raise ValueError('expected a standalone qcow2 artifact without a backing chain')
+    specific = disk.get('format-specific', {}).get('data', {})
+    if disk.get('data-file') or specific.get('data-file') or specific.get('data-file-raw'):
+        raise ValueError('qcow2 external data file is not a standalone artifact')
     if disk.get('encrypted') or disk.get('dirty-flag'):
         raise ValueError('encrypted or dirty image cannot be certified offline')
     raw = run_readonly(['guestfish', '--ro', '--format=qcow2', '-a', str(image),

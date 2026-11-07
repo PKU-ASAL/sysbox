@@ -87,4 +87,10 @@ class ArtifactTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'sealed'): self.inspect()
         self.assertFalse(self.manifest.exists())
 
+    def test_external_data_file_refused(self):
+        data={'format':'qcow2','format-specific':{'type':'qcow2','data':{'data-file':'disk.data','data-file-raw':True}}}
+        with patch.object(self.module,'run_readonly',return_value=json.dumps(data).encode()):
+            with self.assertRaisesRegex(ValueError,'external data'):self.inspect()
+        self.assertFalse(self.manifest.exists())
+
 if __name__=='__main__':unittest.main()
