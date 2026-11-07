@@ -69,6 +69,15 @@ func (s *Substrate) ObserveGuestNetwork(ctx context.Context, handle substrate.No
 		}
 		defer unlock()
 	}
+	if hs.GuestFamily == substrate.GuestFamilyWindows {
+		connection, err := s.Connection(handle, nil)
+		if err != nil {
+			return observation, err
+		}
+		observed, err := observeWindowsNetwork(ctx, connection, hs.Bridges, guestNetworkReadyTimeout, guestNetworkPollInterval)
+		observed.Mode = hs.NetworkInit
+		return observed, err
+	}
 	deadline := time.Now().Add(guestNetworkReadyTimeout)
 	for {
 		observation.Interfaces = observation.Interfaces[:0]

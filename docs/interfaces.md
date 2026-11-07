@@ -1970,3 +1970,5 @@ cleanup 的 version=1、empty=true、state_serial>0，以及 RunID、topology、
 `acked`/`running` 的命令投递租约过期后，仅当同一 Run 仍 assigned、没有取得 Run claim、且授权 ledger 中没有该命令/动作的现行或历史执行授权时，才允许在原记录上恢复 queued 投递。新的投递递增 attempt，旧 attempt 不能更新新记录。已取得执行权或结果未知的任务不通过此路径重放。
 
 API 收敛超时使用 `error_code=convergence_deadline_exceeded`，与宿主 context 超时的 `deadline_exceeded` 分开。该业务失败不会被后来宿主成功覆盖；同一执行身份的有效签名宿主停止证据仍可落库、清理 Run lease 和释放执行授权。宿主实际结果保留在 HostCompletion 证据中，重试要求完全相同的签名证据。其他终态与不同 attempt 不被放宽。
+
+Windows libvirt 网络就绪通过现有 QGA 通道只读核对声明的 MAC 与 IPv4 前缀，不以 ICMP 放行作为网卡初始化成功的条件；它不证明宿主路由或业务可达性。网络配置仍由原有初始化步骤完成，观察过程不设置地址、时间或防火墙。Windows 路由写入成功后最多等待 60 秒观察路由表，受上层期限约束；仅重试明确缺失的观察，查询错误立即返回，绝不重放写入。
