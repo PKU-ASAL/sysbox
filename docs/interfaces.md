@@ -402,6 +402,8 @@ Firecracker 附件必须位于受管理的 named network namespace；宿主 Dock
 | `ssh_authorized_key` | no | Key injected during guest init |
 | `windows_etw` | no | Install the standalone Windows ETW collector before challenge provisioners and report observation source `etw`. Default `false`; requires `/var/lib/sysbox/vm-artifacts/windows-etw/` artifacts and a Windows guest. |
 
+Libvirt 的 QGA 单次请求预算为：进程启动 120 秒、状态查询 30 秒、文件读写 60 秒，其余控制请求 10 秒；父操作的取消和期限仍优先生效。超时不证明 guest 进程停止，也不自动重放不确定执行。Windows 系统盘使用 SATA `sda`，附加 seed 光驱使用 `sdb`，并声明 SATA 与 virtio-serial 控制器。
+
 <a id="hcl-sysbox_router"></a>
 ### `sysbox_router`
 
