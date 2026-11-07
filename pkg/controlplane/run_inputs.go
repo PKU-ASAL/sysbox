@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -44,10 +45,22 @@ func ApplyOperationKey(revision string, inputs map[string]string, unsafe bool) s
 // ValidateRunInputs checks the exact durable request. Automatic placement and
 // explicit placement can only have selected this canonical owning Agent.
 func ValidateRunInputs(run Run, inputs map[string]string) error {
-	if run.Op == "apply" && strings.HasPrefix(run.RequestFingerprint, "apply-request:") {
+	if HasBoundRunInputs(run) {
 		for _, agent := range []string{"", run.AgentID} {
-			if RunRequestFingerprint(run.Op, run.Topology, run.Revision, agent, run.Target, run.UnsafeState, inputs, run.DeadlineAt) == run.RequestFingerprint {
+			expected := RunRequestFingerprint(run.Op, run.Topology, run.Revision, agent, run.Target, run.UnsafeState, inputs, run.DeadlineAt)
+			if expected == run.RequestFingerprint {
 				return nil
+			}
+			// The host also verifies the parent suffix against canonical ancestry
+			// before any resumed resource effect (ResolveResetOrigin).
+			if run.Op == "reset" && run.ParentID != "" {
+				prefix := expected + ":parent:"
+				if strings.HasPrefix(run.RequestFingerprint, prefix) {
+					digest, err := hex.DecodeString(strings.TrimPrefix(run.RequestFingerprint, prefix))
+					if err == nil && len(digest) == sha256.Size {
+						return nil
+					}
+				}
 			}
 		}
 		return fmt.Errorf("host Run inputs do not match the admitted request")
@@ -62,4 +75,21 @@ func ValidateRunInputs(run Run, inputs map[string]string) error {
 		return fmt.Errorf("Run has no authenticated input binding")
 	}
 	return nil
+}
+
+// HasBoundRunInputs identifies the durable request contract used by both
+// Apply and Reset. Other operations must not accept unbound transient values.
+func HasBoundRunInputs(run Run) bool {
+	return (run.Op == "apply" || run.Op == "reset") && strings.HasPrefix(run.RequestFingerprint, run.Op+"-request:")
+}
+
+// ResetContinuationFingerprint retains the exact parent incarnation as well as
+// the child's input binding. A reused parent ID cannot replay an old child.
+func ResetContinuationFingerprint(parent, child Run, inputs map[string]string) string {
+	raw, _ := json.Marshal(struct {
+		ID       string
+		QueuedAt time.Time
+		Revision string
+	}{parent.ID, parent.QueuedAt.UTC(), parent.Revision})
+	return fmt.Sprintf("%s:parent:%x", RunRequestFingerprint(child.Op, child.Topology, child.Revision, child.AgentID, child.Target, child.UnsafeState, inputs, child.DeadlineAt), sha256.Sum256(raw))
 }

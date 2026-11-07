@@ -29,3 +29,17 @@ func TestRunInputBindingPreservesKeyedRequestAndRejectsChanges(t *testing.T) {
 	run.RequestFingerprint = RunRequestFingerprint("apply", "lab", "rev", "", "sysbox_node.web", false, inputs, time.Time{})
 	require.NoError(t, ValidateRunInputs(run, inputs))
 }
+
+func TestResetContinuationBindingIncludesParentIncarnation(t *testing.T) {
+	values := map[string]string{"password": "private"}
+	parent := Run{ID: "parent", Op: "reset", Topology: "lab", Revision: "rev", AgentID: "host", QueuedAt: time.Now()}
+	child := Run{ID: "child", ParentID: parent.ID, Op: "reset", Topology: parent.Topology, Revision: parent.Revision, AgentID: parent.AgentID}
+	child.RequestFingerprint = ResetContinuationFingerprint(parent, child, values)
+	require.NoError(t, ValidateRunInputs(child, values))
+	require.Error(t, ValidateRunInputs(child, map[string]string{"password": "different"}))
+	changed := parent
+	changed.QueuedAt = parent.QueuedAt.Add(time.Second)
+	require.NotEqual(t, child.RequestFingerprint, ResetContinuationFingerprint(changed, child, values))
+	child.ParentID = ""
+	require.Error(t, ValidateRunInputs(child, values))
+}

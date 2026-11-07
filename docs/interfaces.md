@@ -506,8 +506,8 @@ sysbox apply --topology NAME [-f FILE | --revision SHA256] [--include PATH] [--i
 #### `reset`
 
 ```text
-sysbox reset --topology NAME [-f FILE | --revision SHA256] [--target sysbox_node.NAME] [--key KEY] [--auto-approve] [--detach]
-sysbox reset --topology NAME --resume RUN_ID [--key KEY] [--auto-approve] [--detach]
+sysbox reset --topology NAME [-f FILE | --revision SHA256] [--target sysbox_node.NAME] [--inputs values.json] [--key KEY] [--auto-approve] [--detach]
+sysbox reset --topology NAME --resume RUN_ID [--inputs values.json] [--key KEY] [--auto-approve] [--detach]
 ```
 
 续接使用原 Run 的配置和完整范围，不能同时传 file/revision/include/target。
@@ -1970,3 +1970,11 @@ cleanup 的 version=1、empty=true、state_serial>0，以及 RunID、topology、
 `acked`/`running` 的命令投递租约过期后，仅当同一 Run 仍 assigned、没有取得 Run claim、且授权 ledger 中没有该命令/动作的现行或历史执行授权时，才允许在原记录上恢复 queued 投递。新的投递递增 attempt，旧 attempt 不能更新新记录。已取得执行权或结果未知的任务不通过此路径重放。
 
 API 收敛超时使用 `error_code=convergence_deadline_exceeded`，与宿主 context 超时的 `deadline_exceeded` 分开。该业务失败不会被后来宿主成功覆盖；同一执行身份的有效签名宿主停止证据仍可落库、清理 Run lease 和释放执行授权。宿主实际结果保留在 HostCompletion 证据中，重试要求完全相同的签名证据。其他终态与不同 attempt 不被放宽。
+
+### Reset 瞬态输入
+
+`POST /v1/topologies/{name}/reset` 接受 `inputs`。非空输入要求明确 `Idempotency-Key` 和不可变 revision；值通过现有 Agent claim → 宿主授权链传递，只保存在内存，不写入 Run、command 或 checkpoint。
+Reset 不重新定义已部署的非敏感变量；配置求值仍使用已持久化的非敏感输入，`inputs` 用于解析本次执行的 `secret://input/` 引用。
+输入参与请求摘要：相同 key 改输入返回冲突。API 重启后，input-bound Reset 的 `inputs_required=true`，claim 返回现有输入缺失错误；重新提交完全相同的 Reset 请求恢复输入，不创建新任务。
+`POST /v1/runs/{id}/resume` 接受可选 `{"inputs":{...}}`；input-bound Reset continuation 要求明确 key，输入必须与父任务一致，子请求同时绑定父任务 ID、QueuedAt 和 revision。宿主执行前逐层验证原有停止证明及输入绑定。
+Continuation 重启后用同一 parent、key 和输入重提；改变输入或父 incarnation 均拒绝。旧的无输入 continuation 保留原协议，不接受新加秘密。`sysbox reset --inputs values.json` 与 `--resume` 都使用这些服务入口，无本地 fallback。

@@ -62,3 +62,21 @@ func TestResetOriginVerifiesEveryAncestor(t *testing.T) {
 		})
 	}
 }
+
+func TestResetOriginRequiresSameInputsAcrossContinuation(t *testing.T) {
+	inputs := map[string]string{"password": "original"}
+	root := &controlplane.Run{ID: "root", Topology: "lab", Op: "reset", Revision: "rev", AgentID: "host", Status: controlplane.RunFailed, QueuedAt: time.Now()}
+	root.RequestFingerprint = controlplane.RunRequestFingerprint("reset", root.Topology, root.Revision, root.AgentID, "", false, inputs, time.Time{})
+	child := *root
+	child.ID = "child"
+	child.ParentID = "root"
+	child.Status = controlplane.RunRunning
+	child.Inputs = map[string]string{"password": "changed"}
+	b := &resetAncestryBridge{runs: map[string]*controlplane.Run{"root": root}}
+	_, err := ResolveResetOrigin(context.Background(), b, &child)
+	require.Error(t, err)
+	child.Inputs = inputs
+	child.RequestFingerprint = controlplane.ResetContinuationFingerprint(*root, child, inputs)
+	_, err = ResolveResetOrigin(context.Background(), b, &child)
+	require.NoError(t, err)
+}
