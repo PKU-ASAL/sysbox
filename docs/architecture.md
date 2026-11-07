@@ -109,6 +109,25 @@ Catalog 与后台巡检按上述持久事实的并集枚举：HCL 目录、lifec
 
 `GET /v1/topologies/{name}` 的 `status.conditions` 是只读观测投影：`Applied` 来自 topology 最近一次 Run 的终态，`Provisioned` 来自巡检写入的 health snapshot，`Asserted` 来自最近一次 check/assert 求值；三者全为 True 才 `Ready=True`，任一 Unknown 时 Ready 为 Unknown，任一 False 时 Ready 为 False。已完成的 destroy 描述资源释放，不构成 `Applied` 判定，其 `phase` 为 `destroyed`（资源已释放、workspace 与生命周期元数据保留）；失败的 destroy 仍保留失败判定。`gone` 只表示权威缺席（无 workspace、无 state、无在途 Run、无 placement），二者不可混用。apply/repair 与 reset 都在执行完成后重新求值 check/assert，否则 reset 之后的 `Asserted` 会永远停在 Unknown。消费者应依据 `has_state`、`active_run_id`、`placement_agent_id` 和 `phase` 判断存在性，不得用 `has_hcl=false` 推断 topology 不存在。
 
+## 受管 guest 组件：设计边界，尚未实现
+
+这里的 managed endpoint 指普通、可见的 guest 组件生命周期，不是 Sysbox 的通信 Agent，
+也不是新增宿主进程管理器。当前没有对应资源、安装接口或 capability；以下内容是后续实现的约束，不能直接用于配置。
+
+组件应由消费者显式声明，安装在指定节点内，拥有独立资源身份，单独观察和回收。
+节点创建不隐式安装组件；不共享宿主采集进程，不默认启用观测功能，不代管外部系统的注册、账号或业务策略。
+制品来源、版本与摘要必须明确；操作同时绑定组件身份和目标节点 UID/generation。
+目标节点 Reset 后，旧组件回执不能证明新节点已安装，也不能授权删除新节点中的对象。
+
+执行继续沿 API → Agent → 宿主服务 → runtime → Provider SPI → guest helper。
+复用已有 journal、签名授权和停止证明；不增加任意安装脚本、后台进程池或第二套任务引擎。
+现有 signed guest task 只证明受控执行结果，固定文件安装只证明特定文件发布，二者都不能单独证明整个软件包已安装或已卸载。
+具体包适配器还必须能够核对包版本、文件归属和安装结果；无法观察时保留 unknown，不依据退出码或失联猜测完成。
+
+在开发运行能力前，先选择一个普通组件包、一个操作系统和可验证的安装/卸载协议，
+明确它是否需要特权，以及当前 guest helper 能否支持。未有专门授权契约的提权需求暂不支持。
+确认这些条件后，再定义最小 SPI 与资源字段；接口边界见[受管组件设计约束](interfaces.md#managed-component-design)。
+
 ## 发布与验收
 
 CLI、API、宿主和 guest helper 必须来自匹配制品。发布包携带版本、commit、哈希与 metadata；部署不隐式重建源码。验收使用正式 systemd 单元和独立实验环境。
