@@ -13,7 +13,9 @@ func TestServiceProfileRejectsInvalidEnrollment(t *testing.T) {
 	for _, scenario := range []string{"valid", "version", "unit", "port", "executable", "trailing", "permissions", "mixed-adapters", "missing-process", "relative-pid"} {
 		t.Run(scenario, func(t *testing.T) {
 			d, _, _ := deploymentFixture(t)
-			p := ServiceProfile{Version: 1, Root: d.Root, ConfigPath: d.ConfigPath, DropInPath: d.DropInPath, Helper: "/usr/bin/true", CommandUser: "root", SSHD: "/usr/bin/true", Systemctl: "/usr/bin/true", ServiceUnit: "ssh.service", Probes: d.Probes, Listeners: []string{"127.0.0.1:22"}}
+			executable := filepath.Join(filepath.Dir(d.ConfigPath), "test-service")
+			require.NoError(t, os.WriteFile(executable, []byte("#!/bin/sh\nexit 0\n"), 0700))
+			p := ServiceProfile{Version: 1, Root: d.Root, ConfigPath: d.ConfigPath, DropInPath: d.DropInPath, Helper: executable, CommandUser: "root", SSHD: executable, Systemctl: executable, ServiceUnit: "ssh.service", Probes: d.Probes, Listeners: []string{"127.0.0.1:22"}}
 			switch scenario {
 			case "version":
 				p.Version = 2
