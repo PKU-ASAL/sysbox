@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -17,7 +18,9 @@ func guestPolicyFixture(t *testing.T) (*GuestPolicyEngine, GuestPolicyRequest, *
 	t.Helper()
 	table := ""
 	writes := 0
-	e := &GuestPolicyEngine{Root: t.TempDir(), Run: func(ctx context.Context, input string, args ...string) (string, error) {
+	root := t.TempDir()
+	require.NoError(t, os.Chmod(root, 0700))
+	e := &GuestPolicyEngine{Root: root, Run: func(ctx context.Context, input string, args ...string) (string, error) {
 		if input == "" {
 			return table, nil
 		}

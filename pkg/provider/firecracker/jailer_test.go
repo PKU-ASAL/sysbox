@@ -98,7 +98,7 @@ func TestJailerRejectsHostNetworkBridgeAttachment(t *testing.T) {
 }
 
 func TestHostNetworkAttachmentRejectedBeforeManifestOrLinkMutation(t *testing.T) {
- s:=&Substrate{}
- _,err:=s.attachNIC(context.Background(),substrate.NodeHandle{},linkRequest{})
- require.ErrorContains(t,err,"named network namespace")
+	s := &Substrate{}
+	_, err := s.attachNIC(context.Background(), substrate.NodeHandle{}, linkRequest{})
+	require.ErrorContains(t, err, "named network namespace")
 }
