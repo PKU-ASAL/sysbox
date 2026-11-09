@@ -129,7 +129,7 @@ func (s *Substrate) PrepareHandle(ctx context.Context, handle *substrate.NodeHan
 		return nil
 	}
 	var manifest *vmManifest
-	if hs.Version == manifestVersion {
+	if supportedNetworkHandle(*hs) {
 		if ctx == nil {
 			ctx = context.Background()
 		}

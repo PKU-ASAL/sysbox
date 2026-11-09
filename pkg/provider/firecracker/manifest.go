@@ -15,11 +15,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"golang.org/x/sys/unix"
 )
 
-const manifestVersion = 3
+const manifestVersion = 4
 
 // Only this sentinel means the entire owned generation was proved absent.
 // ENOENT for a config or another required file is incomplete evidence.
@@ -270,6 +271,18 @@ func (s *Substrate) loadManifest(ctx context.Context, h substrate.NodeHandle) (*
 	raw, err := readRegularFile(path)
 	if os.IsNotExist(err) {
 		if _, e := os.Lstat(dir); os.IsNotExist(e) {
+			if id, ok := substrate.OperationIdentityFromContext(ctx); ok {
+				if err := network.VMNamespaceNameAbsent(id); err != nil {
+					return nil, err
+				}
+			}
+			if hs, ok := h.Provider.(*HandleState); ok && hs.TopologyUID != "" {
+				id := substrate.OperationIdentity{ActionID: "absence", OwnerUID: hs.OwnerUID, TopologyUID: hs.TopologyUID, ResourceUID: hs.ResourceUID, Generation: hs.Generation}
+				if err := network.VMNamespaceNameAbsent(id); err != nil {
+					return nil, err
+				}
+			}
+
 			if err := s.jailResidueAbsent(h.ID); err != nil {
 				return nil, err
 			}
@@ -295,6 +308,24 @@ func (s *Substrate) loadManifest(ctx context.Context, h substrate.NodeHandle) (*
 			} else if !os.IsNotExist(e) {
 				return nil, e
 			}
+			if supplied, ok := h.Provider.(*HandleState); ok {
+				if supplied.FabricPending != "" {
+					return nil, fmt.Errorf("VM namespace creation outcome unknown")
+				}
+				if supplied.Fabric != nil {
+					for _, a := range supplied.Attachments {
+						if a.Circuit == nil {
+							return nil, fmt.Errorf("VM circuit proof missing")
+						}
+						if err := network.VMCircuitAbsent(ctx, *supplied.Fabric, *a.Circuit); err != nil {
+							return nil, err
+						}
+					}
+					if err := network.VMNamespaceAbsent(ctx, *supplied.Fabric); err != nil {
+						return nil, err
+					}
+				}
+			}
 			return nil, errGenerationAbsent
 		}
 		return nil, fmt.Errorf("firecracker manifest missing: legacy or orphan VM directory %q requires explicit rebuild", dir)
@@ -307,7 +338,7 @@ func (s *Substrate) loadManifest(ctx context.Context, h substrate.NodeHandle) (*
 		return nil, fmt.Errorf("firecracker invalid manifest: %w", err)
 	}
 	root, _ := s.canonicalRoot()
-	if m.Version != manifestVersion {
+	if m.Version != manifestVersion && !(m.Version == 3 && m.Handle.Fabric == nil && m.Handle.FabricPending == "") {
 		return nil, fmt.Errorf("firecracker manifest version %d unsupported; rebuild required", m.Version)
 	}
 	if m.VMID != h.ID || m.RuntimeRoot != root || !validIdentityPart(m.OwnerUID) || !validIdentityPart(m.ResourceUID) || m.Generation <= 0 || m.ActionID == "" {
@@ -330,6 +361,9 @@ func (s *Substrate) loadManifest(ctx context.Context, h substrate.NodeHandle) (*
 		return nil, fmt.Errorf("firecracker manifest directory identity conflict")
 	}
 	hs := &m.Handle
+	if err := validateFabricHandle(*hs, manifestNetworkIdentity(&m)); err != nil {
+		return nil, err
+	}
 	expectedSocket := ownedUnixSocketPath(dir, h.ID, "firecracker.sock", "fc")
 	expectedVsock := ownedUnixSocketPath(dir, h.ID, "vsock.sock", "vs")
 	if hs.JailRoot != "" {
@@ -350,7 +384,7 @@ func (s *Substrate) loadManifest(ctx context.Context, h substrate.NodeHandle) (*
 			return nil, err
 		}
 	}
-	if hs.Version != manifestVersion || hs.ManifestPath != path || hs.VMDir != dir || hs.ConfigPath != filepath.Join(dir, "vm_config.json") || hs.Socket != expectedSocket {
+	if !supportedNetworkHandle(*hs) || hs.ManifestPath != path || hs.VMDir != dir || hs.ConfigPath != filepath.Join(dir, "vm_config.json") || hs.Socket != expectedSocket {
 		return nil, fmt.Errorf("firecracker manifest path identity conflict")
 	}
 	if hs.OwnerUID != m.OwnerUID || hs.ResourceUID != m.ResourceUID || hs.Generation != m.Generation || hs.TopologyUID != m.TopologyUID {
@@ -391,7 +425,7 @@ func (s *Substrate) loadManifest(ctx context.Context, h substrate.NodeHandle) (*
 		return nil, fmt.Errorf("firecracker manifest generation conflict")
 	}
 	if supplied, _ := h.Provider.(*HandleState); supplied != nil {
-		if supplied.Version != manifestVersion || supplied.ManifestPath != path || supplied.OwnerUID != m.OwnerUID || supplied.ResourceUID != m.ResourceUID || supplied.Generation != m.Generation || supplied.TopologyUID != m.TopologyUID || supplied.JailRoot != hs.JailRoot || supplied.Socket != hs.Socket || supplied.ConfigPath != hs.ConfigPath || supplied.VsockUDS != hs.VsockUDS {
+		if !supportedNetworkHandle(*supplied) || supplied.ManifestPath != path || supplied.OwnerUID != m.OwnerUID || supplied.ResourceUID != m.ResourceUID || supplied.Generation != m.Generation || supplied.TopologyUID != m.TopologyUID || supplied.JailRoot != hs.JailRoot || supplied.Socket != hs.Socket || supplied.ConfigPath != hs.ConfigPath || supplied.VsockUDS != hs.VsockUDS {
 			return nil, fmt.Errorf("firecracker supplied handle identity conflict")
 		}
 	}
