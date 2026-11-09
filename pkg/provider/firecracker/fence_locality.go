@@ -78,6 +78,22 @@ func (s *Substrate) HostFenceDeletionAbsent(ctx context.Context, h substrate.Nod
 			return fmt.Errorf("Firecracker residue absence unproven: %s", path)
 		}
 	}
+	if hs.Fabric != nil {
+		if err := hs.Fabric.Validate(id); err != nil {
+			return err
+		}
+		for _, a := range hs.Attachments {
+			if a.Circuit == nil {
+				return fmt.Errorf("VM circuit proof missing")
+			}
+			if err := network.VMCircuitAbsent(ctx, *hs.Fabric, *a.Circuit); err != nil {
+				return err
+			}
+		}
+		if err := network.VMNamespaceAbsent(ctx, *hs.Fabric); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -107,6 +123,12 @@ func (s *Substrate) HostFenceAttachmentAbsent(ctx context.Context, h substrate.N
 	alias, err := network.AttachmentAlias(id, name)
 	if err != nil {
 		return err
+	}
+	if hs.Fabric != nil {
+		if st.Fabric == nil || st.Circuit == nil || *hs.Fabric != *st.Fabric {
+			return fmt.Errorf("VM circuit fencing proof missing")
+		}
+		return network.VMCircuitAbsent(ctx, *st.Fabric, *st.Circuit)
 	}
 	err = network.ObserveOwnedAttachment(ctx, *st.Link, alias)
 	if driver.IsCategory(err, driver.ErrorNotFound) {

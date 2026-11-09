@@ -1978,3 +1978,22 @@ Reset 不重新定义已部署的非敏感变量；配置求值仍使用已持�
 输入参与请求摘要：相同 key 改输入返回冲突。API 重启后，input-bound Reset 的 `inputs_required=true`，claim 返回现有输入缺失错误；重新提交完全相同的 Reset 请求恢复输入，不创建新任务。
 `POST /v1/runs/{id}/resume` 接受可选 `{"inputs":{...}}`；input-bound Reset continuation 要求明确 key，输入必须与父任务一致，子请求同时绑定父任务 ID、QueuedAt 和 revision。宿主执行前逐层验证原有停止证明及输入绑定。
 Continuation 重启后用同一 parent、key 和输入重提；改变输入或父 incarnation 均拒绝。旧的无输入 continuation 保留原协议，不接受新加秘密。`sysbox reset --inputs values.json` 与 `--resume` 都使用这些服务入口，无本地 fallback。
+
+### Firecracker 多隔离网络（冷插拔）
+
+一个 Firecracker 节点最多声明 8 个 link，可指向不同的非 NAT `sysbox_network`。
+所有网卡须在启动前接入；每个 link 在本代 VM namespace 内拥有独立 bridge、TAP 和 veth，另一端接入目标网络的归属桥。
+VM namespace 不设置宿主地址、不启用 IPv4/IPv6 转发，网络之间的转发须由 guest 显式配置；多个默认 gateway 在规划时拒绝，其余目的网段使用 routes。
+
+Create、Observe、启动 TAP UID 授权、Reset、Destroy 和 fenced GC 使用相同的 namespace device/inode、接口 index/alias 与 peer 证明。
+Reset 新代际获得新的 VM namespace；清理先确认 VMM 停止，再核验和删除该代全部连接，最后删除空 namespace。
+缺少回执、创建回复丢失、部分连接或外部替换保持 unknown，不凭名称认领或销毁。完整 namespace inventory 拒绝额外端口。
+此能力不增加执行入口；仍走 API → Agent → 宿主 → runtime → SPI。
+
+新联网 VM 要求 vsock helper；SSH、NAT、热插拔和 fabric VM 的 ownership transfer 暂不支持。
+新 manifest 使用版本 4，避免旧程序忽略新增网络证明；版本 3 仅在无 fabric 字段时保留受限兼容，不自动迁移运行中 VM。
+升级应先在旧版本完成在途动作与资源清理，不能直接用旧程序接管新 manifest。
+
+测试入口：network 的 `TestVMFabricSeparateNetworksE2E`、Firecracker 的 `TestFirecrackerMultiNetworkLifecycleE2E` 与 `TestFirecrackerMultiNetworkRealBootE2E`。
+前两者在可丢弃隔离容器中验证网络与 manifest；最后一项需要 KVM、配套 jailer、kernel/rootfs 和容器内独立委派的 cgroup。
+测试开关分别是 `SYSBOX_VM_FABRIC_E2E` 和 `SYSBOX_VM_FABRIC_KVM_E2E`，未启用时的 skip 不等于验收通过。

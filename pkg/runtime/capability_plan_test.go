@@ -27,8 +27,14 @@ func TestComputePlanRejectsMissingCapabilityBeforeMutation(t *testing.T) {
 	require.ErrorContains(t, err, "driver is not registered")
 }
 
-func TestFirecrackerRejectsMultipleLinksDuringPlan(t *testing.T) {
+func TestFirecrackerMultipleLinksUseOneFabric(t *testing.T) {
+	registerPortTestDriver(t, &portTestSubstrate{name: "firecracker"})
 	n := &graph.Node{Address: address.Resource("sysbox_node", "vm"), Data: &config.NodeConfig{Substrate: "firecracker", Links: []config.LinkConfig{{Name: "a"}, {Name: "b"}}}}
 	_, err := (NodeResourceHandler{}).RequiredCapabilities(n, driver.DefaultRegistry)
-	require.ErrorContains(t, err, "one network namespace")
+	require.NoError(t, err)
+}
+func TestFirecrackerRejectsAmbiguousDefaultGateways(t *testing.T) {
+	n := &graph.Node{Address: address.Resource("sysbox_node", "vm"), Data: &config.NodeConfig{Substrate: "firecracker", Links: []config.LinkConfig{{Name: "a", Gateway: "10.1.0.1"}, {Name: "b", Gateway: "10.2.0.1"}}}}
+	_, err := (NodeResourceHandler{}).RequiredCapabilities(n, driver.DefaultRegistry)
+	require.ErrorContains(t, err, "default gateway")
 }
