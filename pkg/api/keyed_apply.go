@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/oslab/sysbox/pkg/controlplane"
@@ -183,7 +182,7 @@ func (j *Jobs) inputsRequired(run *controlplane.Run) bool {
 }
 
 func keyedInputsRequired(run *controlplane.Run, inputs map[string]string) bool {
-	return run != nil && (run.Status.IsActive() || (run.Status == controlplane.RunFailed && run.Recoverable)) && strings.HasPrefix(run.RequestFingerprint, "apply-request:") && inputs == nil
+	return run != nil && (run.Status.IsActive() || (run.Status == controlplane.RunFailed && run.Recoverable)) && controlplane.HasBoundRunInputs(*run) && inputs == nil
 }
 
 // Failed recoverable Runs may receive an explicit, fingerprint-checked

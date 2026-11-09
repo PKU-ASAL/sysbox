@@ -1,10 +1,12 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/oslab/sysbox/pkg/buildinfo"
+	"io"
 	"log/slog"
 	"net/http"
 	"path/filepath"
@@ -320,7 +322,7 @@ func (s *Server) handleReset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	run, err := s.runs().StartReset(r.Context(), topology, RunStartRequest{
-		OperationKey: r.Header.Get("Idempotency-Key"), Revision: req.Revision, AgentID: req.AgentID, Target: req.Target, AllowUnsafeState: req.AllowUnsafeState,
+		OperationKey: r.Header.Get("Idempotency-Key"), Revision: req.Revision, AgentID: req.AgentID, Target: req.Target, AllowUnsafeState: req.AllowUnsafeState, Inputs: req.Inputs,
 	})
 	if err != nil {
 		writeError(w, runServiceStatus(err), err)
@@ -330,10 +332,11 @@ func (s *Server) handleReset(w http.ResponseWriter, r *http.Request) {
 }
 
 type resetRequest struct {
-	Target           string `json:"target,omitempty"`
-	Revision         string `json:"revision,omitempty"`
-	AgentID          string `json:"agent_id,omitempty"`
-	AllowUnsafeState bool   `json:"allow_unsafe_state,omitempty"`
+	Inputs           map[string]string `json:"inputs,omitempty"`
+	Target           string            `json:"target,omitempty"`
+	Revision         string            `json:"revision,omitempty"`
+	AgentID          string            `json:"agent_id,omitempty"`
+	AllowUnsafeState bool              `json:"allow_unsafe_state,omitempty"`
 }
 
 func decodeResetRequest(r *http.Request) (resetRequest, error) {
@@ -341,11 +344,22 @@ func decodeResetRequest(r *http.Request) (resetRequest, error) {
 		return resetRequest{}, nil
 	}
 	defer r.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(r.Body, (1<<20)+1))
+	if err != nil {
+		return resetRequest{}, fmt.Errorf("read reset request: %w", err)
+	}
+	if len(raw) > 1<<20 {
+		return resetRequest{}, fmt.Errorf("reset request exceeds 1 MiB")
+	}
 	var req resetRequest
-	dec := json.NewDecoder(r.Body)
+	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil {
 		return resetRequest{}, fmt.Errorf("decode reset request: %w", err)
+	}
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		return resetRequest{}, fmt.Errorf("decode reset request: trailing or invalid data")
 	}
 	return req, nil
 }
@@ -445,7 +459,24 @@ func (s *Server) handleResumeRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	run, parent, err := s.runs().ResumeWithKey(r.Context(), id, r.Header.Get("Idempotency-Key"))
+	var request struct {
+		Inputs map[string]string `json:"inputs,omitempty"`
+	}
+	if r.Body != nil && r.ContentLength != 0 {
+		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&request); err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("decode resume request: %w", err))
+			return
+		}
+
+		var extra any
+		if err := dec.Decode(&extra); err != io.EOF {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("decode resume request: trailing data"))
+			return
+		}
+	}
+	run, parent, err := s.runs().ResumeWithInputs(r.Context(), id, r.Header.Get("Idempotency-Key"), request.Inputs)
 	if err != nil {
 		writeError(w, runServiceStatus(err), err)
 		return

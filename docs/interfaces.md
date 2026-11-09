@@ -429,6 +429,8 @@ Firecracker 附件必须位于受管理的 named network namespace；宿主 Dock
 | `ssh_authorized_key` | no | Key injected during guest init |
 | `windows_etw` | no | Install the standalone Windows ETW collector before challenge provisioners and report observation source `etw`. Default `false`; requires `/var/lib/sysbox/vm-artifacts/windows-etw/` artifacts and a Windows guest. |
 
+Libvirt 的 QGA 单次请求预算为：进程启动 120 秒、状态查询 30 秒、文件读写 60 秒，其余控制请求 10 秒；父操作的取消和期限仍优先生效。超时不证明 guest 进程停止，也不自动重放不确定执行。Windows 系统盘使用 SATA `sda`，附加 seed 光驱使用 `sdb`，并声明 SATA 与 virtio-serial 控制器。
+
 <a id="hcl-sysbox_router"></a>
 ### `sysbox_router`
 
@@ -533,8 +535,8 @@ sysbox apply --topology NAME [-f FILE | --revision SHA256] [--include PATH] [--i
 #### `reset`
 
 ```text
-sysbox reset --topology NAME [-f FILE | --revision SHA256] [--target sysbox_node.NAME] [--key KEY] [--auto-approve] [--detach]
-sysbox reset --topology NAME --resume RUN_ID [--key KEY] [--auto-approve] [--detach]
+sysbox reset --topology NAME [-f FILE | --revision SHA256] [--target sysbox_node.NAME] [--inputs values.json] [--key KEY] [--auto-approve] [--detach]
+sysbox reset --topology NAME --resume RUN_ID [--inputs values.json] [--key KEY] [--auto-approve] [--detach]
 ```
 
 续接使用原 Run 的配置和完整范围，不能同时传 file/revision/include/target。
@@ -1997,6 +1999,33 @@ cleanup 的 version=1、empty=true、state_serial>0，以及 RunID、topology、
 `acked`/`running` 的命令投递租约过期后，仅当同一 Run 仍 assigned、没有取得 Run claim、且授权 ledger 中没有该命令/动作的现行或历史执行授权时，才允许在原记录上恢复 queued 投递。新的投递递增 attempt，旧 attempt 不能更新新记录。已取得执行权或结果未知的任务不通过此路径重放。
 
 API 收敛超时使用 `error_code=convergence_deadline_exceeded`，与宿主 context 超时的 `deadline_exceeded` 分开。该业务失败不会被后来宿主成功覆盖；同一执行身份的有效签名宿主停止证据仍可落库、清理 Run lease 和释放执行授权。宿主实际结果保留在 HostCompletion 证据中，重试要求完全相同的签名证据。其他终态与不同 attempt 不被放宽。
+
+### Reset 瞬态输入
+
+`POST /v1/topologies/{name}/reset` 接受 `inputs`。非空输入要求明确 `Idempotency-Key` 和不可变 revision；值通过现有 Agent claim → 宿主授权链传递，只保存在内存，不写入 Run、command 或 checkpoint。
+Reset 不重新定义已部署的非敏感变量；配置求值仍使用已持久化的非敏感输入，`inputs` 用于解析本次执行的 `secret://input/` 引用。
+输入参与请求摘要：相同 key 改输入返回冲突。API 重启后，input-bound Reset 的 `inputs_required=true`，claim 返回现有输入缺失错误；重新提交完全相同的 Reset 请求恢复输入，不创建新任务。
+`POST /v1/runs/{id}/resume` 接受可选 `{"inputs":{...}}`；input-bound Reset continuation 要求明确 key，输入必须与父任务一致，子请求同时绑定父任务 ID、QueuedAt 和 revision。宿主执行前逐层验证原有停止证明及输入绑定。
+Continuation 重启后用同一 parent、key 和输入重提；改变输入或父 incarnation 均拒绝。旧的无输入 continuation 保留原协议，不接受新加秘密。`sysbox reset --inputs values.json` 与 `--resume` 都使用这些服务入口，无本地 fallback。
+
+### Windows 离线镜像交付
+
+镜像构建与资源 Apply 分开：现有 `scripts/windows/build-windows10.sh` 等入口只在专用构建宿主显式运行；
+运行时仅消费已核验的 qcow2，不接受 `windows_cache.build_script` 或由 HCL 触发宿主镜像构建。
+从 #79 提取的封存检查位于 `scripts/windows/inspect-artifact.py`，在构建、generalize/seal、关机完成后执行：
+
+```sh
+python3 scripts/windows/inspect-artifact.py /srv/images/windows-base.qcow2 /srv/images/windows-base.json --system-partition /dev/sda1
+```
+
+输入必须是只读、独立无 backing chain 或 external data-file 的 qcow2；显式指定 Windows 系统分区。
+脚本仅调用 `qemu-img info` 和只读 `guestfish`，拒绝非封存状态、查询失败或检查期间变化的文件，生成不可覆盖的 SHA-256、大小与封存状态报告。
+它不修改或启动镜像，不证明 QGA、网络、任务 helper 已通过运行验收；报告的 `runtime_accepted` 固定为 false。
+既有构建器不会被此检查自动执行，也不假定其产物已经 generalize/seal。
+报告中的 source/sha256 可用于既有 `sysbox_image` 字段；报告 size 是文件字节数，不自动映射 HCL size，源文件须通过宿主配置允许的制品路径提供。
+不引入 WinRM 管理层、业务域/账号配置或外部 endpoint 管理器；实际 Windows 版本及 helper 配套仍需单独验收。
+
+Windows libvirt 网络就绪通过现有 QGA 通道只读核对声明的 MAC 与 IPv4 前缀，不以 ICMP 放行作为网卡初始化成功的条件；它不证明宿主路由或业务可达性。网络配置仍由原有初始化步骤完成，观察过程不设置地址、时间或防火墙。Windows 路由写入成功后最多等待 60 秒观察路由表，受上层期限约束；仅重试明确缺失的观察，查询错误立即返回，绝不重放写入。
 
 ### Firecracker 多隔离网络（冷插拔）
 

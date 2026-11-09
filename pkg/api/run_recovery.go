@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -50,12 +49,12 @@ func (s *Server) recoveryAuthorization(ctx context.Context, run controlplane.Run
 	}
 	// Non-default inputs are intentionally not persisted. Do not silently
 	// reconstruct them as defaults while authorizing recovery.
-	if run.Op == "apply" && strings.HasPrefix(run.RequestFingerprint, "apply-request:") {
+	if controlplane.HasBoundRunInputs(run) {
 		s.jobs.mu.RLock()
 		result.Inputs = inputsForRecovery(s.jobs.runs[run.ID], &run)
 		s.jobs.mu.RUnlock()
 		if result.Inputs == nil {
-			return result, fmt.Errorf("%w: recovery inputs unavailable; resubmit the original keyed apply request to this API", persistence.ErrConflict)
+			return result, fmt.Errorf("%w: recovery inputs unavailable; resubmit the original keyed lifecycle request to this API", persistence.ErrConflict)
 		}
 	} else if run.Op == "apply" && run.OperationKey != "" && run.OperationKey != applyOperationKey(run.Revision, nil, run.UnsafeState) {
 		return result, fmt.Errorf("%w: recovery inputs must be resubmitted", persistence.ErrConflict)
@@ -114,7 +113,7 @@ func (s *Server) handleRequestRunRecovery(w http.ResponseWriter, r *http.Request
 		writeError(w, 409, fmt.Errorf("owning agent does not support run recovery"))
 		return
 	}
-	if mode == controlplane.RunRecoveryRecover && strings.HasPrefix(run.RequestFingerprint, "apply-request:") && !slices.Contains(agent.Capabilities, controlplane.RunRecoveryInputsCapability) {
+	if mode == controlplane.RunRecoveryRecover && controlplane.HasBoundRunInputs(*run) && !slices.Contains(agent.Capabilities, controlplane.RunRecoveryInputsCapability) {
 		writeError(w, 409, fmt.Errorf("owning agent requires input-aware recovery protocol"))
 		return
 	}
@@ -175,7 +174,7 @@ func (s *Server) handleAuthorizeRunRecovery(w http.ResponseWriter, r *http.Reque
 		writeError(w, 409, persistence.ErrConflict)
 		return
 	}
-	if cmd.RecoveryMode == controlplane.RunRecoveryRecover && strings.HasPrefix(run.RequestFingerprint, "apply-request:") && (!slices.Contains(owner.Capabilities, controlplane.RunRecoveryInputsCapability) || proof.InputsProtocol != 1) {
+	if cmd.RecoveryMode == controlplane.RunRecoveryRecover && controlplane.HasBoundRunInputs(*run) && (!slices.Contains(owner.Capabilities, controlplane.RunRecoveryInputsCapability) || proof.InputsProtocol != 1) {
 		writeError(w, 409, fmt.Errorf("owning agent requires input-aware recovery protocol"))
 		return
 	}
