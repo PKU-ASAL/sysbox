@@ -68,6 +68,9 @@ func (s *Substrate) InspectOwnershipTransfer(ctx context.Context, p controlplane
 	if err != nil {
 		return err
 	}
+	if m.Handle.Fabric != nil || m.Handle.FabricPending != "" {
+		return fmt.Errorf("VM fabric ownership transfer requires rebuild")
+	}
 	if m.Transfer != nil {
 		root, err := s.canonicalRoot()
 		if err != nil {
@@ -121,6 +124,9 @@ func (s *Substrate) ApplyOwnershipTransfer(ctx context.Context, p controlplane.O
 	m, raw, err := s.findAdoptionManifest(ctx, p.Plan.ExternalID)
 	if err != nil {
 		return zero, err
+	}
+	if m.Handle.Fabric != nil || m.Handle.FabricPending != "" {
+		return zero, fmt.Errorf("VM fabric ownership transfer requires rebuild")
 	}
 	if m.Transfer != nil && m.Transfer.Proof.PlanDigest == p.PlanDigest {
 		_, verified, release, err := s.lockedManifest(ctx, manifestHandle(&m))
