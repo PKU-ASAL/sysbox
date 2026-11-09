@@ -99,3 +99,42 @@ func TestGuestFamilyFromDomainXML(t *testing.T) {
 		t.Fatalf("Linux domain detected as %q", got)
 	}
 }
+
+func TestGenerateDomainXMLWindowsSeedHasDistinctTargetsAndControllers(t *testing.T) {
+	raw, err := GenerateDomainXML(DomainSpec{Name: "windows", VCPUs: 2, MemoryMiB: 2048, DiskPath: "/tmp/base.qcow2", SeedISO: "/tmp/seed.iso", GuestFamily: substrate.GuestFamilyWindows})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Devices struct {
+			Disks []struct {
+				Target struct {
+					Dev string `xml:"dev,attr"`
+				} `xml:"target"`
+			} `xml:"disk"`
+			Controllers []struct {
+				Type string `xml:"type,attr"`
+			} `xml:"controller"`
+		} `xml:"devices"`
+	}
+	if err := xml.Unmarshal([]byte(raw), &doc); err != nil {
+		t.Fatal(err)
+	}
+	names := map[string]bool{}
+	for _, disk := range doc.Devices.Disks {
+		if names[disk.Target.Dev] {
+			t.Fatalf("duplicate disk target %s", disk.Target.Dev)
+		}
+		names[disk.Target.Dev] = true
+	}
+	if !names["sda"] || !names["sdb"] {
+		t.Fatalf("missing system/seed target: %v", names)
+	}
+	controllers := map[string]bool{}
+	for _, controller := range doc.Devices.Controllers {
+		controllers[controller.Type] = true
+	}
+	if !controllers["sata"] || !controllers["virtio-serial"] {
+		t.Fatalf("missing Windows controllers: %v", controllers)
+	}
+}

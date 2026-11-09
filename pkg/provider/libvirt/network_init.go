@@ -43,6 +43,9 @@ func (s *Substrate) PrepareGuestNetwork(ctx context.Context, handle substrate.No
 func (s *Substrate) ObserveGuestNetwork(ctx context.Context, handle substrate.NodeHandle) (substrate.GuestNetworkInitObservation, error) {
 	hs := hsFrom(handle)
 	observation := substrate.GuestNetworkInitObservation{Mode: hs.NetworkInit, Converged: len(hs.Bridges) == 0}
+	if len(hs.Bridges) == 0 {
+		return observation, nil
+	}
 	var managedTargets []network.BridgeTarget
 	for _, bridge := range hs.Bridges {
 		if bridge.Netns == "" {
@@ -68,6 +71,15 @@ func (s *Substrate) ObserveGuestNetwork(ctx context.Context, handle substrate.No
 			return observation, err
 		}
 		defer unlock()
+	}
+	if hs.GuestFamily == substrate.GuestFamilyWindows {
+		connection, err := s.Connection(handle, nil)
+		if err != nil {
+			return observation, err
+		}
+		observed, err := observeWindowsNetwork(ctx, connection, hs.Bridges, guestNetworkReadyTimeout, guestNetworkPollInterval)
+		observed.Mode = hs.NetworkInit
+		return observed, err
 	}
 	deadline := time.Now().Add(guestNetworkReadyTimeout)
 	for {

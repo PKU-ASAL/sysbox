@@ -8,6 +8,8 @@ func TestQGACommandTimeout(t *testing.T) {
 		want    string
 	}{
 		{command: "guest-ping", want: "10"},
+		{command: "guest-exec", want: "120"},
+		{command: "guest-file-write", want: "60"},
 		{command: "guest-file-read", want: "60"},
 		{command: "guest-exec-status", want: "30"},
 	} {

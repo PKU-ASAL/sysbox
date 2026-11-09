@@ -69,15 +69,21 @@ type domFeatures struct {
 	PAE  struct{} `xml:"pae"`
 }
 
+type domController struct {
+	Type  string `xml:"type,attr"`
+	Index string `xml:"index,attr"`
+}
+
 type domDevices struct {
-	Emulator   string       `xml:"emulator,omitempty"`
-	Disks      []domDisk    `xml:"disk"`
-	Interfaces []domIface   `xml:"interface"`
-	Console    *domConsole  `xml:"console,omitempty"`
-	Serial     *domSerial   `xml:"serial,omitempty"`
-	Channel    *domChannel  `xml:"channel,omitempty"`
-	Graphics   *domGraphics `xml:"graphics,omitempty"`
-	Video      *domVideo    `xml:"video,omitempty"`
+	Controllers []domController `xml:"controller"`
+	Emulator    string          `xml:"emulator,omitempty"`
+	Disks       []domDisk       `xml:"disk"`
+	Interfaces  []domIface      `xml:"interface"`
+	Console     *domConsole     `xml:"console,omitempty"`
+	Serial      *domSerial      `xml:"serial,omitempty"`
+	Channel     *domChannel     `xml:"channel,omitempty"`
+	Graphics    *domGraphics    `xml:"graphics,omitempty"`
+	Video       *domVideo       `xml:"video,omitempty"`
 }
 
 type domGraphics struct {
@@ -265,12 +271,17 @@ func GenerateDomainXML(spec DomainSpec) (string, error) {
 	}
 	if windows {
 		d.GenID = &struct{}{}
+		d.Devices.Controllers = []domController{{Type: "sata", Index: "0"}, {Type: "virtio-serial", Index: "0"}}
 		d.Devices.Channel = &domChannel{Type: "unix", Target: domChannelTgt{Type: "virtio", Name: "org.qemu.guest_agent.0"}}
 		d.Devices.Graphics = &domGraphics{Type: "vnc", Autoport: "yes", Listen: "127.0.0.1"}
 		d.Devices.Video = &domVideo{Model: domVideoModel{Type: "vga"}}
 	}
 	if spec.SeedISO != "" {
-		d.Devices.Disks = append(d.Devices.Disks, domDisk{Type: "file", Device: "cdrom", Driver: domDiskDrv{Name: "qemu", Type: "raw"}, Source: domDiskSrc{File: spec.SeedISO}, Target: domDiskTgt{Dev: "sda", Bus: "sata"}, ReadOnly: &struct{}{}})
+		seedDev := "sda"
+		if windows {
+			seedDev = "sdb"
+		}
+		d.Devices.Disks = append(d.Devices.Disks, domDisk{Type: "file", Device: "cdrom", Driver: domDiskDrv{Name: "qemu", Type: "raw"}, Source: domDiskSrc{File: spec.SeedISO}, Target: domDiskTgt{Dev: seedDev, Bus: "sata"}, ReadOnly: &struct{}{}})
 	}
 	if spec.Identity != nil {
 		if err := spec.Identity.Validate(); err != nil {

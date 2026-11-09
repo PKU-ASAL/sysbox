@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,17 +21,19 @@ import (
 // It does not require guest networking or an administrator password in HCL.
 type qgaConnection struct{ domain string }
 
+// Each virsh operation has its own bound, capped again by the parent context.
+// A longer launch budget does not authorize replay after an ambiguous response.
 func qgaCommandTimeout(command string) string {
-	if command == "guest-exec-status" {
-		// Status checks may carry captured process output, so give them more time
-		// than control probes.
+	switch command {
+	case "guest-exec":
+		return "120"
+	case "guest-exec-status":
 		return "30"
-	}
-	if command == "guest-file-read" {
-		// Windows QGA can take longer to service file reads while ETW is busy.
+	case "guest-file-read", "guest-file-write":
 		return "60"
+	default:
+		return "10"
 	}
-	return "10"
 }
 
 type qgaReply struct {
@@ -55,10 +58,16 @@ func (c *qgaConnection) call(ctx context.Context, command string, args any, resu
 	if len(encoded) > 64<<10 {
 		return fmt.Errorf("QGA request exceeds 64 KiB transport envelope")
 	}
-	// The operation's parent context remains the overall bound; control probes
-	// keep 10 seconds while status and file reads get longer budgets.
+	// Control probes stay short; launching a process and transferring file data
+	// on a loaded Windows guest have separate budgets.
 	timeout := qgaCommandTimeout(command)
-	output, err := exec.CommandContext(ctx, "virsh", "qemu-agent-command", c.domain, "--timeout", timeout, string(encoded)).CombinedOutput()
+	seconds, _ := strconv.Atoi(timeout)
+	callCtx, cancel := context.WithTimeout(ctx, time.Duration(seconds)*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(callCtx, "virsh", "qemu-agent-command", c.domain, "--timeout", timeout, string(encoded))
+	// Bound inherited output pipes if a helper outlives the virsh process.
+	cmd.WaitDelay = 2 * time.Second
+	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("libvirt qga %s: %w: %s", command, err, output)
 	}
