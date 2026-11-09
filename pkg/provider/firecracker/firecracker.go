@@ -116,7 +116,7 @@ func (s *Substrate) MarshalProviderState(h substrate.NodeHandle) (json.RawMessag
 		}
 		defer vm.unlockOperation()
 	}
-	if hs.Version != manifestVersion {
+	if !supportedNetworkHandle(*hs) {
 		return nil, fmt.Errorf("firecracker provider state version %d unsupported; rebuild required", hs.Version)
 	}
 	return json.Marshal(hs)
@@ -131,7 +131,7 @@ func (s *Substrate) UnmarshalProviderState(data json.RawMessage) (any, error) {
 	if err := json.Unmarshal(data, &hs); err != nil {
 		return nil, fmt.Errorf("firecracker: unmarshal handle state: %w", err)
 	}
-	if hs.Version != manifestVersion {
+	if !supportedNetworkHandle(hs) {
 		return nil, fmt.Errorf("firecracker provider state version %d unsupported; rebuild required", hs.Version)
 	}
 	return &hs, nil
@@ -152,6 +152,9 @@ func (s *Substrate) Connection(handle substrate.NodeHandle, hints []substrate.Co
 			conn.BindExecutionIdentity(handle.ID, handle.Generation)
 			return conn, nil
 		case "ssh":
+			if hs != nil && hs.Fabric != nil {
+				return nil, fmt.Errorf("VM private network fabric requires vsock guest control")
+			}
 			return s.sshConn(handle, hints), nil
 		}
 	}
@@ -160,6 +163,9 @@ func (s *Substrate) Connection(handle substrate.NodeHandle, hints []substrate.Co
 		conn := transport.NewVsockConnection(hs.VsockUDS, hs.VsockPort)
 		conn.BindExecutionIdentity(handle.ID, handle.Generation)
 		return conn, nil
+	}
+	if hs != nil && hs.Fabric != nil {
+		return nil, fmt.Errorf("VM private network fabric requires vsock guest control")
 	}
 	return s.sshConn(handle, hints), nil
 }
