@@ -402,6 +402,8 @@ Firecracker 附件必须位于受管理的 named network namespace；宿主 Dock
 | `ssh_authorized_key` | no | Key injected during guest init |
 | `windows_etw` | no | Install the standalone Windows ETW collector before challenge provisioners and report observation source `etw`. Default `false`; requires `/var/lib/sysbox/vm-artifacts/windows-etw/` artifacts and a Windows guest. |
 
+Libvirt 的 QGA 单次请求预算为：进程启动 120 秒、状态查询 30 秒、文件读写 60 秒，其余控制请求 10 秒；父操作的取消和期限仍优先生效。超时不证明 guest 进程停止，也不自动重放不确定执行。Windows 系统盘使用 SATA `sda`，附加 seed 光驱使用 `sdb`，并声明 SATA 与 virtio-serial 控制器。
+
 <a id="hcl-sysbox_router"></a>
 ### `sysbox_router`
 
@@ -1987,6 +1989,8 @@ python3 scripts/windows/inspect-artifact.py /srv/images/windows-base.qcow2 /srv/
 既有构建器不会被此检查自动执行，也不假定其产物已经 generalize/seal。
 报告中的 source/sha256 可用于既有 `sysbox_image` 字段；报告 size 是文件字节数，不自动映射 HCL size，源文件须通过宿主配置允许的制品路径提供。
 不引入 WinRM 管理层、业务域/账号配置或外部 endpoint 管理器；实际 Windows 版本及 helper 配套仍需单独验收。
+
+Windows libvirt 网络就绪通过现有 QGA 通道只读核对声明的 MAC 与 IPv4 前缀，不以 ICMP 放行作为网卡初始化成功的条件；它不证明宿主路由或业务可达性。网络配置仍由原有初始化步骤完成，观察过程不设置地址、时间或防火墙。Windows 路由写入成功后最多等待 60 秒观察路由表，受上层期限约束；仅重试明确缺失的观察，查询错误立即返回，绝不重放写入。
 
 ### Firecracker 多隔离网络（冷插拔）
 
