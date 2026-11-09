@@ -71,6 +71,13 @@ func DecodeResource(r *ResourceBlock, target any, ctx *hcl.EvalContext) error {
 		diagnostics.Sort()
 		return diagnostics
 	}
+	if node, ok := target.(*NodeConfig); ok {
+		for _, connection := range node.Connections {
+			if err := connection.ValidateCredentialReferences(); err != nil {
+				return err
+			}
+		}
+	}
 	if err := validateLogicalAttachmentNames(target); err != nil {
 		return fmt.Errorf("resource %s.%s: %w", r.Type, r.Name, err)
 	}

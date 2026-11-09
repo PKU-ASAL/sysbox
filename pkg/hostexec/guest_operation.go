@@ -56,7 +56,11 @@ func RunGuestExecCapture(ctx context.Context, st *state.State, node string, argv
 	if err != nil {
 		return substrate.ExecResult{}, fmt.Errorf("reconstruct provider handle: %w", err)
 	}
-	conn, err := nodeDriver.Connection(handle, nil)
+	hints, err := substrate.CanonicalConnectionHints(ctx, res.Attributes["desired"])
+	if err != nil {
+		return substrate.ExecResult{}, fmt.Errorf("canonical guest connection: %w", err)
+	}
+	conn, err := nodeDriver.Connection(handle, hints)
 	if err != nil {
 		if errors.Is(err, substrate.ErrNotSupported) {
 			return substrate.ExecResult{}, fmt.Errorf("%w", controlplane.ErrGuestExecUnsupported)
