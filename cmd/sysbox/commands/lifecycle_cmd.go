@@ -38,9 +38,11 @@ func newLifecycleCommand(operation string) *cobra.Command {
 		command.Flags().StringArrayVar(&includes, "include", nil, "additional project file or directory, relative to the HCL directory")
 		command.Flags().StringVar(&target, "target", "", "select one resource (Reset requires sysbox_node.name)")
 	}
-	if operation == "apply" || operation == "plan" {
+	if operation == "apply" || operation == "plan" || operation == "reset" {
 		command.Flags().StringVar(&inputsFile, "inputs", "", "JSON input values; sent transiently, never included in the revision")
-		command.Flags().StringVar(&deadline, "deadline", "", "absolute execution deadline (RFC3339)")
+		if operation != "reset" {
+			command.Flags().StringVar(&deadline, "deadline", "", "absolute execution deadline (RFC3339)")
+		}
 	}
 	if operation == "reset" {
 		command.Use = "reset [--target sysbox_node.name] [--resume <run-id>]"
@@ -90,6 +92,13 @@ func newLifecycleCommand(operation string) *cobra.Command {
 				return fmt.Errorf("parent Run is not a reset in the selected topology")
 			}
 			path = "/v1/runs/" + resume + "/resume"
+			inputs, err := readLifecycleInputs(inputsFile)
+			if err != nil {
+				return err
+			}
+			if inputs != nil {
+				body = map[string]any{"inputs": inputs}
+			}
 		} else if operation != "destroy" {
 			if revision != "" && (cmd.Flags().Changed("file") || len(includes) > 0) {
 				return fmt.Errorf("choose --revision or local configuration files")

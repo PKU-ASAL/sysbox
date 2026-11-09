@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/oslab/sysbox/pkg/artifact"
@@ -49,7 +48,7 @@ func (e *Executor) ObserveRecoverRun(ctx context.Context, agentID string, cmd co
 		}
 	}
 	if auth.Mode == controlplane.RunRecoveryRecover {
-		if strings.HasPrefix(run.RequestFingerprint, "apply-request:") && auth.Inputs == nil {
+		if controlplane.HasBoundRunInputs(run) && auth.Inputs == nil {
 			return nil, fmt.Errorf("recovery authorization lacks resubmitted inputs")
 		}
 		if run.Status != controlplane.RunFailed || !run.Recoverable || run.LeaseUntil.After(time.Now()) {
