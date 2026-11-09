@@ -1973,6 +1973,23 @@ cleanup 的 version=1、empty=true、state_serial>0，以及 RunID、topology、
 
 API 收敛超时使用 `error_code=convergence_deadline_exceeded`，与宿主 context 超时的 `deadline_exceeded` 分开。该业务失败不会被后来宿主成功覆盖；同一执行身份的有效签名宿主停止证据仍可落库、清理 Run lease 和释放执行授权。宿主实际结果保留在 HostCompletion 证据中，重试要求完全相同的签名证据。其他终态与不同 attempt 不被放宽。
 
+### Windows 离线镜像交付
+
+镜像构建与资源 Apply 分开：现有 `scripts/windows/build-windows10.sh` 等入口只在专用构建宿主显式运行；
+运行时仅消费已核验的 qcow2，不接受 `windows_cache.build_script` 或由 HCL 触发宿主镜像构建。
+从 #79 提取的封存检查位于 `scripts/windows/inspect-artifact.py`，在构建、generalize/seal、关机完成后执行：
+
+```sh
+python3 scripts/windows/inspect-artifact.py /srv/images/windows-base.qcow2 /srv/images/windows-base.json --system-partition /dev/sda1
+```
+
+输入必须是只读、独立无 backing chain 或 external data-file 的 qcow2；显式指定 Windows 系统分区。
+脚本仅调用 `qemu-img info` 和只读 `guestfish`，拒绝非封存状态、查询失败或检查期间变化的文件，生成不可覆盖的 SHA-256、大小与封存状态报告。
+它不修改或启动镜像，不证明 QGA、网络、任务 helper 已通过运行验收；报告的 `runtime_accepted` 固定为 false。
+既有构建器不会被此检查自动执行，也不假定其产物已经 generalize/seal。
+报告中的 source/sha256 可用于既有 `sysbox_image` 字段；报告 size 是文件字节数，不自动映射 HCL size，源文件须通过宿主配置允许的制品路径提供。
+不引入 WinRM 管理层、业务域/账号配置或外部 endpoint 管理器；实际 Windows 版本及 helper 配套仍需单独验收。
+
 Windows libvirt 网络就绪通过现有 QGA 通道只读核对声明的 MAC 与 IPv4 前缀，不以 ICMP 放行作为网卡初始化成功的条件；它不证明宿主路由或业务可达性。网络配置仍由原有初始化步骤完成，观察过程不设置地址、时间或防火墙。Windows 路由写入成功后最多等待 60 秒观察路由表，受上层期限约束；仅重试明确缺失的观察，查询错误立即返回，绝不重放写入。
 
 ### Firecracker 多隔离网络（冷插拔）
