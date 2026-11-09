@@ -75,7 +75,7 @@ docker 节点由守护进程的 detached exec 承担，进程归属、观察和�
 
 ### Firecracker 与 libvirt
 
-Firecracker 要求配套的 Firecracker/jailer 1.15.1、KVM、cgroup v2 和具备 `cgroup.kill` 的内核。联网 VMM 必须使用 named netns，不支持共享宿主 Docker bridge 的组合。
+Firecracker 要求配套的 Firecracker/jailer 1.15.1、KVM、cgroup v2 和具备 `cgroup.kill` 的内核。联网 VMM 使用本代 VM 专用 named netns，每条 link 有独立 bridge/TAP/veth 接入原隔离网络，不在 VM netns 中配置宿主 IP 或启用转发；不支持共享宿主 Docker bridge、NAT 或网卡热插拔。新 fabric 使用 vsock guest 控制，不支持 SSH；旧单网卡 manifest 保留原读删路径。
 
 宿主 systemd 单元采用系统服务默认 root 身份，避免已复现的 systemd 255 配置组合丢失实际 CAP_SETUID；NoNewPrivileges 和其他防护仍开启。jailer 最终必须以非 root UID 运行 VMM。
 

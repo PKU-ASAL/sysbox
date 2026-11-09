@@ -1997,3 +1997,22 @@ cleanup 的 version=1、empty=true、state_serial>0，以及 RunID、topology、
 `acked`/`running` 的命令投递租约过期后，仅当同一 Run 仍 assigned、没有取得 Run claim、且授权 ledger 中没有该命令/动作的现行或历史执行授权时，才允许在原记录上恢复 queued 投递。新的投递递增 attempt，旧 attempt 不能更新新记录。已取得执行权或结果未知的任务不通过此路径重放。
 
 API 收敛超时使用 `error_code=convergence_deadline_exceeded`，与宿主 context 超时的 `deadline_exceeded` 分开。该业务失败不会被后来宿主成功覆盖；同一执行身份的有效签名宿主停止证据仍可落库、清理 Run lease 和释放执行授权。宿主实际结果保留在 HostCompletion 证据中，重试要求完全相同的签名证据。其他终态与不同 attempt 不被放宽。
+
+### Firecracker 多隔离网络（冷插拔）
+
+一个 Firecracker 节点最多声明 8 个 link，可指向不同的非 NAT `sysbox_network`。
+所有网卡须在启动前接入；每个 link 在本代 VM namespace 内拥有独立 bridge、TAP 和 veth，另一端接入目标网络的归属桥。
+VM namespace 不设置宿主地址、不启用 IPv4/IPv6 转发，网络之间的转发须由 guest 显式配置；多个默认 gateway 在规划时拒绝，其余目的网段使用 routes。
+
+Create、Observe、启动 TAP UID 授权、Reset、Destroy 和 fenced GC 使用相同的 namespace device/inode、接口 index/alias 与 peer 证明。
+Reset 新代际获得新的 VM namespace；清理先确认 VMM 停止，再核验和删除该代全部连接，最后删除空 namespace。
+缺少回执、创建回复丢失、部分连接或外部替换保持 unknown，不凭名称认领或销毁。完整 namespace inventory 拒绝额外端口。
+此能力不增加执行入口；仍走 API → Agent → 宿主 → runtime → SPI。
+
+新联网 VM 要求 vsock helper；SSH、NAT、热插拔和 fabric VM 的 ownership transfer 暂不支持。
+新 manifest 使用版本 4，避免旧程序忽略新增网络证明；版本 3 仅在无 fabric 字段时保留受限兼容，不自动迁移运行中 VM。
+升级应先在旧版本完成在途动作与资源清理，不能直接用旧程序接管新 manifest。
+
+测试入口：network 的 `TestVMFabricSeparateNetworksE2E`、Firecracker 的 `TestFirecrackerMultiNetworkLifecycleE2E` 与 `TestFirecrackerMultiNetworkRealBootE2E`。
+前两者在可丢弃隔离容器中验证网络与 manifest；最后一项需要 KVM、配套 jailer、kernel/rootfs 和容器内独立委派的 cgroup。
+测试开关分别是 `SYSBOX_VM_FABRIC_E2E` 和 `SYSBOX_VM_FABRIC_KVM_E2E`，未启用时的 skip 不等于验收通过。
