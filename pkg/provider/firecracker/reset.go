@@ -221,7 +221,7 @@ func (s *Substrate) CleanupReset(ctx context.Context, handle substrate.ResetHand
 // retain their identity throughout recovery; never rewrite the caller's handle
 // or loosen the ordinary manifest generation check to accommodate reset.
 func validateResetTarget(target substrate.OperationIdentity, current *HandleState) error {
-	if current == nil || current.Version != manifestVersion || current.OwnerUID == "" || current.ResourceUID == "" || current.Generation < 1 ||
+	if current == nil || !supportedNetworkHandle(*current) || current.OwnerUID == "" || current.ResourceUID == "" || current.Generation < 1 ||
 		target.ActionID == "" || target.OwnerUID != current.OwnerUID || target.ResourceUID != current.ResourceUID || target.TopologyUID != current.TopologyUID ||
 		target.Generation <= current.Generation || target.Generation-current.Generation != 1 {
 		return fmt.Errorf("firecracker reset target identity must match current owner/resource and generation + 1")
@@ -284,6 +284,16 @@ func cloneHandleState(state *HandleState) *HandleState {
 	}
 	cloned := *state
 	cloned.Attachments = append([]managedAttachment(nil), state.Attachments...)
+	if state.Fabric != nil {
+		copy := *state.Fabric
+		cloned.Fabric = &copy
+	}
+	for i, a := range state.Attachments {
+		if a.Circuit != nil {
+			copy := *a.Circuit
+			cloned.Attachments[i].Circuit = &copy
+		}
+	}
 	return &cloned
 }
 

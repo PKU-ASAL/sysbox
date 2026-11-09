@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"time"
 
+	"github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
@@ -16,6 +18,8 @@ import (
 // The VM lock remains held through both writes. A cold reader must acquire that
 // lock and independently establish absence; a record alone is not completion.
 type deletionEvidence struct {
+	Fabric    *network.VMNamespace        `json:"fabric,omitempty"`
+	Circuits  []network.VMCircuit         `json:"circuits,omitempty"`
 	Jail      *jailIdentity               `json:"jail,omitempty"`
 	Version   int                         `json:"version"`
 	Identity  substrate.OperationIdentity `json:"identity"`
@@ -54,6 +58,15 @@ func (s *Substrate) recordStoppedDeletion(ctx context.Context, h substrate.NodeH
 		return err
 	}
 	e := deletionEvidence{Jail: m.Jail, Version: 1, Identity: id, VMID: m.VMID, Directory: m.Handle.VMDir, Socket: m.Handle.Socket, Vsock: m.Handle.VsockUDS, Process: m.Process, StoppedAt: time.Now().UTC()}
+	if m.Handle.Fabric != nil {
+		e.Fabric = m.Handle.Fabric
+		for _, a := range m.Handle.Attachments {
+			if a.Circuit == nil {
+				return fmt.Errorf("deletion circuit missing")
+			}
+			e.Circuits = append(e.Circuits, *a.Circuit)
+		}
+	}
 	raw, err := json.Marshal(e)
 	if err != nil {
 		return err
@@ -105,6 +118,29 @@ func (s *Substrate) proveDeletedQuiescence(h substrate.NodeHandle, operationID s
 		}
 		if _, err := os.Lstat(p); !os.IsNotExist(err) {
 			return zero, fmt.Errorf("firecracker deletion absence not confirmed: %s: %v", p, err)
+		}
+	}
+	if hs.Fabric != nil {
+		if !reflect.DeepEqual(hs.Fabric, e.Fabric) || len(hs.Attachments) != len(e.Circuits) {
+			return zero, fmt.Errorf("deletion fabric evidence differs from canonical handle")
+		}
+		for i, a := range hs.Attachments {
+			if a.Circuit == nil || !reflect.DeepEqual(*a.Circuit, e.Circuits[i]) {
+				return zero, fmt.Errorf("deletion circuit evidence differs from canonical handle")
+			}
+		}
+	}
+	if e.Fabric != nil {
+		if err := e.Fabric.Validate(id); err != nil {
+			return zero, err
+		}
+		for _, c := range e.Circuits {
+			if err := network.VMCircuitAbsent(context.Background(), *e.Fabric, c); err != nil {
+				return zero, err
+			}
+		}
+		if err := network.VMNamespaceAbsent(context.Background(), *e.Fabric); err != nil {
+			return zero, err
 		}
 	}
 	// loadManifest has already checked the supplied process and launch residue.
