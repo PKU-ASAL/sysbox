@@ -74,12 +74,15 @@ func runAnchor(args []string, stdout, stderr io.Writer) int {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	if !local {
-		self, err := os.Executable()
+		// The helper can run inside a container with host PID visibility. After
+		// entering PID 1's mount namespace its image path need not exist. Pin the
+		// executing inode, not a path resolved again against the host filesystem.
+		self, err := os.Open("/proc/self/exe")
 		if err != nil {
 			return fail(err)
 		}
-		cmd := exec.CommandContext(ctx, "nsenter", append([]string{"--no-fork", "--mount=/proc/1/ns/mnt", "--net=/proc/1/ns/net", "--", self, "--anchor-local"}, args...)...)
-		cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
+		defer self.Close()
+		cmd := anchorHostCommand(ctx, self, args)
 		cmd.Stdout, cmd.Stderr = stdout, stderr
 		if err := cmd.Run(); err != nil {
 			return fail(err)
@@ -141,6 +144,15 @@ func runAnchor(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	return 0
+}
+
+// FD 3 is inherited by nsenter and survives its --no-fork exec. The helper is
+// static, so executing this pinned file needs no container-root dynamic loader.
+func anchorHostCommand(ctx context.Context, self *os.File, args []string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "nsenter", append([]string{"--no-fork", "--mount=/proc/1/ns/mnt", "--net=/proc/1/ns/net", "--", "/proc/self/fd/3", "--anchor-local"}, args...)...)
+	cmd.ExtraFiles = []*os.File{self}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
+	return cmd
 }
 
 func lockAnchors(ctx context.Context) (*os.File, error) {

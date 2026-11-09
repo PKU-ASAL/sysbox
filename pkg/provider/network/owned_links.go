@@ -248,7 +248,7 @@ func (d Driver) deleteRecordedLinks(ctx context.Context, m networkOwnership) err
 				if proof.Version != 1 || proof.Alias != networkAlias(m.Identity) || link.Attrs().Index != proof.Index || link.Type() != proof.Kind || link.Attrs().Alias != proof.Alias {
 					return driver.Wrap(driver.ErrorInvalidState, "network", "network link incarnation changed", nil)
 				}
-				return h.LinkDel(link)
+				return deleteInspectedLink(h, link)
 			}()
 			if err != nil {
 				return err

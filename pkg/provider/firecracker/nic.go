@@ -21,12 +21,15 @@ import (
 // Firecracker does NOT support NIC hot-plug in config-file mode,
 // so we must declare all interfaces before boot.
 type attachmentState struct {
+	Fabric      *network.VMNamespace    `json:"fabric,omitempty"`
+	Circuit     *network.VMCircuit      `json:"circuit,omitempty"`
 	Link        *network.AttachmentLink `json:"link"`
 	Tap         string                  `json:"tap"`
 	NetNS       string                  `json:"netns"`
 	GuestDevice string                  `json:"guest_device"`
 }
 type managedAttachment struct {
+	Circuit     *network.VMCircuit     `json:"circuit,omitempty"`
 	Name        string                 `json:"name"`
 	GuestDevice string                 `json:"guest_device"`
 	Target      network.BridgeTarget   `json:"target"`
@@ -45,6 +48,8 @@ type linkRequest struct {
 }
 type attachedNIC struct {
 	Kind, HostEnd, GuestEnd, IP, NetNS string
+	Circuit                            *network.VMCircuit
+	Fabric                             *network.VMNamespace
 	Link                               network.AttachmentLink
 }
 
@@ -80,7 +85,7 @@ func (s *Substrate) Attach(ctx context.Context, h substrate.NodeHandle, req driv
 		return driver.AttachmentResult{}, driver.Wrap(driver.ErrorUnavailable, "firecracker", "attach network", err)
 	}
 	guest := attached.GuestEnd
-	raw, _ := json.Marshal(attachmentState{Tap: attached.HostEnd, NetNS: attached.NetNS, GuestDevice: guest, Link: &attached.Link})
+	raw, _ := json.Marshal(attachmentState{Fabric: attached.Fabric, Circuit: attached.Circuit, Tap: attached.HostEnd, NetNS: attached.NetNS, GuestDevice: guest, Link: &attached.Link})
 	return driver.AttachmentResult{Driver: "firecracker", GuestDevice: guest, State: raw}, nil
 }
 func (s *Substrate) Observe(ctx context.Context, h substrate.NodeHandle, req driver.AttachmentRequest, raw json.RawMessage) (driver.AttachmentResult, error) {
@@ -108,6 +113,38 @@ func (s *Substrate) Observe(ctx context.Context, h substrate.NodeHandle, req dri
 	bridgeTarget, err := attachmentBridgeTarget(req.NetworkIdentity, target)
 	if err != nil {
 		return driver.AttachmentResult{}, err
+	}
+	if st.Circuit != nil || st.Fabric != nil {
+		if st.Circuit == nil || st.Fabric == nil || m.Handle.Fabric == nil {
+			return driver.AttachmentResult{}, fmt.Errorf("incomplete VM circuit proof")
+		}
+		if err := st.Fabric.Validate(id); err != nil {
+			return driver.AttachmentResult{}, err
+		}
+		if *st.Fabric != *m.Handle.Fabric || st.Link == nil || *st.Link != st.Circuit.Tap {
+			return driver.AttachmentResult{}, fmt.Errorf("VM circuit state conflict")
+		}
+		found := false
+		for _, a := range m.Handle.Attachments {
+			if a.Name == req.Name && network.SameVMCircuit(a.Circuit, st.Circuit) {
+				found = true
+			}
+		}
+		if !found {
+			return driver.AttachmentResult{}, fmt.Errorf("VM circuit absent from manifest")
+		}
+		bridge, err := network.OpenOwnedBridge(ctx, bridgeTarget)
+		if err != nil {
+			return driver.AttachmentResult{}, err
+		}
+		defer bridge.Close()
+		if err = bridge.ObserveVMCircuit(ctx, *st.Fabric, *st.Circuit); err != nil {
+			return driver.AttachmentResult{}, err
+		}
+		return driver.AttachmentResult{Driver: "firecracker", GuestDevice: st.GuestDevice, State: raw}, nil
+	}
+	if m.Handle.Fabric != nil {
+		return driver.AttachmentResult{}, fmt.Errorf("VM circuit evidence missing")
 	}
 	bridge, err := network.OpenOwnedBridge(ctx, bridgeTarget)
 	if err != nil {
@@ -137,6 +174,20 @@ func (s *Substrate) Delete(ctx context.Context, h substrate.NodeHandle, req driv
 	if st.Link == nil {
 		return driver.Wrap(driver.ErrorInvalidState, "firecracker", "attachment ownership proof required", nil)
 	}
+	if st.Fabric != nil || st.Circuit != nil {
+		hs, ok := h.Provider.(*HandleState)
+		if !ok || hs.Fabric == nil || st.Fabric == nil || st.Circuit == nil || *hs.Fabric != *st.Fabric {
+			return fmt.Errorf("VM fabric deletion proof missing")
+		}
+		if err := st.Circuit.Validate(*st.Fabric); err != nil {
+			return err
+		}
+		// Reset invokes attachment deletion before DestroyReset; confirm the old
+		// VMM stopped before disconnecting its fabric, using its canonical handle.
+		if err := s.StopNode(ctx, h); err != nil {
+			return err
+		}
+	}
 	_, m, release, err := s.lockedManifest(ctx, h)
 	if err != nil {
 		return err
@@ -146,6 +197,34 @@ func (s *Substrate) Delete(ctx context.Context, h substrate.NodeHandle, req driv
 	alias, err := network.AttachmentAlias(id, req.Name)
 	if err != nil {
 		return err
+	}
+	if st.Circuit != nil || st.Fabric != nil {
+		if st.Circuit == nil || st.Fabric == nil || m.Handle.Fabric == nil || *m.Handle.Fabric != *st.Fabric || st.Circuit.Tap != *st.Link {
+			return fmt.Errorf("VM circuit deletion identity conflict")
+		}
+		if err := st.Fabric.Validate(id); err != nil {
+			return err
+		}
+		found := false
+		for _, a := range m.Handle.Attachments {
+			if a.Name == req.Name && network.SameVMCircuit(a.Circuit, st.Circuit) {
+				found = true
+			}
+		}
+		if !found || st.Circuit.Alias != alias {
+			return fmt.Errorf("VM circuit not owned by manifest")
+		}
+		live, _, err := probeProcess(m.Process)
+		if err != nil {
+			return err
+		}
+		if live {
+			return fmt.Errorf("stop VMM before deleting circuit")
+		}
+		return network.DeleteVMCircuit(ctx, *st.Fabric, *st.Circuit)
+	}
+	if m.Handle.Fabric != nil {
+		return fmt.Errorf("missing VM circuit deletion evidence")
 	}
 	return network.DeleteOwnedAttachment(ctx, *st.Link, alias)
 }
@@ -171,6 +250,9 @@ func (s *Substrate) attachNIC(ctx context.Context, h substrate.NodeHandle, req l
 		return attachedNIC{}, fmt.Errorf("firecracker NIC attachment requires a stopped, prepared VM")
 	}
 	hs := &m.Handle
+	if hs.Fabric != nil || hs.NICCount == 0 {
+		return s.attachFabricNIC(ctx, h, vm, m, req)
+	}
 	if hs.NICCount > 0 && hs.NetnsName != req.NetNS {
 		return attachedNIC{}, fmt.Errorf("firecracker VM cannot attach NICs from multiple network namespaces: %q and %q", hs.NetnsName, req.NetNS)
 	}

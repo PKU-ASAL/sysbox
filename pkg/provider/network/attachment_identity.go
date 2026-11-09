@@ -142,7 +142,7 @@ func useOwnedAttachment(ctx context.Context, proof AttachmentLink, alias string,
 		return err
 	}
 	if remove {
-		return h.LinkDel(link)
+		return deleteInspectedLink(h, link)
 	}
 	return nil
 }
