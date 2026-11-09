@@ -34,6 +34,12 @@ func ResolveResetOrigin(ctx context.Context, bridge Bridge, run *controlplane.Ru
 		if parent == nil || parent.ID != current.ParentID || parent.Topology != run.Topology || parent.Op != "reset" || parent.Revision != run.Revision || parent.QueuedAt.IsZero() || !parent.Status.IsTerminal() {
 			return nil, fmt.Errorf("reset predecessor identity changed or execution is not terminal")
 		}
+		if controlplane.HasBoundRunInputs(*current) && current.RequestFingerprint != controlplane.ResetContinuationFingerprint(*parent, *current, run.Inputs) {
+			return nil, fmt.Errorf("reset continuation input or parent binding changed")
+		}
+		if err := controlplane.ValidateRunInputs(*parent, run.Inputs); err != nil {
+			return nil, fmt.Errorf("reset predecessor inputs changed: %w", err)
+		}
 		if err := verifier.VerifyResetContinuation(ctx, current, parent); err != nil {
 			return nil, err
 		}

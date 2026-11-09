@@ -109,6 +109,24 @@ Catalog 与后台巡检按上述持久事实的并集枚举：HCL 目录、lifec
 
 `GET /v1/topologies/{name}` 的 `status.conditions` 是只读观测投影：`Applied` 来自 topology 最近一次 Run 的终态，`Provisioned` 来自巡检写入的 health snapshot，`Asserted` 来自最近一次 check/assert 求值；三者全为 True 才 `Ready=True`，任一 Unknown 时 Ready 为 Unknown，任一 False 时 Ready 为 False。已完成的 destroy 描述资源释放，不构成 `Applied` 判定，其 `phase` 为 `destroyed`（资源已释放、workspace 与生命周期元数据保留）；失败的 destroy 仍保留失败判定。`gone` 只表示权威缺席（无 workspace、无 state、无在途 Run、无 placement），二者不可混用。apply/repair 与 reset 都在执行完成后重新求值 check/assert，否则 reset 之后的 `Asserted` 会永远停在 Unknown。消费者应依据 `has_state`、`active_run_id`、`placement_agent_id` 和 `phase` 判断存在性，不得用 `has_hcl=false` 推断 topology 不存在。
 
+## Managed endpoint：宿主集成设计边界，尚未实现
+
+#79 提供的是 Linux 宿主上的 SysArmor Agent 制品和管理端注册配置，制品中包含 Tetragon 组件；
+它不是 Windows MSI，也不是普通 guest 软件包。原实现将宿主进程共享池隐式接入节点创建，默认作用域为宿主。
+因此，不能把普通 guest 组件安装设计当作这项需求已经迁移到当前架构。
+
+建议把宿主组件的安装、启动、升级和停用留在管理员显式部署范围，由 systemd 等已有宿主服务机制管理。
+Sysbox 的普通用户 Agent 仍只负责转发；宿主服务继续负责资源操作授权，不新增通用进程管理器，也不因创建节点而安装或共享宿主 sensor。
+外部管理系统负责自己的注册和业务策略；Sysbox 如需参与，只能关联有明确归属的资源范围，不由这种关联推导或扩大采集权限。
+
+后续关联能力必须区分宿主组件身份、Sysbox topology/resource UID/generation 与管理端身份。
+节点 Reset 或回收只影响该资源关联，不自动授权停止、卸载共享宿主组件，也不证明外部系统已经注销。
+查询失败保留 unknown；没有可核验的精确范围和回执时，不宣称关联生效或已撤销。
+
+当前宿主信任与 journal 契约没有组件安装、注册、范围关联和卸载的适配协议。
+这次先明确职责，不虚构 HCL 字段、安装命令或运行能力；接口边界见[managed endpoint 设计约束](interfaces.md#managed-component-design)。
+普通 guest 组件的显式生命周期可以另行设计，必须复用既有签名任务、资源身份和恢复机制，但不属于 #79 宿主集成的实现。
+
 ## 发布与验收
 
 CLI、API、宿主和 guest helper 必须来自匹配制品。发布包携带版本、commit、哈希与 metadata；部署不隐式重建源码。验收使用正式 systemd 单元和独立实验环境。

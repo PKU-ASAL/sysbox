@@ -146,6 +146,33 @@ Fencing 的 recovery-plan / observe / reconcile-delete / reconcile-intents / rel
 API 的 [capabilities](../pkg/api/capabilities.go)不会无条件声称 external absence 或 resource revocation 已得到证明。
 恢复敏感输入可能需要向实际接收恢复请求的 API 重交完全相同的请求；输入未补齐时拒绝执行，不能回退默认值。
 
+<a id="managed-component-design"></a>
+## Managed endpoint 设计约束（尚未实现）
+
+#79 的来源制品是带版本和 SHA-256 的 Linux 宿主 SysArmor Agent 归档，包含 Tetragon 组件，
+并携带管理端地址和注册凭据的配置概念。原实现使用共享宿主进程池，默认宿主范围；不能将它理解成已经选定的普通 guest 组件包。
+当前 `dev` 没有该集成的显式资源、HTTP 安装接口或 Provider capability。本节是设计约束，不是可调用协议。
+
+| 责任 | 设计边界 |
+|---|---|
+| 宿主部署 | 管理员显式安装、启动、升级和停用组件，沿用已有 systemd 服务边界；Sysbox 不在节点创建时隐式执行这些动作 |
+| 制品身份 | 部署侧固定 Linux 架构、版本和 SHA-256；制品身份只能证明所用内容，不能代替组件实际运行或权限范围的证据 |
+| 注册 | 外部管理系统负责自身注册、认证和业务策略；普通用户 Sysbox Agent 不持管理端注册凭据 |
+| 资源关联 | 未来 Sysbox 关联只允许明确归属的 topology/resource UID/generation，必须与宿主组件身份和外部管理端身份分别绑定 |
+| 权限范围 | 资源关联不自动授予采集权限，不把容器范围升级为宿主范围，不默认启用任何观测功能 |
+| 观察 | 只核验声明范围的实际关联与回执；存在进程、能连接管理端或任务退出码 0 均不能单独证明关联生效 |
+| Reset/回收 | 旧节点代际的关联证据不能用于新代际；资源回收只处理对应关联，不自动停止或卸载可能服务其他资源的宿主组件 |
+| 失败恢复 | 丢失回复、断线和超时不证明撤销或停止；缺少范围回执时保留 unknown，不盲目重放、不删除证据 |
+| 凭据 | 需要外部注册的凭据由部署及管理系统负责，不能进入资源 state、回执、镜像或日志；任何未来瞬态交接需单独明确授权和重放绑定 |
+
+运行实现前，必须先有组件提供的版本化协议，能精确识别宿主实例、声明资源范围、观察关联和确认撤销，
+并定义如何在现有宿主授权与 journal 下处理部分完成、重复请求和重启。当前尚无这种适配协议，不能用任意脚本 runner 或通用进程池补位。
+没有可靠撤销或范围确认能力的部署只能报告不支持，不能宣称实现了完整资源生命周期。
+
+普通 guest 组件是另一个未来能力：它需要明确包类型、操作系统、受控安装根、组件身份和 node UID/generation，
+以及独立的安装、观察、卸载回执。现有 signed guest task 和固定文件发布提供执行基础，不等于完整软件包管理。
+本次不选择或实现这个替代产品，也不把它作为 #79 的迁移成果。
+
 <a id="provider-spi"></a>
 ## 内部 Provider 与 Repository 契约
 
@@ -402,6 +429,8 @@ Firecracker 附件必须位于受管理的 named network namespace；宿主 Dock
 | `ssh_authorized_key` | no | Key injected during guest init |
 | `windows_etw` | no | Install the standalone Windows ETW collector before challenge provisioners and report observation source `etw`. Default `false`; requires `/var/lib/sysbox/vm-artifacts/windows-etw/` artifacts and a Windows guest. |
 
+Libvirt 的 QGA 单次请求预算为：进程启动 120 秒、状态查询 30 秒、文件读写 60 秒，其余控制请求 10 秒；父操作的取消和期限仍优先生效。超时不证明 guest 进程停止，也不自动重放不确定执行。Windows 系统盘使用 SATA `sda`，附加 seed 光驱使用 `sdb`，并声明 SATA 与 virtio-serial 控制器。
+
 <a id="hcl-sysbox_router"></a>
 ### `sysbox_router`
 
@@ -506,8 +535,8 @@ sysbox apply --topology NAME [-f FILE | --revision SHA256] [--include PATH] [--i
 #### `reset`
 
 ```text
-sysbox reset --topology NAME [-f FILE | --revision SHA256] [--target sysbox_node.NAME] [--key KEY] [--auto-approve] [--detach]
-sysbox reset --topology NAME --resume RUN_ID [--key KEY] [--auto-approve] [--detach]
+sysbox reset --topology NAME [-f FILE | --revision SHA256] [--target sysbox_node.NAME] [--inputs values.json] [--key KEY] [--auto-approve] [--detach]
+sysbox reset --topology NAME --resume RUN_ID [--inputs values.json] [--key KEY] [--auto-approve] [--detach]
 ```
 
 续接使用原 Run 的配置和完整范围，不能同时传 file/revision/include/target。
@@ -1992,6 +2021,33 @@ WinRM 不自动重试效果，不切换到 QGA 重新执行；本地超时或 WS
 默认前台等待上限五分钟，且服从更短父期限；单次 HTTP 传输、SOAP 和输出大小均有界。
 实现复用 masterzen/winrm 的 WS-Man 协议，HTTP 封装补齐请求 context、TLS、禁重定向及响应上限。
 本轮仅有本地协议/选择/秘密引用回归；Windows HTTPS 实机互通与凭据轮换未验收。
+
+### Reset 瞬态输入
+
+`POST /v1/topologies/{name}/reset` 接受 `inputs`。非空输入要求明确 `Idempotency-Key` 和不可变 revision；值通过现有 Agent claim → 宿主授权链传递，只保存在内存，不写入 Run、command 或 checkpoint。
+Reset 不重新定义已部署的非敏感变量；配置求值仍使用已持久化的非敏感输入，`inputs` 用于解析本次执行的 `secret://input/` 引用。
+输入参与请求摘要：相同 key 改输入返回冲突。API 重启后，input-bound Reset 的 `inputs_required=true`，claim 返回现有输入缺失错误；重新提交完全相同的 Reset 请求恢复输入，不创建新任务。
+`POST /v1/runs/{id}/resume` 接受可选 `{"inputs":{...}}`；input-bound Reset continuation 要求明确 key，输入必须与父任务一致，子请求同时绑定父任务 ID、QueuedAt 和 revision。宿主执行前逐层验证原有停止证明及输入绑定。
+Continuation 重启后用同一 parent、key 和输入重提；改变输入或父 incarnation 均拒绝。旧的无输入 continuation 保留原协议，不接受新加秘密。`sysbox reset --inputs values.json` 与 `--resume` 都使用这些服务入口，无本地 fallback。
+
+### Windows 离线镜像交付
+
+镜像构建与资源 Apply 分开：现有 `scripts/windows/build-windows10.sh` 等入口只在专用构建宿主显式运行；
+运行时仅消费已核验的 qcow2，不接受 `windows_cache.build_script` 或由 HCL 触发宿主镜像构建。
+从 #79 提取的封存检查位于 `scripts/windows/inspect-artifact.py`，在构建、generalize/seal、关机完成后执行：
+
+```sh
+python3 scripts/windows/inspect-artifact.py /srv/images/windows-base.qcow2 /srv/images/windows-base.json --system-partition /dev/sda1
+```
+
+输入必须是只读、独立无 backing chain 或 external data-file 的 qcow2；显式指定 Windows 系统分区。
+脚本仅调用 `qemu-img info` 和只读 `guestfish`，拒绝非封存状态、查询失败或检查期间变化的文件，生成不可覆盖的 SHA-256、大小与封存状态报告。
+它不修改或启动镜像，不证明 QGA、网络、任务 helper 已通过运行验收；报告的 `runtime_accepted` 固定为 false。
+既有构建器不会被此检查自动执行，也不假定其产物已经 generalize/seal。
+报告中的 source/sha256 可用于既有 `sysbox_image` 字段；报告 size 是文件字节数，不自动映射 HCL size，源文件须通过宿主配置允许的制品路径提供。
+不引入 WinRM 管理层、业务域/账号配置或外部 endpoint 管理器；实际 Windows 版本及 helper 配套仍需单独验收。
+
+Windows libvirt 网络就绪通过现有 QGA 通道只读核对声明的 MAC 与 IPv4 前缀，不以 ICMP 放行作为网卡初始化成功的条件；它不证明宿主路由或业务可达性。网络配置仍由原有初始化步骤完成，观察过程不设置地址、时间或防火墙。Windows 路由写入成功后最多等待 60 秒观察路由表，受上层期限约束；仅重试明确缺失的观察，查询错误立即返回，绝不重放写入。
 
 ### Firecracker 多隔离网络（冷插拔）
 

@@ -171,6 +171,9 @@ func (s *RunService) StartRepair(ctx context.Context, topology string, req RunSt
 }
 
 func (s *RunService) StartReset(ctx context.Context, topology string, req RunStartRequest) (*controlplane.Run, error) {
+	if len(req.Inputs) > 0 && (req.OperationKey == "" || req.Revision == "") {
+		return nil, runError(runServiceBadRequest, errors.New("reset inputs require an idempotency key and immutable revision"))
+	}
 	if req.OperationKey != "" {
 		return s.startKeyedRevisionRun(ctx, topology, "reset", req, false)
 	}
@@ -446,6 +449,10 @@ func (s *RunService) Resume(ctx context.Context, runID string) (*controlplane.Ru
 }
 
 func (s *RunService) ResumeWithKey(ctx context.Context, runID, key string) (*controlplane.Run, *controlplane.Run, error) {
+	return s.ResumeWithInputs(ctx, runID, key, nil)
+}
+
+func (s *RunService) ResumeWithInputs(ctx context.Context, runID, key string, inputs map[string]string) (*controlplane.Run, *controlplane.Run, error) {
 	if key != "" {
 		if err := validateOperationKey(key); err != nil {
 			return nil, nil, runError(runServiceBadRequest, err)
@@ -454,6 +461,18 @@ func (s *RunService) ResumeWithKey(ctx context.Context, runID, key string) (*con
 	parent, ok := s.jobs.get(runID)
 	if !ok {
 		return nil, nil, runError(runServiceNotFound, fmt.Errorf("run not found"))
+	}
+	boundReset := parent.Op == "reset" && controlplane.HasBoundRunInputs(*parent)
+	if len(inputs) > 0 && !boundReset {
+		return nil, parent, runError(runServiceBadRequest, errors.New("resume inputs require an input-bound reset"))
+	}
+	if boundReset {
+		if key == "" {
+			return nil, parent, runError(runServiceBadRequest, errors.New("input-bound reset resume requires an idempotency key"))
+		}
+		if err := controlplane.ValidateRunInputs(*parent, inputs); err != nil {
+			return nil, parent, runError(runServiceConflict, err)
+		}
 	}
 	unlock := s.jobs.lockTopology(parent.Topology)
 	defer unlock()
@@ -466,11 +485,17 @@ func (s *RunService) ResumeWithKey(ctx context.Context, runID, key string) (*con
 		keyed = newRun(parent.Topology, parent.Op, runStartOptions{ParentID: parent.ID, SnapshotPath: parent.SnapshotPath, Revision: parent.Revision, Target: target, AgentID: parent.AgentID, UnsafeState: parent.UnsafeState, OperationKey: key})
 		keyed.ID = fmt.Sprintf("continuation-%x", sha256.Sum256([]byte(parent.ID+"\x00"+key)))
 		keyed.RequestFingerprint = fmt.Sprintf("continuation-request:%x", sha256.Sum256([]byte(parent.ID+"\x00"+parent.QueuedAt.UTC().Format(time.RFC3339Nano)+"\x00"+parent.Revision)))
+		if boundReset {
+			keyed.RequestFingerprint = controlplane.ResetContinuationFingerprint(*parent, *keyed, inputs)
+		}
 		existing, found, err := s.jobs.store.GetRunDispatch(ctx, keyed.ID, keyed.RequestFingerprint)
 		if err != nil {
 			return nil, parent, dispatchError(err)
 		}
 		if found {
+			if boundReset {
+				return s.hydrateApply(existing, inputs), parent, nil
+			}
 			s.jobs.remember(existing)
 			return existing, parent, nil
 		}
@@ -505,7 +530,7 @@ func (s *RunService) ResumeWithKey(ctx context.Context, runID, key string) (*con
 		}
 	}
 	if keyed != nil {
-		run, err := s.dispatchKeyedRun(ctx, keyed, keyed.RequestFingerprint, nil)
+		run, err := s.dispatchKeyedRun(ctx, keyed, keyed.RequestFingerprint, inputs)
 		return run, parent, err
 	}
 	run, err := s.jobs.startChild(parent)

@@ -7,13 +7,19 @@ import (
 	"io"
 	"net"
 	"strings"
+	"time"
 
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
 func (s *Substrate) EnsureRoute(ctx context.Context, handle substrate.NodeHandle, destination, via string) error {
 	if hsFrom(handle).GuestFamily == substrate.GuestFamilyWindows {
-		return s.windowsRoute(ctx, handle, destination, via, false)
+		if err := s.windowsRoute(ctx, handle, destination, via, false); err != nil {
+			return err
+		}
+		return waitWindowsRoute(ctx, 60*time.Second, 3*time.Second, func(probe context.Context) error {
+			return s.windowsRoute(probe, handle, destination, via, true)
+		})
 	}
 	connection, err := s.Connection(handle, nil)
 	if err != nil {
@@ -65,25 +71,37 @@ func (s *Substrate) windowsRoute(ctx context.Context, handle substrate.NodeHandl
 	if mac == "" {
 		return fmt.Errorf("libvirt windows: no NIC shares subnet with gateway %s", via)
 	}
-	script := fmt.Sprintf(`$ErrorActionPreference='Stop'; $nic=Get-NetAdapter | Where-Object { $_.MacAddress.Replace('-','').ToUpperInvariant() -eq '%s' } | Select-Object -First 1; if(-not $nic){ throw 'route NIC missing' }; $route=Get-NetRoute -InterfaceIndex $nic.ifIndex -DestinationPrefix '%s' -ErrorAction SilentlyContinue | Where-Object { $_.NextHop -eq '%s' }; if(-not $route){ %s }`, mac, destination, via, func() string {
-		if observeOnly {
-			return "exit 1"
-		}
-		return fmt.Sprintf("New-NetRoute -InterfaceIndex $nic.ifIndex -DestinationPrefix '%s' -NextHop '%s' | Out-Null", destination, via)
-	}())
+	script := windowsRouteScript(mac, destination, via, observeOnly)
 	connection, err := s.Connection(handle, nil)
 	if err != nil {
 		return err
 	}
 	result, err := connection.Exec(ctx, substrate.ExecRequest{Program: "powershell.exe", Args: []string{"-NoProfile", "-NonInteractive", "-Command", script}, Shell: substrate.ShellNone}, io.Discard, io.Discard)
+	return windowsRouteOutcome(observeOnly, result, err)
+}
+
+// PowerShell failures normally exit 1. Reserve 3 for a successful query that
+// found no matching route, so observation errors never become absence.
+func windowsRouteOutcome(observeOnly bool, result substrate.ExecResult, err error) error {
 	if err != nil {
 		return err
 	}
+	if !result.ExitCodeKnown {
+		return fmt.Errorf("libvirt windows: route result unknown")
+	}
 	if result.ExitCode != 0 {
-		if observeOnly && result.ExitCode == 1 {
+		if observeOnly && result.ExitCode == 3 {
 			return errWindowsRouteMissing
 		}
 		return fmt.Errorf("libvirt windows: route command exited %d: %s", result.ExitCode, result.Stderr)
 	}
 	return nil
+}
+
+func windowsRouteScript(mac, destination, via string, observeOnly bool) string {
+	missing := "exit 3"
+	if !observeOnly {
+		missing = fmt.Sprintf("New-NetRoute -InterfaceIndex $nic.ifIndex -DestinationPrefix '%s' -NextHop '%s' | Out-Null", destination, via)
+	}
+	return fmt.Sprintf(`$ErrorActionPreference='Stop'; $matches=@(Get-NetAdapter -ErrorAction Stop | Where-Object { $_.MacAddress.Replace('-','').ToUpperInvariant() -eq '%s' }); if($matches.Count -ne 1){throw 'route NIC identity missing or ambiguous'}; $nic=$matches[0]; $route=@(Get-NetRoute -AddressFamily IPv4 -ErrorAction Stop | Where-Object { $_.InterfaceIndex -eq $nic.ifIndex -and $_.DestinationPrefix -eq '%s' -and $_.NextHop -eq '%s' }); if($route.Count -eq 0){ %s }`, mac, destination, via, missing)
 }
