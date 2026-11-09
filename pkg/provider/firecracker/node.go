@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/artifact"
+	"github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/substrate"
 	"github.com/oslab/sysbox/pkg/transport"
 	"github.com/oslab/sysbox/pkg/vsockrpc"
@@ -140,8 +141,10 @@ func (v *vmProcess) snapshot() vmProcessSnapshot {
 // Persisted via MarshalProviderState so cold-destroy and drift refresh can
 // rebuild the VM's working directory without rediscovery.
 type HandleState struct {
-	JailRoot    string              `json:"jail_root,omitempty"`
-	Attachments []managedAttachment `json:"attachments"`
+	FabricPending string               `json:"fabric_pending,omitempty"`
+	Fabric        *network.VMNamespace `json:"fabric,omitempty"`
+	JailRoot      string               `json:"jail_root,omitempty"`
+	Attachments   []managedAttachment  `json:"attachments"`
 
 	Version      int    `json:"version"`
 	ManifestPath string `json:"manifest_path"`

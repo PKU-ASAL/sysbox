@@ -31,6 +31,9 @@ func (s *Substrate) DiscoverManagedAttachments(ctx context.Context, h substrate.
 	if len(m.Handle.Attachments) != len(requests) || len(cfg.NetworkInterfaces) != len(requests) {
 		return nil, fmt.Errorf("attachment inventory mismatch")
 	}
+	if err := validateFabricHandle(m.Handle, manifestNetworkIdentity(m)); err != nil {
+		return nil, err
+	}
 	result := map[string]driver.AttachmentResult{}
 	for _, req := range requests {
 		if req.Name == "" {
@@ -80,13 +83,17 @@ func (s *Substrate) DiscoverManagedAttachments(ctx context.Context, h substrate.
 		}
 		alias, err := network.AttachmentAlias(substrate.OperationIdentity{ActionID: "discover", OwnerUID: m.OwnerUID, TopologyUID: m.TopologyUID, ResourceUID: m.ResourceUID, Generation: m.Generation}, req.Name)
 		if err == nil {
-			err = bridge.ObserveAttachment(ctx, found.Link, alias)
+			if m.Handle.Fabric != nil {
+				err = bridge.ObserveVMCircuit(ctx, *m.Handle.Fabric, *found.Circuit)
+			} else {
+				err = bridge.ObserveAttachment(ctx, found.Link, alias)
+			}
 		}
 		bridge.Close()
 		if err != nil {
 			return nil, err
 		}
-		raw, err := json.Marshal(attachmentState{Tap: found.Link.Name, NetNS: found.Link.Namespace, GuestDevice: found.GuestDevice, Link: &found.Link})
+		raw, err := json.Marshal(attachmentState{Fabric: m.Handle.Fabric, Circuit: found.Circuit, Tap: found.Link.Name, NetNS: found.Link.Namespace, GuestDevice: found.GuestDevice, Link: &found.Link})
 		if err != nil {
 			return nil, err
 		}

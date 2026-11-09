@@ -91,6 +91,14 @@ func (s *Substrate) DeleteFencedGCResidue(ctx context.Context, c controlplane.GC
 	if _, err = s.loadManifest(ctx, h); err != nil {
 		return err
 	}
+	// Retain complete fabric evidence when old-boot networking cannot be
+	// independently identified. Cleanup never infers absence from VMDir alone.
+	if current.Handle.FabricPending != "" {
+		return fmt.Errorf("fenced VM namespace creation remains uncertain")
+	}
+	if err = cleanupFabric(ctx, current); err != nil {
+		return err
+	}
 	if err = removeJail(current); err != nil {
 		return err
 	}

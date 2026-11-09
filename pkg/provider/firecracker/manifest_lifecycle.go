@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/oslab/sysbox/pkg/driver"
+	"github.com/oslab/sysbox/pkg/provider/network"
 	"github.com/oslab/sysbox/pkg/substrate"
 )
 
@@ -501,6 +502,9 @@ func (s *Substrate) destroyManifestNode(ctx context.Context, h substrate.NodeHan
 	if _, err := s.loadManifest(ctx, h); err != nil {
 		return err
 	}
+	if err := cleanupFabric(ctx, m); err != nil {
+		return err
+	}
 	if err := s.recordStoppedDeletion(ctx, h, m); err != nil {
 		return err
 	}
@@ -556,6 +560,9 @@ func (s *Substrate) DiscoverManagedNode(ctx context.Context, identity substrate.
 	if err != nil {
 		if os.IsNotExist(err) {
 			if _, e := os.Lstat(dir); os.IsNotExist(e) {
+				if err := network.VMNamespaceNameAbsent(identity); err != nil {
+					return substrate.NodeHandle{}, err
+				}
 				if residue, probeErr := hasLaunchResidue(filepath.Join(dir, "vm_config.json")); probeErr != nil {
 					return substrate.NodeHandle{}, probeErr
 				} else if residue {
