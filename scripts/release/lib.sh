@@ -27,7 +27,13 @@ require_release_repo() {
 }
 
 require_clean_source() {
-  [[ -z "$(git status --porcelain --untracked-files=all)" ]] || { echo "release: source must be a clean committed checkout (including untracked files)" >&2; return 1; }
+  local status
+  status="$(git status --porcelain --untracked-files=all)" || return 1
+  if [[ -n "${status}" ]]; then
+    echo "release: source must be a clean committed checkout (including untracked files)" >&2
+    printf '%s\n' "${status}" >&2
+    return 1
+  fi
 }
 
 release_commit() { git rev-parse HEAD; }

@@ -16,6 +16,11 @@ bash scripts/release/build-binaries.sh ./bin
 ./bin/sysbox version
 ```
 
+`make build` 复用上述构建入口，输出配套的 `bin/sysbox`、`sysbox-init`、`sysbox-netns`；
+`make build-all` 输出 `bin/linux-amd64/` 和 `bin/linux-arm64/` 两套制品。两者都不改写受跟踪的 helper 文件。
+需要嵌入新 helper 的 Go 测试使用 `bash scripts/release/with-helper-overlay.sh go test ...`；
+Firecracker 和 P9 验收目标已自动使用该入口。直接 `go build` 仍只嵌入仓库占位文件，不能用于 VM 运行验收。
+
 构建支持 Linux amd64/arm64。以下示例声明 amd64 镜像；arm64 宿主使用前将示例的 architecture 改为 arm64，
 并确认镜像提供对应平台。预编译制品应先校验随附 SHA256SUMS，不混用不同版本的 CLI 和 helper。
 
