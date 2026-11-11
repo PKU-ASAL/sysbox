@@ -12,6 +12,10 @@ git clone --quiet --no-hardlinks --no-local "${repo_root}" "${scratch}/source"
 git -C "${scratch}/source" checkout --quiet --detach "$(git rev-parse HEAD)"
 cd "${scratch}/source"
 make build build-all
+make build BINARY=bin/custom/sysbox-cli
+test -x bin/custom/sysbox-cli
+test -x bin/custom/sysbox-init
+test -x bin/custom/sysbox-netns
 require_clean_source
 # Both bundles must embed both freshly built helpers, not tracked placeholders.
 python3 - <<'PY'

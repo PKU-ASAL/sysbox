@@ -215,7 +215,9 @@ $(BINARY):
 	@test -x "$@" || { echo "Build or install matching binaries first: bash scripts/release/build-binaries.sh bin" >&2; exit 1; }
 
 build: ## Build matching host binaries with fresh helpers without changing source
-	$(GOENV) GO="$(GO)" bash scripts/release/build-binaries.sh bin
+	@set -eu; output_dir=$$(dirname "$(BINARY)"); \
+	$(GOENV) GO="$(GO)" bash scripts/release/build-binaries.sh "$$output_dir"; \
+	if [ "$$(basename "$(BINARY)")" != sysbox ]; then mv "$$output_dir/sysbox" "$(BINARY)"; fi
 
 build-all: ## Build matching Linux binaries for amd64 and arm64 under bin/
 	$(GOENV) GO="$(GO)" GOARCH=amd64 bash scripts/release/build-binaries.sh bin/linux-amd64
