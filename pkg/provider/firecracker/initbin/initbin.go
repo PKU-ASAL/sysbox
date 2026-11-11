@@ -3,12 +3,11 @@
 // rootfs without external file dependencies.
 //
 // Build process:
-//   - `make build-init` cross-compiles cmd/sysbox-init for the host's GOARCH
-//     and writes the result to sysbox-init.linux-<arch>.bin.
-//   - `make build-init-all` builds both linux/amd64 and linux/arm64.
-//   - Any arch that has not been built shows up as a tiny placeholder file
-//     (committed in-tree), and InstallFor(arch) returns ErrNotBuilt so the
-//     caller can fail loudly.
+//   - make build uses scripts/release/build-binaries.sh to compile both guest
+//     helpers in a temporary directory and embed them through a Go overlay.
+//   - make build-all writes matching Linux bundles under bin/linux-{amd64,arm64}.
+//   - Direct go build uses the tracked placeholders and fails explicitly if a
+//     caller attempts to install a helper. Acceptance tests use the overlay wrapper.
 //
 // Firecracker does not emulate CPUs, so the guest arch always equals the
 // host arch. Default Install() picks runtime.GOARCH, but callers can use
@@ -26,13 +25,10 @@ import (
 //go:embed sysbox-init.linux-*.bin
 var binaryFS embed.FS
 
-// ErrNotBuilt is returned when the requested architecture's binary is empty
-// or still the placeholder, meaning `make build-init` (or build-init-all)
-// has not produced it.
-var ErrNotBuilt = errors.New("sysbox-init binary is not built for this arch; run `make build-init-all`")
+// ErrNotBuilt means this build still embeds placeholders.
+var ErrNotBuilt = errors.New("sysbox-init binary is not built for this arch; run make build or scripts/release/with-helper-overlay.sh")
 
-// supportedArches is the canonical list of architectures we cross-compile
-// sysbox-init for. Keep in sync with the Makefile $(INIT_*) targets.
+// supportedArches is the canonical list of embedded guest architectures.
 var supportedArches = []string{"amd64", "arm64"}
 
 // bytesFor returns the embedded binary for `goarch` (e.g. "amd64", "arm64").

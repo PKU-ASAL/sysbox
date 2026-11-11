@@ -7,8 +7,6 @@ include .env
 endif
 
 BINARY := bin/sysbox
-INITDIR := pkg/provider/firecracker/initbin
-ARCH = $(shell $(GO) env GOARCH)
 
 TOPO ?= two-networks
 API_URL ?= http://127.0.0.1:9876
@@ -157,7 +155,12 @@ test-p9-ssh-reboot: ## Reboot dedicated lab VMs and verify managed SSH recovery
 	python3 scripts/acceptance/ssh_lifecycle.py --root "$(SYSBOX_P9_LAB_ROOT)" --binary "$(SYSBOX_CLI_BINARY)" --helper "$(SYSBOX_GUESTTASK_HELPER)" --reboot-vms
 
 .PHONY: test-p9-real
-test-p9-real: build-all ## Run implemented real-provider gates; reject skips and missing test matches
+test-p9-real: ## Run real-provider gates with fresh helpers; reject skips
+	$(GOENV) GO="$(GO)" bash scripts/release/with-helper-overlay.sh $(MAKE) test-p9-real-with-helpers
+
+.PHONY: test-p9-real-with-helpers
+test-p9-real-with-helpers:
+	@test -n "$(findstring -overlay=,$(GOFLAGS))" || { echo 'Use make test-p9-real to prepare matching helpers'; exit 2; }
 	@set -eu; \
 	test -x "$${SYSBOX_FIRECRACKER_BIN:?set Firecracker binary}"; \
 	test -f "$${SYSBOX_FIRECRACKER_KERNEL:?set Firecracker kernel}"; \
@@ -211,22 +214,14 @@ help: ## Show command groups
 $(BINARY):
 	@test -x "$@" || { echo "Build or install matching binaries first: bash scripts/release/build-binaries.sh bin" >&2; exit 1; }
 
-build: $(INITDIR)/sysbox-init.linux-$(ARCH).bin ## Build bin/sysbox
-	$(GOENV) CGO_ENABLED=0 $(GO) build -buildvcs=false -o $(BINARY) ./cmd/sysbox
+build: ## Build matching host binaries with fresh helpers without changing source
+	@set -eu; output_dir=$$(dirname "$(BINARY)"); \
+	$(GOENV) GO="$(GO)" bash scripts/release/build-binaries.sh "$$output_dir"; \
+	if [ "$$(basename "$(BINARY)")" != sysbox ]; then mv "$$output_dir/sysbox" "$(BINARY)"; fi
 
-build-all: ## Build sysbox-init for amd64 and arm64
-	$(MAKE) $(INITDIR)/sysbox-init.linux-amd64.bin $(INITDIR)/sysbox-init.linux-arm64.bin
-
-.PHONY: force-guest-build
-force-guest-build:
-
-# Go's cache tracks all transitive sources. Do not maintain a partial source
-# list here: missing a guesttask dependency would silently embed an old helper.
-$(INITDIR)/sysbox-init.linux-%.bin: force-guest-build
-	@set -eu; guest_build=$$(mktemp -d /tmp/sysbox-init-build.XXXXXX); \
-	trap 'rm -f "$$guest_build/sysbox-init"; rmdir "$$guest_build"' EXIT; \
-	$(GOENV) GOOS=linux GOARCH=$* CGO_ENABLED=0 $(GO) build -buildvcs=false -ldflags="-s -w" -o "$$guest_build/sysbox-init" ./cmd/sysbox-init; \
-	mv "$$guest_build/sysbox-init" "$@"
+build-all: ## Build matching Linux binaries for amd64 and arm64 under bin/
+	$(GOENV) GO="$(GO)" GOARCH=amd64 bash scripts/release/build-binaries.sh bin/linux-amd64
+	$(GOENV) GO="$(GO)" GOARCH=arm64 bash scripts/release/build-binaries.sh bin/linux-arm64
 
 test: ## Run unit tests
 	$(GOENV) $(GO) test ./...
@@ -237,8 +232,8 @@ docs-test: ## Validate canonical documentation structure and links
 test-e2e: ## Run black-box API e2e tests
 	bash tests/e2e/api_smoke.sh
 
-test-firecracker-e2e: build-all ## Run jailed Firecracker/KVM lifecycle E2E (requires prepared root host)
-	$(GOENV) $(GO) test -tags e2e -v ./pkg/provider/firecracker -run '^Test(FirecrackerReal|JailerReal).*E2E$$' -count=1 -timeout=10m
+test-firecracker-e2e: ## Run jailed Firecracker/KVM lifecycle E2E (requires prepared root host)
+	$(GOENV) GO="$(GO)" bash scripts/release/with-helper-overlay.sh "$(GO)" test -tags e2e -v ./pkg/provider/firecracker -run '^Test(FirecrackerReal|JailerReal).*E2E$$' -count=1 -timeout=10m
 
 test-docker-launch: ## Run Docker launch override lifecycle acceptance
 	bash tests/e2e/docker_launch_override.sh
@@ -277,6 +272,7 @@ test-windows10-libvirt: ## Run the opt-in experimental Windows domain-start life
 	bash tests/e2e/windows10_libvirt.sh
 
 release-test: ## Test deterministic release artifacts and GitHub Release audit
+	bash scripts/release/clean_build_test.sh
 	bash scripts/release/test.sh
 	bash scripts/release/github_test.sh
 	bash scripts/release/oci_test.sh
